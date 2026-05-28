@@ -443,6 +443,15 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
         Cluster Graphs
       </div>
+      <div class="nav-item" data-view="updates" onclick="switchView('updates')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+        Updates
+        <span class="nav-badge warn" id="update-badge" style="display:none">0</span>
+      </div>
+      <div class="nav-item" data-view="pbs" onclick="switchView('pbs')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+        Backup Server
+      </div>
     </div>
 
     <div class="sidebar-section" id="node-list-sidebar">
@@ -742,6 +751,49 @@
       </div>
     </div>
 
+    <!-- UPDATES -->
+    <div id="view-updates" style="display:none">
+      <div class="section-header">
+        <span class="section-title">Package Updates</span>
+        <div style="display:flex;gap:6px;align-items:center">
+          <select id="updates-node-filter" style="width:140px;padding:5px 8px;font-size:13px" onchange="renderUpdates()">
+            <option value="">All Nodes</option>
+          </select>
+          <button class="btn small success" onclick="refreshPackageLists()">↻ Refresh Package Lists</button>
+          <button class="btn small" onclick="loadUpdates()">Reload</button>
+        </div>
+      </div>
+      <div id="updates-content"><div class="empty">Loading…</div></div>
+    </div>
+
+    <!-- BACKUP SERVER (PBS) -->
+    <div id="view-pbs" style="display:none">
+      <div class="section-header">
+        <span class="section-title">Proxmox Backup Server</span>
+        <button class="btn small" onclick="loadPBS()">Refresh</button>
+      </div>
+      <div id="pbs-connect" style="display:none">
+        <div style="max-width:480px;margin:20px auto;background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:28px">
+          <h3 style="font-size:16px;font-weight:700;color:var(--accent);margin-bottom:6px">Connect to Backup Server</h3>
+          <p style="color:var(--muted);font-size:13px;margin-bottom:18px">Enter your Proxmox Backup Server connection details (typically port 8007).</p>
+          <div class="form-group"><label>HOST URL</label><input id="pbs-host" placeholder="https://192.168.1.10:8007" type="text"/></div>
+          <div class="form-row">
+            <div class="form-group"><label>USERNAME</label><input id="pbs-user" value="root@pam" type="text"/></div>
+            <div class="form-group"><label>AUTH METHOD</label>
+              <select id="pbs-authtype" onchange="pbsToggleAuth()">
+                <option value="password">Password</option>
+                <option value="token">API Token</option>
+              </select>
+            </div>
+          </div>
+          <div class="form-group" id="pbs-group-pw"><label>PASSWORD</label><input id="pbs-password" type="password"/></div>
+          <div class="form-group" id="pbs-group-token" style="display:none"><label>API TOKEN</label><input id="pbs-token" placeholder="PBSAPIToken=user@realm!id=uuid"/></div>
+          <button class="btn primary" onclick="connectPBS()" style="width:100%;justify-content:center;padding:11px;margin-top:4px">Connect to Backup Server</button>
+        </div>
+      </div>
+      <div id="pbs-content"><div class="empty">Not connected — click Refresh or enter PBS details above.</div></div>
+    </div>
+
     <!-- CLUSTER GRAPHS -->
     <div id="view-clustergraphs" style="display:none">
       <div class="section-header">
@@ -967,7 +1019,7 @@ async function refreshAll() {
       nodeStats.push({...n,statusData:status});
     }));
     PVE.vms=allVMs; PVE.containers=allCTs; PVE.nodeStatuses=nodeStats;
-    await Promise.all([loadTasks(), loadStorageBackground()]);
+    await Promise.all([loadTasks(), loadStorageBackground(), loadUpdatesBackground()]);
     renderCurrentView();
     renderSidebarNodes();
     checkAlerts();
@@ -1548,7 +1600,7 @@ async function migrateVM(node, vmid, type, targetNode, online=false, withLocal=f
 // ── RENDERING ─────────────────────────────────────────────
 
 function switchView(view) {
-  const views=['connect','overview','vms','containers','nodes','tasks','syslog','storage','network','heatmap','isolib','ceph','ha','firewall','backups','users','certs','audit','clustergraphs'];
+  const views=['connect','overview','vms','containers','nodes','tasks','syslog','storage','network','heatmap','isolib','ceph','ha','firewall','backups','users','certs','audit','clustergraphs','updates','pbs'];
   views.forEach(v=>{
     const el=document.getElementById('view-'+v);
     if(el) el.style.display=v===view?'':'none';
@@ -1589,6 +1641,8 @@ function switchView(view) {
   if(view==='audit') loadAudit();
   if(view==='clustergraphs') loadClusterGraphs();
   if(view==='isolib') loadISOLibrary();
+  if(view==='updates') loadUpdates();
+  if(view==='pbs') loadPBS();
   if(view!=='connect') renderCurrentView();
 }
 
@@ -4397,6 +4451,287 @@ function renderISOLibrary() {
   el.innerHTML = stats
     + (isos.length?`<div class="section-header"><span class="section-title">ISO Images (${isos.length})</span></div><div class="table-wrap" style="margin-bottom:18px"><table>${tHead}<tbody>${mkRows(isos)}</tbody></table></div>`:'')
     + (tmpls.length?`<div class="section-header"><span class="section-title">CT Templates (${tmpls.length})</span></div><div class="table-wrap"><table>${tHead}<tbody>${mkRows(tmpls)}</tbody></table></div>`:'');
+}
+
+// ── PACKAGE UPDATES ───────────────────────────────────────
+// GET /api2/json/nodes/{node}/apt/update   — list available packages
+// POST /api2/json/nodes/{node}/apt/update  — refresh package list (apt update)
+// Official: https://pve.proxmox.com/pve-docs/api-viewer/#/nodes/{node}/apt
+
+let rawUpdates = {};  // node → package array
+
+async function loadUpdatesBackground() {
+  try {
+    let total = 0;
+    await Promise.all(PVE.nodes.map(async n => {
+      const d = await pveGet(`/api2/json/nodes/${n.node}/apt/update`).catch(()=>({data:[]}));
+      rawUpdates[n.node] = d.data || [];
+      total += rawUpdates[n.node].length;
+    }));
+    const badge = document.getElementById('update-badge');
+    if (badge) { badge.textContent = total; badge.style.display = total > 0 ? '' : 'none'; }
+  } catch(e) {}
+}
+
+async function loadUpdates() {
+  const el = document.getElementById('updates-content');
+  el.innerHTML = '<div class="empty"><span class="loading"></span> Loading available updates…</div>';
+
+  const nf = document.getElementById('updates-node-filter');
+  if (nf) nf.innerHTML = '<option value="">All Nodes</option>' + PVE.nodes.map(n=>`<option value="${n.node}">${n.node}</option>`).join('');
+
+  try {
+    await Promise.all(PVE.nodes.map(async n => {
+      const d = await pveGet(`/api2/json/nodes/${n.node}/apt/update`).catch(()=>({data:[]}));
+      rawUpdates[n.node] = d.data || [];
+    }));
+    const total = Object.values(rawUpdates).reduce((a,v)=>a+v.length, 0);
+    const badge = document.getElementById('update-badge');
+    if (badge) { badge.textContent = total; badge.style.display = total > 0 ? '' : 'none'; }
+    renderUpdates();
+  } catch(e) {
+    el.innerHTML = `<div class="empty">Failed to load updates: ${escHtml(e.message)}</div>`;
+  }
+}
+
+function renderUpdates() {
+  const el = document.getElementById('updates-content');
+  const nodeFilter = (document.getElementById('updates-node-filter')||{}).value || '';
+
+  const allPkgs = [];
+  Object.entries(rawUpdates).forEach(([node, pkgs]) => {
+    if (nodeFilter && node !== nodeFilter) return;
+    pkgs.forEach(p => allPkgs.push({...p, node}));
+  });
+
+  const total   = allPkgs.length;
+  const secCount = allPkgs.filter(p => (p.Priority||'').toLowerCase()==='security' || (p.Section||'').toLowerCase().includes('security')).length;
+  const nodeCount = [...new Set(allPkgs.map(p=>p.node))].length;
+
+  const stats = `
+    <div class="stats-grid" style="margin-bottom:16px">
+      <div class="stat-card accent-${total>0?'yellow':'green'}"><div class="label">Packages to Update</div><div class="value">${total}</div><div class="sub">across ${nodeCount} node(s)</div></div>
+      <div class="stat-card accent-${secCount>0?'red':'green'}"><div class="label">Security Updates</div><div class="value" style="color:${secCount>0?'var(--red)':'var(--green)'}">${secCount}</div><div class="sub">critical priority</div></div>
+      <div class="stat-card"><div class="label">Nodes with Updates</div><div class="value" style="color:var(--blue)">${nodeCount}</div></div>
+    </div>`;
+
+  if (!total) {
+    el.innerHTML = stats + `<div class="empty" style="color:var(--green)">✓ All nodes are up to date</div>`;
+    return;
+  }
+
+  // Group by node
+  const byNode = {};
+  allPkgs.forEach(p => { (byNode[p.node]||(byNode[p.node]=[])).push(p); });
+
+  const tables = Object.entries(byNode).map(([node, pkgs]) => `
+    <div class="section-header" style="margin-top:8px">
+      <span class="section-title">${escHtml(node)} — ${pkgs.length} package${pkgs.length!==1?'s':''}</span>
+      <button class="btn small success" onclick="refreshPackageList('${node}')">↻ apt update</button>
+    </div>
+    <div class="table-wrap" style="margin-bottom:18px">
+      <table>
+        <thead><tr><th>Package</th><th>Installed</th><th>Available</th><th>Priority</th><th>Section</th><th>Description</th></tr></thead>
+        <tbody>${pkgs.map(p => {
+          const isSec = (p.Priority||'').toLowerCase()==='security';
+          return `<tr>
+            <td><strong>${escHtml(p.Package||'—')}</strong></td>
+            <td style="font-family:monospace;font-size:11px;color:var(--muted)">${escHtml(p.OldVersion||'—')}</td>
+            <td style="font-family:monospace;font-size:11px;color:var(--green)">${escHtml(p.Version||'—')}</td>
+            <td>${isSec?'<span class="badge stopped" style="font-size:10px"><span class="badge-dot"></span>security</span>':escHtml(p.Priority||'—')}</td>
+            <td style="font-size:11px;color:var(--muted)">${escHtml(p.Section||'—')}</td>
+            <td style="font-size:12px;color:var(--muted);max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escHtml(p.Title||'')}">
+              ${escHtml(p.Title||'')}
+              ${p.ChangeLogUrl?`<a href="${escHtml(p.ChangeLogUrl)}" target="_blank" style="color:var(--blue);font-size:10px;margin-left:6px">changelog</a>`:''}
+            </td>
+          </tr>`;
+        }).join('')}</tbody>
+      </table>
+    </div>`).join('');
+
+  el.innerHTML = stats + `
+    <div style="background:rgba(210,153,34,.1);border:1px solid rgba(210,153,34,.3);border-radius:var(--radius);padding:9px 14px;font-size:12px;color:var(--yellow);margin-bottom:16px">
+      ⚠ Apply updates via the Proxmox web UI, SSH, or Proxmox scheduled tasks to avoid disrupting running VMs.
+      <a href="${PVE.host.replace(':8080',':8006')}" target="_blank" style="color:var(--blue);margin-left:6px">Open Proxmox UI →</a>
+    </div>` + tables;
+}
+
+async function refreshPackageLists() {
+  toast('Refreshing package lists on all nodes…', 'info');
+  await Promise.all(PVE.nodes.map(n => refreshPackageList(n.node)));
+}
+
+async function refreshPackageList(node) {
+  try {
+    const res = await pvePost(`/api2/json/nodes/${node}/apt/update`, {});
+    const upid = res && res.data;
+    if (upid && typeof upid === 'string') tmRegister(upid, node, `apt update on ${node}`);
+    toast(`apt update started on ${node}`, 'success');
+    setTimeout(loadUpdates, 4000);
+  } catch(e) { toast(`apt update failed on ${node}: ${e.message}`, 'error'); }
+}
+
+// ── PROXMOX BACKUP SERVER (PBS) ───────────────────────────
+// PBS has its own REST API (default port 8007), separate from PVE
+// GET /api2/json/datastore           — list datastores
+// GET /api2/json/datastore/{s}/status — usage stats
+// GET /api2/json/datastore/{s}/snapshots — backup list
+// GET /api2/json/datastore/{s}/rrd   — RRD performance data
+// Official: https://pbs.proxmox.com/docs/api-viewer/
+
+let PBS = { host:'', ticket:'', csrfToken:'', tokenAuth:'', useToken:false, connected:false };
+
+function pbsToggleAuth() {
+  const m = document.getElementById('pbs-authtype').value;
+  document.getElementById('pbs-group-pw').style.display    = m==='password'?'':'none';
+  document.getElementById('pbs-group-token').style.display = m==='token'?'':'none';
+}
+
+function pbsHeaders() {
+  const h = {};
+  if (PBS.useToken) h['Authorization'] = PBS.tokenAuth;
+  else {
+    if (PBS.ticket) h['Authorization'] = `PBSAuthCookie=${PBS.ticket}`;
+    if (PBS.csrfToken) h['CSRFPreventionToken'] = PBS.csrfToken;
+  }
+  return h;
+}
+
+async function pbsGet(path) {
+  const res = await fetch(PBS.host + path, { headers: pbsHeaders() });
+  if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText}`);
+  return res.json();
+}
+
+async function connectPBS() {
+  const host = (document.getElementById('pbs-host').value||'').trim().replace(/\/$/,'');
+  const user = document.getElementById('pbs-user').value.trim();
+  const method = document.getElementById('pbs-authtype').value;
+  if (!host) return toast('Enter PBS host URL', 'error');
+
+  PBS.host = host;
+  if (method === 'token') {
+    const t = document.getElementById('pbs-token').value.trim();
+    if (!t) return toast('Enter API token', 'error');
+    PBS.useToken = true; PBS.tokenAuth = t;
+  } else {
+    const pw = document.getElementById('pbs-password').value;
+    try {
+      const res = await fetch(`${host}/api2/json/access/ticket`, {
+        method:'POST', headers:{'Content-Type':'application/x-www-form-urlencoded'},
+        body: `username=${encodeURIComponent(user)}&password=${encodeURIComponent(pw)}`
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      if (!data.data || !data.data.ticket) throw new Error('Authentication failed');
+      PBS.useToken = false;
+      PBS.ticket = data.data.ticket;
+      PBS.csrfToken = data.data.CSRFPreventionToken;
+    } catch(e) { return toast('PBS login failed: ' + e.message, 'error'); }
+  }
+  PBS.connected = true;
+  toast('Connected to Backup Server', 'success');
+  loadPBS();
+}
+
+async function loadPBS() {
+  const el = document.getElementById('pbs-content');
+  const connPanel = document.getElementById('pbs-connect');
+
+  if (!PBS.connected) {
+    if (connPanel) connPanel.style.display = '';
+    el.innerHTML = '';
+    return;
+  }
+  if (connPanel) connPanel.style.display = 'none';
+  el.innerHTML = '<div class="empty"><span class="loading"></span> Loading PBS datastores…</div>';
+
+  try {
+    const [dsRes] = await Promise.all([
+      pbsGet('/api2/json/datastore').catch(()=>({data:[]})),
+    ]);
+    const datastores = dsRes.data || [];
+
+    // Fetch status + snapshots for each datastore in parallel
+    const enriched = await Promise.all(datastores.map(async ds => {
+      const [statusRes, snapRes] = await Promise.all([
+        pbsGet(`/api2/json/datastore/${ds.store}/status`).catch(()=>({data:{}})),
+        pbsGet(`/api2/json/datastore/${ds.store}/snapshots`).catch(()=>({data:[]})),
+      ]);
+      return { ...ds, status: statusRes.data||{}, snaps: snapRes.data||[] };
+    }));
+
+    const totalSnaps = enriched.reduce((a,d)=>a+d.snaps.length, 0);
+    const totalUsed  = enriched.reduce((a,d)=>a+(d.status.used||0), 0);
+    const totalAvail = enriched.reduce((a,d)=>a+(d.status.avail||0), 0);
+
+    let html = `
+      <div class="stats-grid" style="margin-bottom:16px">
+        <div class="stat-card accent-blue"><div class="label">Datastores</div><div class="value">${enriched.length}</div></div>
+        <div class="stat-card accent-orange"><div class="label">Used Space</div><div class="value" style="font-size:20px">${fmtBytes(totalUsed)}</div></div>
+        <div class="stat-card accent-green"><div class="label">Available</div><div class="value" style="font-size:20px">${fmtBytes(totalAvail)}</div></div>
+        <div class="stat-card accent-purple"><div class="label">Backup Snapshots</div><div class="value">${totalSnaps}</div></div>
+      </div>`;
+
+    enriched.forEach(ds => {
+      const s = ds.status;
+      const used = s.used||0, total = s.total||0;
+      const pct = total > 0 ? ((used/total)*100).toFixed(0) : 0;
+      const snaps = ds.snaps.slice().sort((a,b)=>(b['backup-time']||0)-(a['backup-time']||0));
+
+      html += `
+        <div class="section-header" style="margin-top:8px">
+          <span class="section-title">📁 ${escHtml(ds.store)}</span>
+          <span style="font-size:12px;color:var(--muted)">${fmtBytes(used)} / ${fmtBytes(total)} used</span>
+        </div>
+        <div style="background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius);padding:10px 14px;margin-bottom:14px">
+          <div class="gauge-wrap" style="margin-bottom:6px">
+            <span style="min-width:36px;font-size:12px">${pct}%</span>
+            <div class="gauge-bar"><div class="gauge-fill ${gaugeClass(+pct)}" style="width:${Math.min(+pct,100)}%"></div></div>
+          </div>
+          <div style="font-size:11px;color:var(--muted)">${snaps.length} snapshots · ${fmtBytes(s.avail||0)} free</div>
+        </div>
+        ${snaps.length ? `
+        <div class="table-wrap" style="margin-bottom:20px">
+          <table>
+            <thead><tr><th>Guest ID</th><th>Type</th><th>Backup Time</th><th>Size</th><th>Verified</th></tr></thead>
+            <tbody>${snaps.slice(0, 50).map(sn => {
+              const bt = sn['backup-time'] ? new Date(sn['backup-time']*1000).toLocaleString() : '—';
+              const vt = sn['verification'] && sn['verification'].state;
+              const verBadge = vt==='ok'
+                ? '<span class="badge ok" style="font-size:10px"><span class="badge-dot"></span>verified</span>'
+                : vt==='failed'
+                ? '<span class="badge error" style="font-size:10px"><span class="badge-dot"></span>failed</span>'
+                : '<span style="font-size:11px;color:var(--muted)">—</span>';
+              return `<tr>
+                <td><strong>${escHtml(String(sn['backup-id']||'—'))}</strong></td>
+                <td><span class="type-chip ${sn['backup-type']==='vm'?'vm':'ct'}">${escHtml(sn['backup-type']||'—')}</span></td>
+                <td style="font-size:12px;color:var(--muted)">${bt}</td>
+                <td style="font-size:12px;color:var(--muted)">${fmtBytes(sn.size||0)}</td>
+                <td>${verBadge}</td>
+              </tr>`;
+            }).join('')}
+            ${snaps.length > 50 ? `<tr><td colspan="5" class="empty" style="font-size:11px">… and ${snaps.length-50} more</td></tr>` : ''}
+            </tbody>
+          </table>
+        </div>` : '<div class="empty" style="margin-bottom:18px">No snapshots in this datastore</div>'}`;
+    });
+
+    if (!enriched.length) html += '<div class="empty">No datastores found on this PBS instance.</div>';
+    html += `<div style="display:flex;justify-content:flex-end;margin-top:4px">
+      <button class="btn small danger" onclick="disconnectPBS()">Disconnect PBS</button>
+    </div>`;
+    el.innerHTML = html;
+  } catch(e) {
+    el.innerHTML = `<div class="empty">Failed to load PBS data: ${escHtml(e.message)}</div>`;
+  }
+}
+
+function disconnectPBS() {
+  PBS = { host:'', ticket:'', csrfToken:'', tokenAuth:'', useToken:false, connected:false };
+  document.getElementById('pbs-connect').style.display = '';
+  document.getElementById('pbs-content').innerHTML = '<div class="empty">Disconnected.</div>';
+  toast('Disconnected from Backup Server', 'info');
 }
 
 // ── UPLOAD ISO / CT TEMPLATE ─────────────────────────────
