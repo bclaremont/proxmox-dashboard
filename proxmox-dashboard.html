@@ -402,6 +402,10 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="3"/><line x1="12" y1="2" x2="12" y2="5"/><line x1="12" y1="19" x2="12" y2="22"/><line x1="2" y1="12" x2="5" y2="12"/><line x1="19" y1="12" x2="22" y2="12"/></svg>
         ISO &amp; Templates
       </div>
+      <div class="nav-item" onclick="openDownloadTemplatesModal()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+        Download CT Templates
+      </div>
     </div>
     <div class="sidebar-section">
       <div class="sidebar-label">Infrastructure</div>
@@ -535,6 +539,7 @@
         <span class="section-title">LXC Containers</span>
         <div style="display:flex;gap:6px">
           <button class="btn small primary" onclick="openCreateCTWizard()">+ Create CT</button>
+          <button class="btn small success" onclick="openDownloadTemplatesModal()">↓ Download Templates</button>
           <button class="btn small" onclick="refreshAll()">Refresh</button>
         </div>
       </div>
@@ -650,6 +655,7 @@
           <select id="isolib-node" style="width:120px;padding:5px 8px;font-size:13px" onchange="if(isoLib.loaded)renderISOLibrary()">
             <option value="">All Nodes</option>
           </select>
+          <button class="btn small primary" onclick="openUploadISOModal()">↑ Upload ISO / Template</button>
           <button class="btn small success" onclick="openDownloadTemplatesModal()">↓ Download Templates</button>
           <button class="btn small" onclick="loadISOLibrary()">Refresh</button>
         </div>
@@ -4395,6 +4401,149 @@ function renderISOLibrary() {
   el.innerHTML = stats
     + (isos.length?`<div class="section-header"><span class="section-title">ISO Images (${isos.length})</span></div><div class="table-wrap" style="margin-bottom:18px"><table>${tHead}<tbody>${mkRows(isos)}</tbody></table></div>`:'')
     + (tmpls.length?`<div class="section-header"><span class="section-title">CT Templates (${tmpls.length})</span></div><div class="table-wrap"><table>${tHead}<tbody>${mkRows(tmpls)}</tbody></table></div>`:'');
+}
+
+// ── UPLOAD ISO / CT TEMPLATE ─────────────────────────────
+// POST /api2/json/nodes/{node}/storage/{storage}/upload
+// Official: https://pve.proxmox.com/pve-docs/api-viewer/#/nodes/{node}/storage/{storage}/upload
+
+function openUploadISOModal() {
+  const node = PVE.nodes[0] && PVE.nodes[0].node || '';
+  const nodeOpts = PVE.nodes.map(n=>`<option value="${n.node}">${n.node}</option>`).join('');
+  const storOpts = ulBuildStorageOpts(node, 'iso');
+
+  document.getElementById('modal-title').textContent = 'Upload ISO / CT Template';
+  document.getElementById('modal-body').innerHTML = `
+    <div class="create-vm-grid">
+      <div class="form-group">
+        <label>NODE</label>
+        <select id="ul-node" onchange="ulRefreshStorage()">${nodeOpts}</select>
+      </div>
+      <div class="form-group">
+        <label>CONTENT TYPE</label>
+        <select id="ul-type" onchange="ulRefreshStorage()">
+          <option value="iso">ISO Image (.iso)</option>
+          <option value="vztmpl">CT Template (.tar.gz / .tar.zst)</option>
+        </select>
+      </div>
+    </div>
+    <div class="form-group">
+      <label>STORAGE POOL</label>
+      <select id="ul-storage">${storOpts}</select>
+    </div>
+    <div class="form-group">
+      <label>FILE — select from your computer</label>
+      <input type="file" id="ul-file" accept=".iso,.img,.tar.gz,.tar.zst,.tar.xz,.tar.bz2"
+        style="width:100%;background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius);color:var(--text);padding:8px 10px;font-family:var(--font);font-size:13px;cursor:pointer"
+        onchange="ulFileChosen(this)"/>
+      <div id="ul-file-info" style="margin-top:5px;font-size:12px;color:var(--muted)"></div>
+    </div>
+    <div id="ul-progress-wrap" style="display:none;margin-top:10px">
+      <div style="display:flex;justify-content:space-between;margin-bottom:4px">
+        <span style="font-size:12px;color:var(--muted)" id="ul-progress-text">Uploading…</span>
+        <span style="font-size:12px;color:var(--accent)" id="ul-progress-pct">0%</span>
+      </div>
+      <div style="height:8px;background:var(--bg3);border-radius:4px;overflow:hidden">
+        <div id="ul-progress-bar" style="height:100%;background:var(--accent);width:0%;transition:width .3s;border-radius:4px"></div>
+      </div>
+    </div>`;
+
+  modalCallback = null;
+  const btn = document.getElementById('modal-confirm-btn');
+  btn.textContent = 'Upload';
+  btn.onclick = doUploadISO;
+  document.getElementById('modal-bg').classList.add('open');
+}
+
+function ulBuildStorageOpts(node, contentType) {
+  return PVE.storage
+    .filter(s => (!node || s.node === node) && (s.content||'').includes(contentType))
+    .map(s => `<option value="${s.storage}">${s.storage} [${s.type||'?'}]${s.avail?' ('+fmtBytes(s.avail)+' free)':''}</option>`)
+    .join('') || '<option value="local">local</option>';
+}
+
+function ulRefreshStorage() {
+  const node = document.getElementById('ul-node').value;
+  const ct   = document.getElementById('ul-type').value;
+  document.getElementById('ul-storage').innerHTML = ulBuildStorageOpts(node, ct);
+}
+
+function ulFileChosen(input) {
+  const el = document.getElementById('ul-file-info');
+  if (input.files.length) {
+    const f = input.files[0];
+    el.textContent = `${f.name} — ${fmtBytes(f.size)}`;
+  } else {
+    el.textContent = '';
+  }
+}
+
+function doUploadISO() {
+  const node    = document.getElementById('ul-node').value;
+  const storage = document.getElementById('ul-storage').value;
+  const ct      = document.getElementById('ul-type').value;
+  const fileInput = document.getElementById('ul-file');
+
+  if (!fileInput || !fileInput.files.length) return toast('Select a file first', 'error');
+  const file = fileInput.files[0];
+
+  // Lock UI and show progress
+  document.getElementById('ul-progress-wrap').style.display = '';
+  const confirmBtn = document.getElementById('modal-confirm-btn');
+  const cancelBtn  = document.querySelector('#modal .btn:not(.primary)');
+  confirmBtn.disabled = true; confirmBtn.textContent = 'Uploading…';
+  if (cancelBtn) cancelBtn.disabled = true;
+
+  const formData = new FormData();
+  formData.append('content', ct);
+  formData.append('filename', file);
+
+  const headers = {};
+  if (PVE.useToken) { headers['Authorization'] = PVE.tokenAuth; }
+  else {
+    if (PVE.ticket) headers['Authorization'] = `PVEAuthCookie=${PVE.ticket}`;
+    if (PVE.csrfToken) headers['CSRFPreventionToken'] = PVE.csrfToken;
+  }
+
+  const xhr = new XMLHttpRequest();
+  xhr.open('POST', `${PVE.host}/api2/json/nodes/${node}/storage/${storage}/upload`);
+  Object.entries(headers).forEach(([k,v]) => xhr.setRequestHeader(k, v));
+
+  xhr.upload.onprogress = e => {
+    if (!e.lengthComputable) return;
+    const pct = (e.loaded / e.total * 100).toFixed(1);
+    document.getElementById('ul-progress-bar').style.width = pct + '%';
+    document.getElementById('ul-progress-pct').textContent = pct + '%';
+    document.getElementById('ul-progress-text').textContent =
+      `${fmtBytes(e.loaded)} of ${fmtBytes(e.total)}`;
+  };
+
+  xhr.onload = () => {
+    if (xhr.status >= 200 && xhr.status < 300) {
+      try {
+        const res = JSON.parse(xhr.responseText);
+        const upid = res && res.data;
+        if (upid && typeof upid === 'string') tmRegister(upid, node, `Upload ${file.name}`);
+      } catch(e) { /* no UPID, that's fine */ }
+      toast(`Upload complete: ${file.name}`, 'success');
+      document.getElementById('modal-bg').classList.remove('open');
+      confirmBtn.onclick = confirmModal; confirmBtn.textContent = 'Confirm';
+      confirmBtn.disabled = false; if (cancelBtn) cancelBtn.disabled = false;
+      setTimeout(() => { if (isoLib.loaded) loadISOLibrary(); }, 2000);
+    } else {
+      toast(`Upload failed: HTTP ${xhr.status}`, 'error');
+      confirmBtn.disabled = false; confirmBtn.textContent = 'Retry';
+      if (cancelBtn) cancelBtn.disabled = false;
+    }
+  };
+
+  xhr.onerror = () => {
+    toast('Upload failed: network error', 'error');
+    confirmBtn.disabled = false; confirmBtn.textContent = 'Retry';
+    if (cancelBtn) cancelBtn.disabled = false;
+  };
+
+  xhr.send(formData);
 }
 
 // ── DOWNLOAD CT TEMPLATES ─────────────────────────────────
