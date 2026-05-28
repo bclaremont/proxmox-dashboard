@@ -681,6 +681,7 @@
           <button class="btn small primary" onclick="openCreateZoneModal()">+ Zone</button>
           <button class="btn small primary" onclick="openCreateVNetModal()">+ VNet</button>
           <button class="btn small primary" onclick="openCreateSubnetModal()">+ Subnet</button>
+          <button class="btn small primary" onclick="openCreateControllerModal()">+ Controller</button>
           <button class="btn small" onclick="loadSDN()">Refresh</button>
         </div>
       </div>
@@ -4500,22 +4501,26 @@ function renderISOLibrary() {
 // PUT  /api2/json/cluster/sdn                    — apply pending changes
 // Official: https://pve.proxmox.com/pve-docs/api-viewer/#/cluster/sdn
 
-let sdnData = { zones:[], vnets:[], subnets:{}, controllers:[] };
+let sdnData = { zones:[], vnets:[], subnets:{}, controllers:[], ipams:[], dns:[] };
 
 async function loadSDN() {
   const el = document.getElementById('sdn-content');
   el.innerHTML = '<div class="empty"><span class="loading"></span> Loading SDN configuration…</div>';
 
   try {
-    const [zonesRes, vnetsRes, ctrlRes] = await Promise.all([
+    const [zonesRes, vnetsRes, ctrlRes, ipamRes, dnsRes] = await Promise.all([
       pveGet('/api2/json/cluster/sdn/zones').catch(()=>({data:[]})),
       pveGet('/api2/json/cluster/sdn/vnets').catch(()=>({data:[]})),
       pveGet('/api2/json/cluster/sdn/controllers').catch(()=>({data:[]})),
+      pveGet('/api2/json/cluster/sdn/ipams').catch(()=>({data:[]})),
+      pveGet('/api2/json/cluster/sdn/dns').catch(()=>({data:[]})),
     ]);
 
-    sdnData.zones       = zonesRes.data  || [];
-    sdnData.vnets       = vnetsRes.data  || [];
-    sdnData.controllers = ctrlRes.data   || [];
+    sdnData.zones       = zonesRes.data || [];
+    sdnData.vnets       = vnetsRes.data || [];
+    sdnData.controllers = ctrlRes.data  || [];
+    sdnData.ipams       = ipamRes.data  || [];
+    sdnData.dns         = dnsRes.data   || [];
 
     // Subnets per VNet
     await Promise.all(sdnData.vnets.map(async v => {
@@ -4535,15 +4540,15 @@ async function loadSDN() {
 
 function renderSDN(pending) {
   const el = document.getElementById('sdn-content');
-  const { zones, vnets, subnets, controllers } = sdnData;
+  const { zones, vnets, subnets, controllers, ipams, dns } = sdnData;
 
   const totalSubnets = Object.values(subnets).reduce((a,v)=>a+v.length,0);
 
   let html = `
     <div class="stats-grid" style="margin-bottom:16px">
       <div class="stat-card accent-blue"><div class="label">Zones</div><div class="value">${zones.length}</div><div class="sub">${[...new Set(zones.map(z=>z.type))].join(', ')||'—'}</div></div>
-      <div class="stat-card accent-purple"><div class="label">VNets</div><div class="value">${vnets.length}</div></div>
-      <div class="stat-card accent-orange"><div class="label">Subnets</div><div class="value">${totalSubnets}</div></div>
+      <div class="stat-card accent-purple"><div class="label">VNets</div><div class="value">${vnets.length}</div><div class="sub">${totalSubnets} subnet(s)</div></div>
+      <div class="stat-card accent-orange"><div class="label">Controllers</div><div class="value">${controllers.length}</div><div class="sub">BGP / EVPN</div></div>
       <div class="stat-card accent-${pending>0?'yellow':'green'}"><div class="label">Pending Changes</div><div class="value" style="color:${pending>0?'var(--yellow)':'var(--green)'}">${pending}</div><div class="sub">${pending>0?'click Apply':'all applied'}</div></div>
     </div>`;
 
@@ -4646,17 +4651,63 @@ function renderSDN(pending) {
   }
 
   // ── CONTROLLERS ──
+  html += `<div class="section-header" style="margin-top:4px">
+    <span class="section-title">Controllers (${controllers.length})</span>
+  </div>`;
   if (controllers.length) {
-    html += `<div class="section-header"><span class="section-title">Controllers (${controllers.length})</span></div>
-      <div class="table-wrap" style="margin-bottom:20px"><table>
-        <thead><tr><th>Controller</th><th>Type</th><th>ASN</th><th>Peers</th></tr></thead>
-        <tbody>${controllers.map(c=>`<tr>
-          <td><strong>${escHtml(c.controller||c.id||'—')}</strong></td>
-          <td><span class="type-chip vm">${escHtml(c.type||'—')}</span></td>
-          <td style="font-family:monospace;font-size:12px">${c.asn||'—'}</td>
-          <td style="font-size:12px;color:var(--muted)">${escHtml(c.peers||'—')}</td>
-        </tr>`).join('')}</tbody>
-      </table></div>`;
+    html += `<div class="table-wrap" style="margin-bottom:20px"><table>
+      <thead><tr><th>Controller</th><th>Type</th><th>ASN</th><th>Node</th><th>eBGP</th><th>Peers</th><th></th></tr></thead>
+      <tbody>${controllers.map(c=>`<tr>
+        <td><strong>${escHtml(c.controller||c.id||'—')}</strong></td>
+        <td><span class="type-chip vm">${escHtml(c.type||'—')}</span></td>
+        <td style="font-family:monospace;font-size:12px">${c.asn||'—'}</td>
+        <td style="font-size:12px;color:var(--muted)">${escHtml(c.node||'all')}</td>
+        <td>${c.ebgp?'<span class="badge ok" style="font-size:10px">yes</span>':'<span style="font-size:11px;color:var(--muted)">no</span>'}</td>
+        <td style="font-size:11px;color:var(--muted);max-width:160px;overflow:hidden;text-overflow:ellipsis">${escHtml(c.peers||'—')}</td>
+        <td onclick="event.stopPropagation()"><button class="btn small danger" onclick="deleteSDNController('${escHtml(c.controller||c.id||'')}')">Delete</button></td>
+      </tr>`).join('')}</tbody>
+    </table></div>`;
+  } else {
+    html += `<div class="empty" style="margin-bottom:18px">No controllers configured. Required for EVPN zones — click <strong>+ Controller</strong> to create a BGP controller.</div>`;
+  }
+
+  // ── IPAM ──
+  html += `<div class="section-header">
+    <span class="section-title">IPAM (${ipams.length})</span>
+    <button class="btn small primary" onclick="openCreateIPAMModal()">+ IPAM</button>
+  </div>`;
+  if (ipams.length) {
+    html += `<div class="table-wrap" style="margin-bottom:20px"><table>
+      <thead><tr><th>IPAM</th><th>Type</th><th></th></tr></thead>
+      <tbody>${ipams.map(i=>`<tr>
+        <td><strong>${escHtml(i.ipam||'—')}</strong></td>
+        <td><span class="type-chip vm">${escHtml(i.type||'—')}</span></td>
+        <td onclick="event.stopPropagation()">
+          ${(i.ipam||'')!=='pve'?`<button class="btn small danger" onclick="deleteSDNIPAM('${escHtml(i.ipam||'')}')">Delete</button>`:'<span style="font-size:11px;color:var(--muted)">built-in</span>'}
+        </td>
+      </tr>`).join('')}</tbody>
+    </table></div>`;
+  } else {
+    html += `<div class="empty" style="margin-bottom:18px">No IPAM configured.</div>`;
+  }
+
+  // ── DNS ──
+  html += `<div class="section-header">
+    <span class="section-title">DNS (${dns.length})</span>
+    <button class="btn small primary" onclick="openCreateDNSModal()">+ DNS</button>
+  </div>`;
+  if (dns.length) {
+    html += `<div class="table-wrap" style="margin-bottom:20px"><table>
+      <thead><tr><th>DNS</th><th>Type</th><th>URL</th><th></th></tr></thead>
+      <tbody>${dns.map(d=>`<tr>
+        <td><strong>${escHtml(d.dns||'—')}</strong></td>
+        <td><span class="type-chip vm">${escHtml(d.type||'—')}</span></td>
+        <td style="font-size:12px;color:var(--muted)">${escHtml(d.url||'—')}</td>
+        <td onclick="event.stopPropagation()"><button class="btn small danger" onclick="deleteSDNDNS('${escHtml(d.dns||'')}')">Delete</button></td>
+      </tr>`).join('')}</tbody>
+    </table></div>`;
+  } else {
+    html += `<div class="empty" style="margin-bottom:18px">No DNS integration configured.</div>`;
   }
 
   el.innerHTML = html;
@@ -4885,6 +4936,222 @@ function deleteSDNSubnet(vnet, subnet) {
       toast(`Subnet "${subnet}" deleted — click Apply to activate`, 'success');
       setTimeout(loadSDN, 800);
     } catch(e) { toast('Delete subnet failed: '+e.message,'error'); }
+  };
+  document.getElementById('modal-bg').classList.add('open');
+}
+
+function openCreateControllerModal() {
+  document.getElementById('modal-title').textContent = 'Create BGP Controller';
+  document.getElementById('modal-body').innerHTML = `
+    <p style="color:var(--muted);font-size:12px;margin-bottom:14px">BGP controllers are used by EVPN zones for L2/L3 overlay routing.</p>
+    <div class="create-vm-grid">
+      <div class="form-group"><label>CONTROLLER ID</label><input id="sdn-ctrl-id" placeholder="bgp1"/></div>
+      <div class="form-group"><label>TYPE</label>
+        <select id="sdn-ctrl-type">
+          <option value="bgp">BGP — Border Gateway Protocol</option>
+        </select>
+      </div>
+    </div>
+    <div class="create-vm-grid">
+      <div class="form-group"><label>ASN — Autonomous System Number</label><input id="sdn-ctrl-asn" type="number" placeholder="65000" min="1" max="4294967295"/></div>
+      <div class="form-group"><label>NODE (optional — blank = all)</label><input id="sdn-ctrl-node" placeholder="pve1"/></div>
+    </div>
+    <div class="form-group"><label>PEERS (optional — comma-separated IPs)</label><input id="sdn-ctrl-peers" placeholder="10.0.0.1,10.0.0.2"/></div>
+    <div class="form-group"><label>LOOPBACK INTERFACE (optional)</label><input id="sdn-ctrl-loopback" placeholder="lo"/></div>
+    <div style="display:flex;gap:16px;margin-top:8px">
+      <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer">
+        <input type="checkbox" id="sdn-ctrl-ebgp" style="width:auto;height:auto;padding:0;margin:0"> eBGP (external BGP)
+      </label>
+      <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer">
+        <input type="checkbox" id="sdn-ctrl-ebgpmh" style="width:auto;height:auto;padding:0;margin:0"> eBGP multihop
+      </label>
+    </div>
+    <div id="sdn-ctrl-err" style="display:none;margin-top:10px;padding:8px 12px;background:rgba(248,81,73,.1);border:1px solid var(--red);border-radius:var(--radius);font-size:12px;color:var(--red)"></div>`;
+
+  modalCallback = null;
+  const btn = document.getElementById('modal-confirm-btn');
+  btn.textContent = 'Create Controller'; btn.disabled = false;
+  btn.onclick = async () => {
+    const id       = document.getElementById('sdn-ctrl-id').value.trim().toLowerCase();
+    const type     = document.getElementById('sdn-ctrl-type').value;
+    const asn      = document.getElementById('sdn-ctrl-asn').value;
+    const node     = document.getElementById('sdn-ctrl-node').value.trim();
+    const peers    = document.getElementById('sdn-ctrl-peers').value.trim();
+    const loopback = document.getElementById('sdn-ctrl-loopback').value.trim();
+    const ebgp     = document.getElementById('sdn-ctrl-ebgp').checked;
+    const ebgpmh   = document.getElementById('sdn-ctrl-ebgpmh').checked;
+    const errEl    = document.getElementById('sdn-ctrl-err');
+    const showErr  = msg => { errEl.textContent = msg; errEl.style.display = ''; };
+    errEl.style.display = 'none';
+    if (!id)  return showErr('Controller ID is required');
+    if (!asn) return showErr('ASN is required');
+    const params = { controller: id, type, asn: parseInt(asn) };
+    if (node)     params.node        = node;
+    if (peers)    params.peers       = peers;
+    if (loopback) params.loopback    = loopback;
+    if (ebgp)     params.ebgp        = 1;
+    if (ebgpmh)   params['ebgp-multihop'] = 1;
+    btn.disabled = true; btn.textContent = 'Creating…';
+    try {
+      await pvePost('/api2/json/cluster/sdn/controllers', params);
+      document.getElementById('modal-bg').classList.remove('open');
+      btn.onclick = confirmModal; btn.textContent = 'Confirm'; btn.disabled = false;
+      toast(`Controller "${id}" created — click Apply to activate`, 'success');
+      setTimeout(loadSDN, 1200);
+    } catch(e) {
+      btn.disabled = false; btn.textContent = 'Create Controller';
+      let msg = e.message;
+      try { const b=JSON.parse(msg.replace(/^HTTP \d+: /,'')); if(b&&b.errors) msg=Object.values(b.errors).join('; '); } catch(_){}
+      showErr('Error: ' + msg);
+    }
+  };
+  document.getElementById('modal-bg').classList.add('open');
+}
+
+function deleteSDNController(controller) {
+  document.getElementById('modal-title').textContent = `Delete Controller "${controller}"`;
+  document.getElementById('modal-body').innerHTML = `
+    <p style="color:var(--muted)">Delete controller <strong style="color:var(--red)">${escHtml(controller)}</strong>?</p>
+    <p style="color:var(--red);font-size:12px;margin-top:8px">⚠ Any EVPN zones referencing this controller must be updated. Changes take effect after Apply.</p>`;
+  modalCallback = async () => {
+    try {
+      await pveDelete(`/api2/json/cluster/sdn/controllers/${controller}`);
+      toast(`Controller "${controller}" deleted — click Apply to activate`, 'success');
+      setTimeout(loadSDN, 800);
+    } catch(e) { toast('Delete failed: '+e.message,'error'); }
+  };
+  document.getElementById('modal-bg').classList.add('open');
+}
+
+function openCreateIPAMModal() {
+  document.getElementById('modal-title').textContent = 'Add IPAM';
+  document.getElementById('modal-body').innerHTML = `
+    <div class="create-vm-grid">
+      <div class="form-group"><label>IPAM ID</label><input id="sdn-ipam-id" placeholder="myipam"/></div>
+      <div class="form-group"><label>TYPE</label>
+        <select id="sdn-ipam-type" onchange="ipamTypeChange()">
+          <option value="pve">PVE — built-in IPAM (default)</option>
+          <option value="phpipam">phpIPAM — external</option>
+          <option value="netbox">NetBox — external</option>
+        </select>
+      </div>
+    </div>
+    <div id="sdn-ipam-extra"></div>
+    <div id="sdn-ipam-err" style="display:none;margin-top:10px;padding:8px 12px;background:rgba(248,81,73,.1);border:1px solid var(--red);border-radius:var(--radius);font-size:12px;color:var(--red)"></div>`;
+  ipamTypeChange();
+  modalCallback = null;
+  const btn = document.getElementById('modal-confirm-btn');
+  btn.textContent = 'Add IPAM'; btn.disabled = false;
+  btn.onclick = async () => {
+    const id   = document.getElementById('sdn-ipam-id').value.trim().toLowerCase();
+    const type = document.getElementById('sdn-ipam-type').value;
+    const url  = (document.getElementById('sdn-ipam-url')||{}).value||'';
+    const tok  = (document.getElementById('sdn-ipam-token')||{}).value||'';
+    const errEl = document.getElementById('sdn-ipam-err');
+    const showErr = msg => { errEl.textContent = msg; errEl.style.display = ''; };
+    errEl.style.display = 'none';
+    if (!id) return showErr('IPAM ID is required');
+    const params = { ipam: id, type };
+    if (url) params.url   = url;
+    if (tok) params.token = tok;
+    btn.disabled = true; btn.textContent = 'Adding…';
+    try {
+      await pvePost('/api2/json/cluster/sdn/ipams', params);
+      document.getElementById('modal-bg').classList.remove('open');
+      btn.onclick = confirmModal; btn.textContent = 'Confirm'; btn.disabled = false;
+      toast(`IPAM "${id}" added`, 'success');
+      setTimeout(loadSDN, 1200);
+    } catch(e) {
+      btn.disabled = false; btn.textContent = 'Add IPAM';
+      let msg = e.message;
+      try { const b=JSON.parse(msg.replace(/^HTTP \d+: /,'')); if(b&&b.errors) msg=Object.values(b.errors).join('; '); } catch(_){}
+      showErr('Error: ' + msg);
+    }
+  };
+  document.getElementById('modal-bg').classList.add('open');
+}
+
+function ipamTypeChange() {
+  const type  = (document.getElementById('sdn-ipam-type')||{}).value;
+  const extra = document.getElementById('sdn-ipam-extra');
+  if (!extra) return;
+  if (type === 'phpipam' || type === 'netbox') {
+    extra.innerHTML = `
+      <div class="form-group"><label>URL</label><input id="sdn-ipam-url" placeholder="https://ipam.example.com"/></div>
+      <div class="form-group"><label>API TOKEN</label><input id="sdn-ipam-token" placeholder="token"/></div>`;
+  } else {
+    extra.innerHTML = '';
+  }
+}
+
+function deleteSDNIPAM(ipam) {
+  document.getElementById('modal-title').textContent = `Delete IPAM "${ipam}"`;
+  document.getElementById('modal-body').innerHTML = `<p style="color:var(--muted)">Delete IPAM <strong style="color:var(--red)">${escHtml(ipam)}</strong>?</p>`;
+  modalCallback = async () => {
+    try {
+      await pveDelete(`/api2/json/cluster/sdn/ipams/${ipam}`);
+      toast(`IPAM "${ipam}" deleted`, 'success');
+      setTimeout(loadSDN, 800);
+    } catch(e) { toast('Delete failed: '+e.message,'error'); }
+  };
+  document.getElementById('modal-bg').classList.add('open');
+}
+
+function openCreateDNSModal() {
+  document.getElementById('modal-title').textContent = 'Add DNS Integration';
+  document.getElementById('modal-body').innerHTML = `
+    <div class="create-vm-grid">
+      <div class="form-group"><label>DNS ID</label><input id="sdn-dns-id" placeholder="mydns"/></div>
+      <div class="form-group"><label>TYPE</label>
+        <select id="sdn-dns-type">
+          <option value="powerdns">PowerDNS</option>
+        </select>
+      </div>
+    </div>
+    <div class="form-group"><label>URL</label><input id="sdn-dns-url" placeholder="https://dns.example.com"/></div>
+    <div class="form-group"><label>API KEY</label><input id="sdn-dns-key" placeholder="api key"/></div>
+    <div id="sdn-dns-err" style="display:none;margin-top:10px;padding:8px 12px;background:rgba(248,81,73,.1);border:1px solid var(--red);border-radius:var(--radius);font-size:12px;color:var(--red)"></div>`;
+  modalCallback = null;
+  const btn = document.getElementById('modal-confirm-btn');
+  btn.textContent = 'Add DNS'; btn.disabled = false;
+  btn.onclick = async () => {
+    const id   = document.getElementById('sdn-dns-id').value.trim().toLowerCase();
+    const type = document.getElementById('sdn-dns-type').value;
+    const url  = document.getElementById('sdn-dns-url').value.trim();
+    const key  = document.getElementById('sdn-dns-key').value.trim();
+    const errEl = document.getElementById('sdn-dns-err');
+    const showErr = msg => { errEl.textContent = msg; errEl.style.display = ''; };
+    errEl.style.display = 'none';
+    if (!id)  return showErr('DNS ID is required');
+    if (!url) return showErr('URL is required');
+    const params = { dns: id, type, url };
+    if (key) params.key = key;
+    btn.disabled = true; btn.textContent = 'Adding…';
+    try {
+      await pvePost('/api2/json/cluster/sdn/dns', params);
+      document.getElementById('modal-bg').classList.remove('open');
+      btn.onclick = confirmModal; btn.textContent = 'Confirm'; btn.disabled = false;
+      toast(`DNS "${id}" added`, 'success');
+      setTimeout(loadSDN, 1200);
+    } catch(e) {
+      btn.disabled = false; btn.textContent = 'Add DNS';
+      let msg = e.message;
+      try { const b=JSON.parse(msg.replace(/^HTTP \d+: /,'')); if(b&&b.errors) msg=Object.values(b.errors).join('; '); } catch(_){}
+      showErr('Error: ' + msg);
+    }
+  };
+  document.getElementById('modal-bg').classList.add('open');
+}
+
+function deleteSDNDNS(dns) {
+  document.getElementById('modal-title').textContent = `Delete DNS "${dns}"`;
+  document.getElementById('modal-body').innerHTML = `<p style="color:var(--muted)">Delete DNS integration <strong style="color:var(--red)">${escHtml(dns)}</strong>?</p>`;
+  modalCallback = async () => {
+    try {
+      await pveDelete(`/api2/json/cluster/sdn/dns/${dns}`);
+      toast(`DNS "${dns}" deleted`, 'success');
+      setTimeout(loadSDN, 800);
+    } catch(e) { toast('Delete failed: '+e.message,'error'); }
   };
   document.getElementById('modal-bg').classList.add('open');
 }
