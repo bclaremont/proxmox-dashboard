@@ -4620,6 +4620,30 @@ function renderSDN(pending) {
     html += `<div class="empty" style="margin-bottom:18px">No VNets configured. Click <strong>+ VNet</strong> to create one.</div>`;
   }
 
+  // ── SUBNETS ──
+  const allSubnets = Object.entries(subnets).flatMap(([vnet, subs]) => subs.map(s=>({...s, vnet})));
+  if (allSubnets.length) {
+    html += `<div class="section-header"><span class="section-title">Subnets (${allSubnets.length})</span></div>
+      <div class="table-wrap" style="margin-bottom:20px"><table>
+        <thead><tr><th>Subnet (CIDR)</th><th>VNet</th><th>Gateway</th><th>DHCP Range</th><th>SNAT</th><th>State</th><th></th></tr></thead>
+        <tbody>${allSubnets.map(s => {
+          const state = s.state || 'active';
+          const stateBadge = state==='active'
+            ? '<span class="badge ok" style="font-size:10px"><span class="badge-dot"></span>active</span>'
+            : '<span class="badge warning" style="font-size:10px"><span class="badge-dot"></span>'+escHtml(state)+'</span>';
+          return `<tr>
+            <td><strong style="font-family:monospace">${escHtml(s.subnet||'—')}</strong></td>
+            <td style="color:var(--muted)">${escHtml(s.vnet)}</td>
+            <td style="font-family:monospace;font-size:12px;color:var(--muted)">${escHtml(s.gateway||'—')}</td>
+            <td style="font-size:11px;color:var(--muted)">${escHtml(s['dhcp-range']||'—')}</td>
+            <td>${s.snat?'<span class="badge ok" style="font-size:10px">on</span>':'<span style="font-size:11px;color:var(--muted)">off</span>'}</td>
+            <td>${stateBadge}</td>
+            <td onclick="event.stopPropagation()"><button class="btn small danger" onclick="deleteSDNSubnet('${escHtml(s.vnet)}','${escHtml(s.subnet||'')}')">Delete</button></td>
+          </tr>`;
+        }).join('')}</tbody>
+      </table></div>`;
+  }
+
   // ── CONTROLLERS ──
   if (controllers.length) {
     html += `<div class="section-header"><span class="section-title">Controllers (${controllers.length})</span></div>
@@ -4669,40 +4693,48 @@ function openCreateZoneModal() {
     <div id="sdn-zone-extra"></div>
     <div id="sdn-zone-err" style="display:none;margin-top:10px;padding:8px 12px;background:rgba(248,81,73,.1);border:1px solid var(--red);border-radius:var(--radius);font-size:12px;color:var(--red)"></div>`;
   sdnZoneTypeChange();
-  modalCallback = async () => {
-    const zone = document.getElementById('sdn-zone-id').value.trim().toLowerCase();
-    const type = document.getElementById('sdn-zone-type').value;
+  modalCallback = null;
+  const zConfirmBtn = document.getElementById('modal-confirm-btn');
+  zConfirmBtn.textContent = 'Create Zone';
+  zConfirmBtn.onclick = async () => {
+    const zone  = document.getElementById('sdn-zone-id').value.trim().toLowerCase();
+    const type  = document.getElementById('sdn-zone-type').value;
     const nodes = document.getElementById('sdn-zone-nodes').value.trim();
     const mtu   = document.getElementById('sdn-zone-mtu').value;
     const errEl = document.getElementById('sdn-zone-err');
     const showErr = msg => { errEl.textContent = msg; errEl.style.display = ''; };
+    errEl.style.display = 'none';
     if (!zone) return showErr('Zone ID is required');
     const params = { zone, type };
     if (nodes) params.nodes = nodes;
     if (mtu)   params.mtu   = mtu;
     const g = id => (document.getElementById(id)||{}).value||'';
     if (type==='vlan'||type==='qinq') {
-      if (!g('sdn-zone-bridge')) return toast('Bridge required for VLAN/QinQ','error');
+      if (!g('sdn-zone-bridge')) return showErr('Bridge is required for VLAN/QinQ zones');
       params.bridge = g('sdn-zone-bridge');
     }
     if (type==='vxlan'||type==='evpn') {
-      if (!g('sdn-zone-peers')) return toast('Peers required for VXLAN/EVPN','error');
+      if (!g('sdn-zone-peers')) return showErr('Peers are required for VXLAN/EVPN zones');
       params.peers = g('sdn-zone-peers');
     }
     if (type==='evpn') {
-      if (!g('sdn-zone-ctrl')) return toast('Controller required for EVPN','error');
+      if (!g('sdn-zone-ctrl')) return showErr('Controller is required for EVPN zones');
       params.controller = g('sdn-zone-ctrl');
-      if (g('sdn-zone-vrf')) params['vrf-vxlan'] = g('sdn-zone-vrf');
-      if (g('sdn-zone-exit')) params.exitnodes = g('sdn-zone-exit');
+      if (g('sdn-zone-vrf'))  params['vrf-vxlan'] = g('sdn-zone-vrf');
+      if (g('sdn-zone-exit')) params.exitnodes     = g('sdn-zone-exit');
     }
+    zConfirmBtn.disabled = true; zConfirmBtn.textContent = 'Creating…';
     try {
       await pvePost('/api2/json/cluster/sdn/zones', params);
+      document.getElementById('modal-bg').classList.remove('open');
+      zConfirmBtn.onclick = confirmModal; zConfirmBtn.textContent = 'Confirm'; zConfirmBtn.disabled = false;
       toast(`Zone "${zone}" created — click Apply to activate`, 'success');
-      setTimeout(loadSDN, 800);
+      setTimeout(loadSDN, 1200);
     } catch(e) {
+      zConfirmBtn.disabled = false; zConfirmBtn.textContent = 'Create Zone';
       let msg = e.message;
-      try { const b=JSON.parse(msg.split(': ').slice(1).join(': ')); if(b&&b.errors) msg=Object.values(b.errors).join('; '); } catch(_){}
-      showErr('Proxmox error: '+msg);
+      try { const b=JSON.parse(msg.replace(/^HTTP \d+: /,'')); if(b&&b.errors) msg=Object.values(b.errors).join('; '); } catch(_){}
+      showErr('Error: ' + msg);
     }
   };
   document.getElementById('modal-bg').classList.add('open');
@@ -4749,7 +4781,11 @@ function openCreateVNetModal() {
       <input type="checkbox" id="sdn-vnet-vlanaware" style="width:auto;height:auto;padding:0;margin:0"> VLAN-aware (guests can use multiple VLANs on this VNet)
     </label>
     <div id="sdn-vnet-err" style="display:none;margin-top:10px;padding:8px 12px;background:rgba(248,81,73,.1);border:1px solid var(--red);border-radius:var(--radius);font-size:12px;color:var(--red)"></div>`;
-  modalCallback = async () => {
+  // Validate BEFORE closing modal by overriding confirm button directly
+  modalCallback = null;
+  const confirmBtn = document.getElementById('modal-confirm-btn');
+  confirmBtn.textContent = 'Create VNet';
+  confirmBtn.onclick = async () => {
     const vnet  = document.getElementById('sdn-vnet-id').value.trim().toLowerCase();
     const zone  = document.getElementById('sdn-vnet-zone').value;
     const alias = document.getElementById('sdn-vnet-alias').value.trim();
@@ -4757,22 +4793,25 @@ function openCreateVNetModal() {
     const vla   = document.getElementById('sdn-vnet-vlanaware').checked;
     const errEl = document.getElementById('sdn-vnet-err');
     const showErr = msg => { errEl.textContent = msg; errEl.style.display = ''; };
-    if (!vnet)                          return showErr('VNet ID is required');
-    if (!/^[a-z][a-z0-9]{0,7}$/.test(vnet)) return showErr('VNet ID: 1–8 chars, lowercase letters/digits, must start with a letter');
     errEl.style.display = 'none';
+    if (!vnet)                               return showErr('VNet ID is required');
+    if (!/^[a-z][a-z0-9]{0,7}$/.test(vnet)) return showErr('VNet ID: 1–8 chars, lowercase a–z/0–9, must start with letter');
     const params = { vnet, zone };
     if (alias) params.alias = alias;
     if (tag)   params.tag   = parseInt(tag);
     if (vla)   params.vlanaware = 1;
+    confirmBtn.disabled = true; confirmBtn.textContent = 'Creating…';
     try {
       await pvePost('/api2/json/cluster/sdn/vnets', params);
+      document.getElementById('modal-bg').classList.remove('open');
+      confirmBtn.onclick = confirmModal; confirmBtn.textContent = 'Confirm'; confirmBtn.disabled = false;
       toast(`VNet "${vnet}" created — click Apply to activate`, 'success');
-      setTimeout(loadSDN, 800);
+      setTimeout(loadSDN, 1200);
     } catch(e) {
-      // Extract Proxmox error detail and show inline
+      confirmBtn.disabled = false; confirmBtn.textContent = 'Create VNet';
       let msg = e.message;
-      try { const b=JSON.parse(msg.split(': ').slice(1).join(': ')); if(b&&b.errors) msg=Object.values(b.errors).join('; '); } catch(_){}
-      showErr('Proxmox error: '+msg);
+      try { const b=JSON.parse(msg.replace(/^HTTP \d+: /,'')); if(b&&b.errors) msg=Object.values(b.errors).join('; '); } catch(_){}
+      showErr('Error: ' + msg);
     }
   };
   document.getElementById('modal-bg').classList.add('open');
@@ -4789,21 +4828,47 @@ function openCreateSubnetModal(vnet) {
     <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;margin-top:8px">
       <input type="checkbox" id="sdn-sub-snat" style="width:auto;height:auto;padding:0;margin:0"> Enable SNAT (source NAT for outbound traffic)
     </label>`;
-  modalCallback = async () => {
+  modalCallback = null;
+  const sConfirmBtn = document.getElementById('modal-confirm-btn');
+  sConfirmBtn.textContent = 'Add Subnet';
+  sConfirmBtn.onclick = async () => {
     const cidr = document.getElementById('sdn-sub-cidr').value.trim();
     const gw   = document.getElementById('sdn-sub-gw').value.trim();
     const dhcp = document.getElementById('sdn-sub-dhcp').value.trim();
     const snat = document.getElementById('sdn-sub-snat').checked;
-    if (!cidr) return toast('Enter a subnet CIDR','error');
+    if (!cidr) return toast('Enter a subnet CIDR (e.g. 10.0.0.0/24)', 'error');
     const params = { subnet: cidr };
     if (gw)   params.gateway = gw;
     if (dhcp) params['dhcp-range'] = dhcp;
     if (snat) params.snat = 1;
+    sConfirmBtn.disabled = true; sConfirmBtn.textContent = 'Adding…';
     try {
       await pvePost(`/api2/json/cluster/sdn/vnets/${vnet}/subnets`, params);
+      document.getElementById('modal-bg').classList.remove('open');
+      sConfirmBtn.onclick = confirmModal; sConfirmBtn.textContent = 'Confirm'; sConfirmBtn.disabled = false;
       toast(`Subnet ${cidr} added — click Apply to activate`, 'success');
+      setTimeout(loadSDN, 1200);
+    } catch(e) {
+      sConfirmBtn.disabled = false; sConfirmBtn.textContent = 'Add Subnet';
+      let msg = e.message;
+      try { const b=JSON.parse(msg.replace(/^HTTP \d+: /,'')); if(b&&b.errors) msg=Object.values(b.errors).join('; '); } catch(_){}
+      toast('Create subnet failed: '+msg, 'error');
+    }
+  };
+  document.getElementById('modal-bg').classList.add('open');
+}
+
+function deleteSDNSubnet(vnet, subnet) {
+  document.getElementById('modal-title').textContent = `Delete Subnet "${subnet}"`;
+  document.getElementById('modal-body').innerHTML = `
+    <p style="color:var(--muted)">Delete subnet <strong style="color:var(--red);font-family:monospace">${escHtml(subnet)}</strong> from VNet <strong>${escHtml(vnet)}</strong>?</p>
+    <p style="color:var(--red);font-size:12px;margin-top:8px">⚠ Changes take effect after Apply.</p>`;
+  modalCallback = async () => {
+    try {
+      await pveDelete(`/api2/json/cluster/sdn/vnets/${vnet}/subnets/${encodeURIComponent(subnet)}`);
+      toast(`Subnet "${subnet}" deleted — click Apply to activate`, 'success');
       setTimeout(loadSDN, 800);
-    } catch(e) { toast('Create subnet failed: '+e.message,'error'); }
+    } catch(e) { toast('Delete subnet failed: '+e.message,'error'); }
   };
   document.getElementById('modal-bg').classList.add('open');
 }
