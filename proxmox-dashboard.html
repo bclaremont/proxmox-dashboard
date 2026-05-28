@@ -402,10 +402,6 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="3"/><line x1="12" y1="2" x2="12" y2="5"/><line x1="12" y1="19" x2="12" y2="22"/><line x1="2" y1="12" x2="5" y2="12"/><line x1="19" y1="12" x2="22" y2="12"/></svg>
         ISO &amp; Templates
       </div>
-      <div class="nav-item" onclick="openDownloadTemplatesModal()">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-        Download CT Templates
-      </div>
     </div>
     <div class="sidebar-section">
       <div class="sidebar-label">Infrastructure</div>
@@ -4531,14 +4527,29 @@ function doUploadISO() {
       confirmBtn.disabled = false; if (cancelBtn) cancelBtn.disabled = false;
       setTimeout(() => { if (isoLib.loaded) loadISOLibrary(); }, 2000);
     } else {
-      toast(`Upload failed: HTTP ${xhr.status}`, 'error');
+      // Extract the actual Proxmox error message from the response body
+      let errMsg = `HTTP ${xhr.status}`;
+      try {
+        const body = JSON.parse(xhr.responseText);
+        if (body && body.errors) errMsg += ': ' + Object.values(body.errors).join('; ');
+        else if (body && body.message) errMsg += ': ' + body.message;
+        else if (xhr.responseText) errMsg += ': ' + xhr.responseText.substring(0, 200);
+      } catch(e) {
+        if (xhr.responseText) errMsg += ': ' + xhr.responseText.substring(0, 200);
+      }
+      // Show error inline too so it doesn't vanish with the toast
+      const progressText = document.getElementById('ul-progress-text');
+      if (progressText) { progressText.style.color = 'var(--red)'; progressText.textContent = errMsg; }
+      const progressBar = document.getElementById('ul-progress-bar');
+      if (progressBar) progressBar.style.background = 'var(--red)';
+      toast(`Upload failed — ${errMsg}`, 'error');
       confirmBtn.disabled = false; confirmBtn.textContent = 'Retry';
       if (cancelBtn) cancelBtn.disabled = false;
     }
   };
 
   xhr.onerror = () => {
-    toast('Upload failed: network error', 'error');
+    toast('Upload failed: network error (check browser console)', 'error');
     confirmBtn.disabled = false; confirmBtn.textContent = 'Retry';
     if (cancelBtn) cancelBtn.disabled = false;
   };
