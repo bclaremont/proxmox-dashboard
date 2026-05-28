@@ -252,6 +252,32 @@
     .fw-vm-tab .badge{font-size:10px;}
     .step-label{font-size:10px;text-transform:uppercase;letter-spacing:1px;color:var(--muted);margin-bottom:3px;}
 
+    /* CREATE VM WIZARD */
+    #wizard-bg{display:none;position:fixed;inset:0;background:rgba(0,0,0,.75);z-index:650;align-items:center;justify-content:center;}
+    #wizard-bg.open{display:flex;}
+    #wizard{background:var(--bg2);border:1px solid var(--border);border-radius:12px;width:700px;max-width:95vw;max-height:92vh;display:flex;flex-direction:column;overflow:hidden;}
+    .wiz-header{padding:16px 22px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px;}
+    .wiz-header h3{font-size:16px;font-weight:700;flex:1;margin:0;}
+    .wiz-steps{display:flex;background:var(--bg3);border-bottom:1px solid var(--border);}
+    .wstep{flex:1;padding:9px 4px;text-align:center;font-size:10px;color:var(--muted);cursor:default;border-bottom:2px solid transparent;transition:all .15s;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+    .wstep.active{color:var(--accent);border-bottom-color:var(--accent);background:rgba(249,115,22,.05);}
+    .wstep.done{color:var(--green);border-bottom-color:var(--green);}
+    .wstep-num{display:inline-block;width:16px;height:16px;border-radius:50%;font-size:9px;font-weight:700;background:var(--border);color:var(--muted);text-align:center;line-height:16px;margin-right:3px;}
+    .wstep.active .wstep-num{background:var(--accent);color:#fff;}
+    .wstep.done .wstep-num{background:var(--green);color:#fff;}
+    .wiz-footer{padding:14px 22px;border-top:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;background:var(--bg3);}
+    .wiz-summary-row{display:flex;justify-content:space-between;padding:7px 0;border-bottom:1px solid var(--border);font-size:13px;}
+    .wiz-summary-row:last-child{border-bottom:none;}
+    .wiz-summary-row .key{color:var(--muted);font-size:12px;}
+    /* ISO LIBRARY */
+    .iso-item{display:flex;align-items:center;gap:10px;padding:8px 12px;cursor:pointer;border-bottom:1px solid var(--border);transition:background .1s;}
+    .iso-item:last-child{border-bottom:none;}
+    .iso-item:hover{background:var(--bg3);}
+    .iso-item.selected{background:rgba(249,115,22,.08);}
+    .iso-item input[type=radio]{accent-color:var(--accent);flex-shrink:0;width:auto;height:auto;padding:0;margin:0;}
+    .iso-name{font-size:13px;font-weight:600;}
+    .iso-meta{font-size:11px;color:var(--muted);}
+
     /* BATCH 4 */
     .audit-user{color:var(--accent);font-weight:600;}
     .audit-type{color:var(--blue);}
@@ -367,6 +393,10 @@
       <div class="nav-item" onclick="openBulkModal()">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>
         Bulk Power
+      </div>
+      <div class="nav-item" data-view="isolib" onclick="switchView('isolib')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="3"/><line x1="12" y1="2" x2="12" y2="5"/><line x1="12" y1="19" x2="12" y2="22"/><line x1="2" y1="12" x2="5" y2="12"/><line x1="19" y1="12" x2="22" y2="12"/></svg>
+        ISO &amp; Templates
       </div>
     </div>
     <div class="sidebar-section">
@@ -599,6 +629,26 @@
       <div id="heatmap-content"></div>
     </div>
 
+    <!-- ISO & TEMPLATE LIBRARY -->
+    <div id="view-isolib" style="display:none">
+      <div class="section-header">
+        <span class="section-title">ISO Images &amp; CT Templates</span>
+        <div style="display:flex;gap:6px;align-items:center">
+          <input id="isolib-q" type="text" placeholder="Search…" style="width:140px;padding:5px 10px;font-size:13px" oninput="if(isoLib.loaded)renderISOLibrary()"/>
+          <select id="isolib-type" style="width:130px;padding:5px 8px;font-size:13px" onchange="if(isoLib.loaded)renderISOLibrary()">
+            <option value="">All Types</option>
+            <option value="iso">ISO Images</option>
+            <option value="vztmpl">CT Templates</option>
+          </select>
+          <select id="isolib-node" style="width:120px;padding:5px 8px;font-size:13px" onchange="if(isoLib.loaded)renderISOLibrary()">
+            <option value="">All Nodes</option>
+          </select>
+          <button class="btn small" onclick="loadISOLibrary()">Refresh</button>
+        </div>
+      </div>
+      <div id="isolib-content"><div class="empty">Loading…</div></div>
+    </div>
+
     <!-- CEPH -->
     <div id="view-ceph" style="display:none">
       <div class="section-header">
@@ -739,6 +789,24 @@
     <div class="modal-actions">
       <button class="btn" onclick="closeModal()">Cancel</button>
       <button class="btn primary" id="modal-confirm-btn" onclick="confirmModal()">Confirm</button>
+    </div>
+  </div>
+</div>
+
+<!-- CREATE VM WIZARD -->
+<div id="wizard-bg" onclick="closeWizard(event)">
+  <div id="wizard">
+    <div class="wiz-header">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:20px;height:20px;color:var(--accent);flex-shrink:0"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="12" y1="8" x2="12" y2="14"/><line x1="9" y1="11" x2="15" y2="11"/></svg>
+      <h3>Create Virtual Machine</h3>
+      <button class="btn small" onclick="closeWizard()">✕</button>
+    </div>
+    <div class="wiz-steps" id="wiz-steps"></div>
+    <div id="wiz-body" style="flex:1;overflow-y:auto;padding:22px 24px"></div>
+    <div class="wiz-footer">
+      <button class="btn" id="wiz-back-btn" onclick="wizBack()" style="display:none">← Back</button>
+      <span id="wiz-step-info" style="color:var(--muted);font-size:12px"></span>
+      <button class="btn primary" id="wiz-next-btn" onclick="wizNext()">Next →</button>
     </div>
   </div>
 </div>
@@ -986,6 +1054,7 @@ async function openDetail(item) {
   // Add console to running action buttons
   document.getElementById('detail-actions').innerHTML += running
     ? `<button class="btn small" onclick="openConsole('${item.node}','${item.vmid}','${item.type}')">⌨ Console</button>` : '';
+  document.getElementById('detail-actions').innerHTML += `<button class="btn small" onclick="openCloneModal('${item.node}','${item.vmid}','${item.type}','${(item.name||'').replace(/['"]/g,'')}')">⎘ Clone</button>`;
   switchDetailTab('overview');
   loadDetailOverview(item);
 }
@@ -1452,7 +1521,7 @@ async function migrateVM(node, vmid, type, targetNode, online=false, withLocal=f
 // ── RENDERING ─────────────────────────────────────────────
 
 function switchView(view) {
-  const views=['connect','overview','vms','containers','nodes','tasks','syslog','storage','network','heatmap','ceph','ha','firewall','backups','users','certs','audit','clustergraphs'];
+  const views=['connect','overview','vms','containers','nodes','tasks','syslog','storage','network','heatmap','isolib','ceph','ha','firewall','backups','users','certs','audit','clustergraphs'];
   views.forEach(v=>{
     const el=document.getElementById('view-'+v);
     if(el) el.style.display=v===view?'':'none';
@@ -1492,6 +1561,7 @@ function switchView(view) {
   if(view==='certs') loadCerts();
   if(view==='audit') loadAudit();
   if(view==='clustergraphs') loadClusterGraphs();
+  if(view==='isolib') loadISOLibrary();
   if(view!=='connect') renderCurrentView();
 }
 
@@ -1587,6 +1657,7 @@ function vmRow(x,showType=false){
           :`<button class="btn small success" onclick="vmAction('${x.node}','${x.vmid}','${x.type}','start')" title="Start">▶</button>`
         }
         <button class="btn small" onclick="openMigrateModal('${x.node}','${x.vmid}','${x.type}')" title="Migrate">⇢</button>
+        <button class="btn small" onclick="openCloneModal('${x.node}','${x.vmid}','${x.type}','${(x.name||'').replace(/['"]/g,'')}')" title="Clone">⎘</button>
       </div>
     </td>
   </tr>`;
@@ -2893,125 +2964,288 @@ async function loadCerts() {
 }
 
 // ── CREATE VM WIZARD ──────────────────────────────────────
-// POST /api2/json/nodes/{node}/qemu   - create new VM
+// Multi-step wizard for creating QEMU/KVM VMs
+// POST /api2/json/nodes/{node}/qemu
 // Official: https://pve.proxmox.com/pve-docs/api-viewer/#/nodes/{node}/qemu
-function openCreateVMModal() {
-  const nodeOpts = PVE.nodes.map(n => `<option value="${n.node}">${n.node}</option>`).join('');
-  // Get unique storage pools that support disk images
-  const storageOpts = [...new Set(
-    PVE.storage
-      .filter(s => !s.content || s.content.includes('images') || s.content.includes('rootdir'))
-      .map(s => s.storage)
-  )].map(s => `<option value="${s}">${s}</option>`).join('');
 
-  document.getElementById('modal-title').textContent = 'Create Virtual Machine';
-  document.getElementById('modal-body').innerHTML = `
-    <p style="color:var(--muted);font-size:12px;margin-bottom:14px">
-      Creates a new QEMU/KVM VM via POST /api2/json/nodes/{node}/qemu.<br>
-      For ISO selection and advanced options, use the Proxmox web UI after creation.
-    </p>
-    <div class="create-vm-grid">
-      <div class="form-group">
-        <div class="step-label">Node</div>
-        <select id="cvm-node">${nodeOpts}</select>
-      </div>
-      <div class="form-group">
-        <div class="step-label">VM ID (100–999999)</div>
-        <input id="cvm-vmid" type="number" placeholder="e.g. 101" min="100" max="999999"/>
-      </div>
-    </div>
-    <div class="form-group">
-      <div class="step-label">VM Name</div>
-      <input id="cvm-name" placeholder="e.g. ubuntu-server"/>
-    </div>
-    <div class="create-vm-grid">
-      <div class="form-group">
-        <div class="step-label">Memory (MiB)</div>
-        <input id="cvm-mem" type="number" value="2048" min="64"/>
-      </div>
-      <div class="form-group">
-        <div class="step-label">CPU Cores</div>
-        <input id="cvm-cores" type="number" value="2" min="1" max="128"/>
-      </div>
-    </div>
-    <div class="create-vm-grid">
-      <div class="form-group">
-        <div class="step-label">Disk Size (GB)</div>
-        <input id="cvm-disk" type="number" value="32" min="1"/>
-      </div>
-      <div class="form-group">
-        <div class="step-label">Storage Pool</div>
-        <select id="cvm-storage">${storageOpts || '<option>local</option>'}</select>
-      </div>
-    </div>
-    <div class="create-vm-grid">
-      <div class="form-group">
-        <div class="step-label">OS Type</div>
-        <select id="cvm-ostype">
-          <option value="l26">Linux 2.6+ (modern)</option>
-          <option value="l24">Linux 2.4</option>
-          <option value="win11">Windows 11</option>
-          <option value="win10">Windows 10/2016/2019</option>
-          <option value="win8">Windows 8/2012</option>
-          <option value="solaris">Solaris / OpenSolaris</option>
-          <option value="other">Other</option>
-        </select>
-      </div>
-      <div class="form-group">
-        <div class="step-label">Network Bridge</div>
-        <input id="cvm-bridge" value="vmbr0" placeholder="vmbr0"/>
-      </div>
-    </div>
-    <div class="create-vm-grid">
-      <div class="form-group">
-        <div class="step-label">BIOS</div>
-        <select id="cvm-bios">
-          <option value="seabios">SeaBIOS (default)</option>
-          <option value="ovmf">OVMF (UEFI)</option>
-        </select>
-      </div>
-      <div class="form-group">
-        <div class="step-label">Start after create</div>
-        <select id="cvm-start">
-          <option value="0">No</option>
-          <option value="1">Yes</option>
-        </select>
-      </div>
-    </div>`;
+let wiz = {
+  step: 1, isos: [], isoLoaded: false, preISO: null, _selISO: '',
+  d: { node:'',vmid:'',name:'',pool:'',ostype:'l26',iso:'',
+       cores:'2',sockets:'1',memory:'2048',bios:'seabios',machine:'pc',kvm:true,
+       disk:'32',storage:'',disktype:'scsi',scsihw:'virtio-scsi-pci',discard:true,
+       bridge:'vmbr0',netmodel:'virtio',vlan:'',mac:'',firewall:true,start:false }
+};
+const WIZ_LABELS = ['General','OS / ISO','Hardware','Disk','Network','Confirm'];
 
-  modalCallback = async () => {
-    const node   = document.getElementById('cvm-node').value;
-    const vmid   = document.getElementById('cvm-vmid').value.trim();
-    const name   = document.getElementById('cvm-name').value.trim();
-    const mem    = document.getElementById('cvm-mem').value;
-    const cores  = document.getElementById('cvm-cores').value;
-    const disk   = document.getElementById('cvm-disk').value;
-    const stor   = document.getElementById('cvm-storage').value;
-    const ostype = document.getElementById('cvm-ostype').value;
-    const bridge = document.getElementById('cvm-bridge').value || 'vmbr0';
-    const bios   = document.getElementById('cvm-bios').value;
-    const start  = document.getElementById('cvm-start').value;
+function openCreateVMWizard(preISO) {
+  wiz.step = 1; wiz.isoLoaded = false; wiz.isos = []; wiz.preISO = preISO || null;
+  wiz._selISO = preISO || '';
+  const usedIDs = new Set([...PVE.vms,...PVE.containers].map(x=>x.vmid));
+  let nextID = 100; while(usedIDs.has(nextID)) nextID++;
+  const defStor = (PVE.storage.find(s => (s.content||'').includes('images')) || {}).storage || 'local-lvm';
+  wiz.d = { node:PVE.nodes[0]&&PVE.nodes[0].node||'', vmid:String(nextID), name:'', pool:'',
+    ostype:'l26', iso:preISO||'', cores:'2', sockets:'1', memory:'2048',
+    bios:'seabios', machine:'pc', kvm:true,
+    disk:'32', storage:defStor, disktype:'scsi', scsihw:'virtio-scsi-pci', discard:true,
+    bridge:'vmbr0', netmodel:'virtio', vlan:'', mac:'', firewall:true, start:false };
+  document.getElementById('wizard-bg').classList.add('open');
+  wizRender();
+}
 
-    if (!vmid) return toast('Enter a VM ID', 'error');
-    if (!name) return toast('Enter a VM name', 'error');
-    if (isNaN(parseInt(vmid)) || parseInt(vmid) < 100) return toast('VM ID must be 100 or higher', 'error');
+function openCreateVMModal() { openCreateVMWizard(); }
 
-    const params = {
-      vmid, name, memory: mem, cores, ostype, bios, start,
-      scsi0: `${stor}:${disk}`,
-      net0:  `virtio,bridge=${bridge}`,
-      scsihw: 'virtio-scsi-pci',
-    };
+function closeWizard(e) {
+  if (e && e.target !== document.getElementById('wizard-bg')) return;
+  document.getElementById('wizard-bg').classList.remove('open');
+}
 
+function wizSave() {
+  const g = (id, fb) => { const el=document.getElementById(id); if(!el) return fb; return el.type==='checkbox'?el.checked:el.value; };
+  const d = wiz.d;
+  if (wiz.step===1) { d.node=g('wiz-node',d.node); d.vmid=g('wiz-vmid',d.vmid); d.name=g('wiz-name',d.name); d.pool=g('wiz-pool',d.pool); }
+  else if (wiz.step===2) { d.ostype=g('wiz-ostype',d.ostype); d.iso=wiz._selISO; }
+  else if (wiz.step===3) { d.cores=g('wiz-cores',d.cores); d.sockets=g('wiz-sockets',d.sockets); d.memory=g('wiz-mem',d.memory); d.bios=g('wiz-bios',d.bios); d.machine=g('wiz-machine',d.machine); d.kvm=g('wiz-kvm',d.kvm); }
+  else if (wiz.step===4) { d.disk=g('wiz-disk',d.disk); d.storage=g('wiz-storage',d.storage); d.disktype=g('wiz-disktype',d.disktype); d.scsihw=g('wiz-scsihw',d.scsihw); d.discard=g('wiz-discard',d.discard); }
+  else if (wiz.step===5) { d.bridge=g('wiz-bridge',d.bridge); d.netmodel=g('wiz-netmodel',d.netmodel); d.vlan=g('wiz-vlan',d.vlan); d.mac=g('wiz-mac',d.mac); d.firewall=g('wiz-fw',d.firewall); d.start=g('wiz-start',d.start); }
+}
+
+function wizNext() {
+  wizSave();
+  const d = wiz.d;
+  if (wiz.step===1) {
+    if (!d.vmid||isNaN(+d.vmid)||+d.vmid<100) return toast('VM ID must be ≥ 100','error');
+    if (!d.name||!/^[a-zA-Z0-9\-\.]+$/.test(d.name)) return toast('Name: letters, numbers, hyphen and dot only','error');
+  }
+  if (wiz.step===4 && (!d.disk||+d.disk<1)) return toast('Disk size must be ≥ 1 GB','error');
+  if (wiz.step===WIZ_LABELS.length) { wizSubmit(); return; }
+  wiz.step++;
+  wizRender();
+}
+
+function wizBack() { wizSave(); wiz.step--; wizRender(); }
+
+function wizRender() {
+  document.getElementById('wiz-steps').innerHTML = WIZ_LABELS.map((lbl,i) => {
+    const n=i+1, cls=n===wiz.step?'active':n<wiz.step?'done':'';
+    return `<div class="wstep ${cls}"><span class="wstep-num">${n<wiz.step?'✓':n}</span>${lbl}</div>`;
+  }).join('');
+  document.getElementById('wiz-step-info').textContent = `Step ${wiz.step} of ${WIZ_LABELS.length}`;
+  document.getElementById('wiz-back-btn').style.display = wiz.step>1?'':'none';
+  const nb = document.getElementById('wiz-next-btn');
+  nb.disabled = false;
+  nb.textContent = wiz.step===WIZ_LABELS.length?'✓ Create VM':'Next →';
+  nb.className = wiz.step===WIZ_LABELS.length?'btn success':'btn primary';
+  const el = document.getElementById('wiz-body');
+  const d = wiz.d;
+  if (wiz.step===1) {
+    const nodeOpts = PVE.nodes.map(n=>`<option value="${n.node}"${n.node===d.node?' selected':''}>${n.node}</option>`).join('');
+    el.innerHTML = `
+      <div class="form-group"><label>NODE — where the VM will run</label><select id="wiz-node">${nodeOpts}</select></div>
+      <div class="create-vm-grid">
+        <div class="form-group"><label>VM ID (≥ 100)</label><input id="wiz-vmid" type="number" value="${escHtml(d.vmid)}" min="100" max="999999"/></div>
+        <div class="form-group"><label>NAME (letters, numbers, - and .)</label><input id="wiz-name" value="${escHtml(d.name)}" placeholder="e.g. ubuntu-server"/></div>
+      </div>
+      <div class="form-group"><label>RESOURCE POOL (optional)</label><input id="wiz-pool" value="${escHtml(d.pool)}" placeholder="leave blank for default"/></div>`;
+  } else if (wiz.step===2) {
+    const ostypes = [['l26','Linux 2.6+ (modern)'],['l24','Linux 2.4'],['win11','Windows 11'],['win10','Windows 10/2016/2019'],['win8','Windows 8/2012'],['win7','Windows 7/2008R2'],['wxp','Windows XP'],['solaris','Solaris'],['other','Other']];
+    const ostypeOpts = ostypes.map(([v,l])=>`<option value="${v}"${v===d.ostype?' selected':''}>${l}</option>`).join('');
+    el.innerHTML = `
+      <div class="form-group"><label>OS TYPE</label><select id="wiz-ostype">${ostypeOpts}</select></div>
+      <div class="form-group"><label>BOOT ISO IMAGE</label>
+        <div id="wiz-iso-panel"><div class="empty"><span class="loading"></span> Loading ISOs from storage…</div></div>
+      </div>
+      <p style="color:var(--muted);font-size:12px;margin-top:8px">No ISO here? Upload via Storage view → select pool → Content → Upload.</p>`;
+    wizLoadISOs();
+  } else if (wiz.step===3) {
+    el.innerHTML = `
+      <div class="create-vm-grid">
+        <div class="form-group"><label>CPU CORES</label><input id="wiz-cores" type="number" value="${d.cores}" min="1" max="256"/></div>
+        <div class="form-group"><label>CPU SOCKETS</label><input id="wiz-sockets" type="number" value="${d.sockets}" min="1" max="4"/></div>
+      </div>
+      <div class="form-group"><label>MEMORY (MiB) — 1024 MiB = 1 GiB</label>
+        <input id="wiz-mem" type="number" value="${d.memory}" min="64"/>
+        <div style="margin-top:6px;display:flex;gap:5px;flex-wrap:wrap">
+          ${[512,1024,2048,4096,8192,16384].map(v=>`<button type="button" class="btn small" onclick="document.getElementById('wiz-mem').value=${v}">${v<1024?v+'M':(v/1024)+'G'}</button>`).join('')}
+        </div>
+      </div>
+      <div class="create-vm-grid">
+        <div class="form-group"><label>BIOS</label>
+          <select id="wiz-bios">
+            <option value="seabios"${d.bios==='seabios'?' selected':''}>SeaBIOS — default, broad compatibility</option>
+            <option value="ovmf"${d.bios==='ovmf'?' selected':''}>OVMF (UEFI) — Windows 11, Secure Boot</option>
+          </select>
+        </div>
+        <div class="form-group"><label>MACHINE TYPE</label>
+          <select id="wiz-machine">
+            <option value="pc"${d.machine==='pc'?' selected':''}>i440FX — classic, broad compatibility</option>
+            <option value="q35"${d.machine==='q35'?' selected':''}>Q35 — modern PCIe chipset</option>
+          </select>
+        </div>
+      </div>
+      <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;margin-top:4px">
+        <input type="checkbox" id="wiz-kvm"${d.kvm?' checked':''}> Enable KVM hardware virtualisation (disable only if host has no VT-x/AMD-V)
+      </label>`;
+  } else if (wiz.step===4) {
+    const node = d.node || (PVE.nodes[0]&&PVE.nodes[0].node);
+    const storOpts = PVE.storage
+      .filter(s=>(!node||s.node===node)&&((s.content||'').includes('images')||(s.content||'').includes('rootdir')))
+      .map(s=>`<option value="${s.storage}"${s.storage===d.storage?' selected':''}>${s.storage} [${s.type||'?'}]${s.avail?' ('+fmtBytes(s.avail)+' free)':''}</option>`)
+      .join('') || `<option value="${d.storage||'local-lvm'}">${d.storage||'local-lvm'}</option>`;
+    el.innerHTML = `
+      <div class="create-vm-grid">
+        <div class="form-group"><label>DISK SIZE (GB)</label>
+          <input id="wiz-disk" type="number" value="${d.disk}" min="1"/>
+          <div style="margin-top:6px;display:flex;gap:5px;flex-wrap:wrap">
+            ${[8,16,32,64,100,200].map(v=>`<button type="button" class="btn small" onclick="document.getElementById('wiz-disk').value=${v}">${v}G</button>`).join('')}
+          </div>
+        </div>
+        <div class="form-group"><label>STORAGE POOL</label><select id="wiz-storage">${storOpts}</select></div>
+      </div>
+      <div class="create-vm-grid">
+        <div class="form-group"><label>DISK BUS</label>
+          <select id="wiz-disktype">
+            <option value="scsi"${d.disktype==='scsi'?' selected':''}>SCSI — recommended</option>
+            <option value="virtio"${d.disktype==='virtio'?' selected':''}>VirtIO Block — high performance</option>
+            <option value="sata"${d.disktype==='sata'?' selected':''}>SATA</option>
+            <option value="ide"${d.disktype==='ide'?' selected':''}>IDE — legacy</option>
+          </select>
+        </div>
+        <div class="form-group"><label>SCSI CONTROLLER</label>
+          <select id="wiz-scsihw">
+            <option value="virtio-scsi-pci"${d.scsihw==='virtio-scsi-pci'?' selected':''}>VirtIO SCSI — recommended</option>
+            <option value="lsi"${d.scsihw==='lsi'?' selected':''}>LSI 9xx — legacy</option>
+            <option value="megasas"${d.scsihw==='megasas'?' selected':''}>MegaRAID SAS</option>
+          </select>
+        </div>
+      </div>
+      <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;margin-top:4px">
+        <input type="checkbox" id="wiz-discard"${d.discard?' checked':''}> Enable discard / TRIM (for SSDs and thin-provisioned storage)
+      </label>`;
+  } else if (wiz.step===5) {
+    el.innerHTML = `
+      <div class="create-vm-grid">
+        <div class="form-group"><label>NETWORK BRIDGE</label><input id="wiz-bridge" value="${escHtml(d.bridge)}" placeholder="vmbr0"/></div>
+        <div class="form-group"><label>NIC MODEL</label>
+          <select id="wiz-netmodel">
+            <option value="virtio"${d.netmodel==='virtio'?' selected':''}>VirtIO — best performance</option>
+            <option value="e1000"${d.netmodel==='e1000'?' selected':''}>Intel E1000 — broad compatibility</option>
+            <option value="vmxnet3"${d.netmodel==='vmxnet3'?' selected':''}>VMware vmxnet3</option>
+            <option value="rtl8139"${d.netmodel==='rtl8139'?' selected':''}>Realtek 8139 — legacy</option>
+          </select>
+        </div>
+      </div>
+      <div class="create-vm-grid">
+        <div class="form-group"><label>VLAN TAG (optional)</label><input id="wiz-vlan" type="number" value="${d.vlan}" placeholder="untagged if blank"/></div>
+        <div class="form-group"><label>MAC ADDRESS (optional)</label><input id="wiz-mac" value="${escHtml(d.mac)}" placeholder="auto-assigned"/></div>
+      </div>
+      <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;margin-top:8px">
+        <input type="checkbox" id="wiz-fw"${d.firewall?' checked':''}> Enable Proxmox firewall on this NIC
+      </label>
+      <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;margin-top:10px">
+        <input type="checkbox" id="wiz-start"${d.start?' checked':''}> Start VM immediately after creation
+      </label>`;
+  } else if (wiz.step===6) {
+    const ostypeMap = {l26:'Linux 2.6+',l24:'Linux 2.4',win11:'Windows 11',win10:'Windows 10/2016/2019',win8:'Windows 8/2012',win7:'Windows 7/2008R2',wxp:'Windows XP',solaris:'Solaris',other:'Other'};
+    const isoName = d.iso ? d.iso.split('/').pop() : '— None —';
+    const netParts = [d.netmodel,`bridge=${d.bridge}`,d.vlan?`tag=${d.vlan}`:'',d.mac?`macaddr=${d.mac}`:'',d.firewall?'firewall=1':''].filter(Boolean);
+    const rows = [
+      ['Node', d.node], ['VM ID', d.vmid], ['Name', d.name||'(unnamed)'],
+      d.pool ? ['Pool', d.pool] : null,
+      ['OS Type', ostypeMap[d.ostype]||d.ostype], ['Boot ISO', isoName],
+      ['CPU', `${d.cores} core(s) × ${d.sockets} socket(s)${d.kvm?'':' — KVM off'}`],
+      ['Memory', `${d.memory} MiB (${(+d.memory/1024).toFixed(1)} GiB)`],
+      ['BIOS / Machine', `${d.bios.toUpperCase()} / ${d.machine}`],
+      ['Disk', `${d.disk} GB on ${d.storage} (${d.disktype}${d.discard?', discard':''})`],
+      ['Network', netParts.join(', ')],
+      ['Start after create', d.start?'Yes':'No'],
+    ].filter(Boolean);
+    el.innerHTML = `
+      <div style="background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius);padding:14px;margin-bottom:14px">
+        ${rows.map(([k,v])=>`<div class="wiz-summary-row"><span class="key">${k}</span><span style="font-weight:600;text-align:right;max-width:62%;word-break:break-all">${escHtml(String(v))}</span></div>`).join('')}
+      </div>
+      <div style="background:rgba(249,115,22,.08);border:1px solid rgba(249,115,22,.25);border-radius:var(--radius);padding:10px 14px;font-size:12px;color:var(--muted)">
+        Click <strong style="color:var(--accent)">Create VM</strong> to submit. Progress appears in the Task Monitor (bottom-left).
+      </div>`;
+  }
+}
+
+async function wizLoadISOs() {
+  const panel = document.getElementById('wiz-iso-panel');
+  if (!panel) return;
+  if (!wiz.isoLoaded) {
     try {
-      await pvePost(`/api2/json/nodes/${node}/qemu`, params);
-      toast(`VM ${vmid} (${name}) creation started on ${node}`, 'success');
-      setTimeout(refreshAll, 3000);
+      const all = [];
+      await Promise.all(PVE.nodes.map(async n => {
+        const stores = PVE.storage.filter(s => s.node===n.node && (s.content||'').includes('iso'));
+        await Promise.all(stores.map(async s => {
+          const d = await pveGet(`/api2/json/nodes/${n.node}/storage/${s.storage}/content?content=iso`).catch(()=>({data:[]}));
+          (d.data||[]).forEach(item => all.push({ volid:item.volid, node:n.node, storage:s.storage, name:(item.volid||'').split('/').pop(), size:item.size||0 }));
+        }));
+      }));
+      wiz.isos = all.sort((a,b)=>a.name.localeCompare(b.name));
+      wiz.isoLoaded = true;
     } catch(e) {
-      toast('Create VM failed: ' + e.message, 'error');
+      if (panel) panel.innerHTML = `<div class="empty">Failed to load ISOs: ${e.message}</div>`;
+      return;
     }
+  }
+  const isoList = [{volid:'',name:'No ISO / none',node:'',storage:'',size:0}, ...wiz.isos];
+  panel.innerHTML = `<div style="max-height:220px;overflow-y:auto;border:1px solid var(--border);border-radius:var(--radius)">
+    ${isoList.map(iso => {
+      const sel = wiz._selISO === iso.volid;
+      return `<div class="iso-item ${sel?'selected':''}" data-volid="${escHtml(iso.volid)}" onclick="wizPickISO(this)">
+        <input type="radio" name="wiz-iso-r" ${sel?'checked':''} style="flex-shrink:0">
+        <div style="flex:1;min-width:0">
+          <div class="iso-name" style="${!iso.volid?'color:var(--muted)':''}">${escHtml(iso.name||'No ISO / none')}</div>
+          <div class="iso-meta">${iso.volid?`${iso.node} / ${iso.storage} · ${fmtBytes(iso.size)}`:'Skip — attach boot media later'}</div>
+        </div>
+      </div>`;
+    }).join('')}
+  </div>`;
+}
+
+function wizPickISO(el) {
+  document.querySelectorAll('#wiz-iso-panel .iso-item').forEach(i=>i.classList.remove('selected'));
+  el.classList.add('selected');
+  el.querySelector('input[type=radio]').checked = true;
+  wiz._selISO = el.dataset.volid || '';
+  wiz.d.iso = wiz._selISO;
+}
+
+async function wizSubmit() {
+  const d = wiz.d;
+  const btn = document.getElementById('wiz-next-btn');
+  btn.disabled = true; btn.textContent = 'Creating…';
+
+  let diskVal = `${d.storage}:${d.disk}`;
+  if (d.discard) diskVal += ',discard=on';
+  let netVal = `${d.netmodel},bridge=${d.bridge}`;
+  if (d.mac) netVal += `,macaddr=${d.mac}`;
+  if (d.vlan) netVal += `,tag=${d.vlan}`;
+  if (d.firewall) netVal += ',firewall=1';
+
+  const params = {
+    vmid:parseInt(d.vmid), name:d.name, memory:parseInt(d.memory),
+    cores:parseInt(d.cores), sockets:parseInt(d.sockets),
+    ostype:d.ostype, bios:d.bios, machine:d.machine,
+    scsihw:d.scsihw, net0:netVal, start:d.start?1:0,
   };
-  document.getElementById('modal-bg').classList.add('open');
+  params[`${d.disktype}0`] = diskVal;
+  if (!d.kvm) params.kvm = 0;
+  if (d.iso) params.ide2 = `${d.iso},media=cdrom`;
+  if (d.pool) params.pool = d.pool;
+
+  try {
+    const res = await pvePost(`/api2/json/nodes/${d.node}/qemu`, params);
+    const upid = res && res.data;
+    toast(`VM ${d.vmid} (${d.name}) creation started on ${d.node}`, 'success');
+    if (upid && typeof upid === 'string') tmRegister(upid, d.node, `Create VM ${d.vmid} (${d.name})`);
+    document.getElementById('wizard-bg').classList.remove('open');
+    setTimeout(refreshAll, 3000);
+  } catch(e) {
+    toast('Create VM failed: '+e.message, 'error');
+    btn.disabled = false; btn.textContent = '✓ Create VM';
+  }
 }
 
 // ── VM / CT FIREWALL TAB ──────────────────────────────────
@@ -3679,6 +3913,174 @@ migrateVM = async function(node, vmid, type, targetNode, online, withLocal, targ
     else setTimeout(refreshAll, 3000);
   } catch(e) { toast('Migration failed: ' + e.message, 'error'); }
 };
+
+// ── CLONE VM / CT ──────────────────────────────────────────
+// POST /api2/json/nodes/{node}/qemu/{vmid}/clone
+// POST /api2/json/nodes/{node}/lxc/{vmid}/clone
+// Official: https://pve.proxmox.com/pve-docs/api-viewer/#/nodes/{node}/qemu/{vmid}/clone
+
+function openCloneModal(node, vmid, type, name) {
+  const usedIDs = new Set([...PVE.vms,...PVE.containers].map(x=>x.vmid));
+  let nextID = parseInt(vmid)+1; while(usedIDs.has(nextID)) nextID++;
+  const nodeOpts = PVE.nodes.map(n=>`<option value="${n.node}"${n.node===node?' selected':''}>${n.node}</option>`).join('');
+  document.getElementById('modal-title').textContent = `Clone ${type.toUpperCase()} ${vmid}${name?' — '+name:''}`;
+  document.getElementById('modal-body').innerHTML = `
+    <div class="create-vm-grid">
+      <div class="form-group"><label>NEW VM ID</label><input id="cl-newid" type="number" value="${nextID}" min="100"/></div>
+      <div class="form-group"><label>NEW NAME (optional)</label><input id="cl-name" placeholder="${name?escHtml(name)+'-clone':'clone'}"/></div>
+    </div>
+    <div class="form-group"><label>TARGET NODE</label><select id="cl-node" onchange="cloneRefreshStor()">${nodeOpts}</select></div>
+    <div class="form-group"><label>CLONE TYPE</label>
+      <select id="cl-full" onchange="cloneModeChange()">
+        <option value="1">Full clone — independent copy of all disks</option>
+        <option value="0">Linked clone — fast, shares base disk with original</option>
+      </select>
+    </div>
+    <div class="form-group" id="cl-stor-row">
+      <label>TARGET STORAGE</label>
+      <select id="cl-stor">${buildStorageOpts(node)}</select>
+    </div>
+    <div class="form-group"><label>RESOURCE POOL (optional)</label><input id="cl-pool" placeholder="pool name"/></div>
+    <div style="background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius);padding:9px 12px;font-size:11px;color:var(--muted);margin-top:8px">
+      <strong style="color:var(--text)">Full clone:</strong> completely independent VM on any storage.<br>
+      <strong style="color:var(--text)">Linked clone:</strong> source should be converted to a template first.
+    </div>`;
+  modalCallback = () => doCloneVM(node, vmid, type);
+  document.getElementById('modal-bg').classList.add('open');
+}
+
+function cloneModeChange() {
+  document.getElementById('cl-stor-row').style.display = document.getElementById('cl-full').value==='1'?'':'none';
+}
+
+function cloneRefreshStor() {
+  document.getElementById('cl-stor').innerHTML = buildStorageOpts(document.getElementById('cl-node').value);
+}
+
+async function doCloneVM(srcNode, srcVMID, type) {
+  const newid  = parseInt(document.getElementById('cl-newid').value);
+  const name   = document.getElementById('cl-name').value.trim();
+  const target = document.getElementById('cl-node').value;
+  const full   = document.getElementById('cl-full').value;
+  const stor   = full==='1' ? document.getElementById('cl-stor').value : null;
+  const pool   = document.getElementById('cl-pool').value.trim();
+  if (!newid||newid<100) return toast('New VM ID must be ≥ 100','error');
+  const ep = type==='vm'?'qemu':'lxc';
+  const params = { newid, full:parseInt(full) };
+  if (name) params.name = name;
+  if (target!==srcNode) params.target = target;
+  if (stor && stor!=='_keep') params.storage = stor;
+  if (pool) params.pool = pool;
+  const label = `Clone ${type.toUpperCase()} ${srcVMID} → ${newid}`;
+  try {
+    const res = await pvePost(`/api2/json/nodes/${srcNode}/${ep}/${srcVMID}/clone`, params);
+    const upid = res && res.data;
+    toast(`Clone started: ${srcVMID} → ${newid}`, 'success');
+    if (upid && typeof upid === 'string') tmRegister(upid, srcNode, label);
+    else setTimeout(refreshAll, 3000);
+  } catch(e) { toast('Clone failed: '+e.message,'error'); }
+}
+
+// ── ISO / TEMPLATE LIBRARY ────────────────────────────────
+// GET /api2/json/nodes/{node}/storage/{storage}/content?content=iso
+// GET /api2/json/nodes/{node}/storage/{storage}/content?content=vztmpl
+// Official: https://pve.proxmox.com/pve-docs/api-viewer/#/nodes/{node}/storage/{storage}/content
+
+let isoLib = { items:[], loaded:false };
+
+async function loadISOLibrary() {
+  const el = document.getElementById('isolib-content');
+  el.innerHTML = '<div class="empty"><span class="loading"></span> Loading ISO images and CT templates…</div>';
+  isoLib.items = []; isoLib.loaded = false;
+  const nf = document.getElementById('isolib-node');
+  if (nf) nf.innerHTML = '<option value="">All Nodes</option>'+PVE.nodes.map(n=>`<option value="${n.node}">${n.node}</option>`).join('');
+
+  const diagLines = [];
+  diagLines.push(`Nodes: ${PVE.nodes.map(n=>n.node).join(', ')||'NONE — not connected?'}`);
+
+  try {
+    await Promise.all(PVE.nodes.map(async n => {
+      const storRes = await pveGet(`/api2/json/nodes/${n.node}/storage`).catch(e=>{diagLines.push(`Storage list failed (${n.node}): ${e.message}`);return {data:[]};});
+      const stores = storRes.data || [];
+      diagLines.push(`${n.node}: ${stores.length} pools — ${stores.map(s=>`${s.storage}[${s.content||'?'}]`).join(', ')}`);
+
+      await Promise.all(stores.map(async s => {
+        const d = await pveGet(`/api2/json/nodes/${n.node}/storage/${s.storage}/content`).catch(e=>{diagLines.push(`  ${s.storage} content failed: ${e.message}`);return {data:[]};});
+        const all = d.data || [];
+        const matched = all.filter(i => i.content==='iso' || i.content==='vztmpl');
+        diagLines.push(`  ${s.storage}: ${all.length} items, ${matched.length} iso/tmpl (sample: ${all.slice(0,2).map(i=>i.content+'='+i.volid).join(', ')||'empty'})`);
+        matched.forEach(item => isoLib.items.push({
+          volid:item.volid, node:n.node, storage:s.storage,
+          contentType:item.content, name:(item.volid||'').split('/').pop(),
+          size:item.size||0, ctime:item.ctime||0
+        }));
+      }));
+    }));
+
+    isoLib.items.sort((a,b)=>a.name.localeCompare(b.name));
+    isoLib.loaded = true;
+
+    if (isoLib.items.length) {
+      renderISOLibrary();
+    } else {
+      // Show diagnostic info so we can see what went wrong
+      el.innerHTML = `
+        <div class="empty" style="text-align:left;padding:20px">
+          <div style="margin-bottom:10px;color:var(--yellow);font-weight:700">No ISOs or templates found — diagnostic info:</div>
+          <div style="font-family:monospace;font-size:11px;line-height:1.8;color:var(--muted)">
+            ${diagLines.map(l=>`<div>${escHtml(l)}</div>`).join('')}
+          </div>
+          <div style="margin-top:12px;font-size:12px">Upload ISOs via: Storage view → select pool → Content → Upload</div>
+        </div>`;
+    }
+  } catch(e) {
+    el.innerHTML = `<div class="empty">Error: ${escHtml(e.message)}<br><br><pre style="font-size:10px;text-align:left">${diagLines.map(l=>escHtml(l)).join('\n')}</pre></div>`;
+  }
+}
+
+function renderISOLibrary() {
+  if (!isoLib.loaded) return;
+  const typeF = (document.getElementById('isolib-type')||{}).value||'';
+  const nodeF = (document.getElementById('isolib-node')||{}).value||'';
+  const q = ((document.getElementById('isolib-q')||{}).value||'').toLowerCase();
+  const items = isoLib.items.filter(i => {
+    if (typeF && i.contentType!==typeF) return false;
+    if (nodeF && i.node!==nodeF) return false;
+    if (q && !i.name.toLowerCase().includes(q)) return false;
+    return true;
+  });
+  const isos  = items.filter(i=>i.contentType==='iso');
+  const tmpls = items.filter(i=>i.contentType==='vztmpl');
+  const el = document.getElementById('isolib-content');
+  const totalISOs  = isoLib.items.filter(i=>i.contentType==='iso').length;
+  const totalTmpls = isoLib.items.filter(i=>i.contentType==='vztmpl').length;
+  const libSize    = isoLib.items.reduce((a,i)=>a+i.size,0);
+  const stats = `
+    <div class="stats-grid" style="margin-bottom:16px">
+      <div class="stat-card accent-blue"><div class="label">ISO Images</div><div class="value">${totalISOs}</div><div class="sub">boot media</div></div>
+      <div class="stat-card accent-purple"><div class="label">CT Templates</div><div class="value">${totalTmpls}</div><div class="sub">LXC base images</div></div>
+      <div class="stat-card accent-orange"><div class="label">Library Size</div><div class="value" style="font-size:20px">${fmtBytes(libSize)}</div><div class="sub">total on disk</div></div>
+    </div>`;
+  if (!items.length) { el.innerHTML=stats+'<div class="empty">No items match. Try clearing the search/filter, or upload ISOs via the Storage view.</div>'; return; }
+  const tHead = '<thead><tr><th></th><th>File</th><th>Node</th><th>Storage</th><th>Type</th><th>Size</th><th>Date</th><th>Action</th></tr></thead>';
+  const mkRows = arr => arr.map(item=>`<tr>
+    <td style="font-size:18px;width:30px;text-align:center">${item.contentType==='iso'?'💿':'📦'}</td>
+    <td><strong style="font-size:13px">${escHtml(item.name)}</strong><div style="font-size:10px;color:var(--muted)">${escHtml(item.volid)}</div></td>
+    <td style="color:var(--muted);font-size:12px">${escHtml(item.node)}</td>
+    <td style="color:var(--muted);font-size:12px">${escHtml(item.storage)}</td>
+    <td><span class="type-chip ${item.contentType==='iso'?'vm':'ct'}">${item.contentType==='iso'?'ISO':'CT template'}</span></td>
+    <td style="color:var(--muted);font-size:12px">${fmtBytes(item.size)}</td>
+    <td style="font-size:11px;color:var(--muted)">${item.ctime?new Date(item.ctime*1000).toLocaleDateString():'—'}</td>
+    <td onclick="event.stopPropagation()">
+      ${item.contentType==='iso'
+        ?`<button class="btn small primary" onclick="openCreateVMWizard(${JSON.stringify(item.volid)})">+ New VM</button>`
+        :`<span style="font-size:11px;color:var(--muted)">LXC use only</span>`}
+    </td>
+  </tr>`).join('');
+  el.innerHTML = stats
+    + (isos.length?`<div class="section-header"><span class="section-title">ISO Images (${isos.length})</span></div><div class="table-wrap" style="margin-bottom:18px"><table>${tHead}<tbody>${mkRows(isos)}</tbody></table></div>`:'')
+    + (tmpls.length?`<div class="section-header"><span class="section-title">CT Templates (${tmpls.length})</span></div><div class="table-wrap"><table>${tHead}<tbody>${mkRows(tmpls)}</tbody></table></div>`:'');
+}
 
 // ── Stop monitor on disconnect ────────────────────────────
 // tmStart() is called directly in connect() above
