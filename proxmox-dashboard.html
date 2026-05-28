@@ -386,6 +386,10 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="12" y1="8" x2="12" y2="14"/><line x1="9" y1="11" x2="15" y2="11"/></svg>
         Create VM
       </div>
+      <div class="nav-item" onclick="openCreateCTWizard()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><line x1="12" y1="8" x2="12" y2="14"/><line x1="9" y1="11" x2="15" y2="11"/></svg>
+        Create CT
+      </div>
       <div class="nav-item" onclick="openMigrateModal()">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
         Migrate VM/CT
@@ -529,7 +533,10 @@
     <div id="view-containers" style="display:none">
       <div class="section-header">
         <span class="section-title">LXC Containers</span>
-        <button class="btn small" onclick="refreshAll()">Refresh</button>
+        <div style="display:flex;gap:6px">
+          <button class="btn small primary" onclick="openCreateCTWizard()">+ Create CT</button>
+          <button class="btn small" onclick="refreshAll()">Refresh</button>
+        </div>
       </div>
       <div class="table-wrap">
         <table>
@@ -643,6 +650,7 @@
           <select id="isolib-node" style="width:120px;padding:5px 8px;font-size:13px" onchange="if(isoLib.loaded)renderISOLibrary()">
             <option value="">All Nodes</option>
           </select>
+          <button class="btn small success" onclick="openDownloadTemplatesModal()">↓ Download Templates</button>
           <button class="btn small" onclick="loadISOLibrary()">Refresh</button>
         </div>
       </div>
@@ -793,12 +801,28 @@
   </div>
 </div>
 
+<!-- DOWNLOAD CT TEMPLATES MODAL -->
+<div id="dl-bg" onclick="closeDLModal(event)" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.75);z-index:660;align-items:center;justify-content:center;">
+  <div style="background:var(--bg2);border:1px solid var(--border);border-radius:12px;width:780px;max-width:95vw;max-height:90vh;display:flex;flex-direction:column;overflow:hidden">
+    <div style="padding:16px 22px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:20px;height:20px;color:var(--green);flex-shrink:0"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+      <h3 style="font-size:16px;font-weight:700;flex:1;margin:0">Download CT Templates</h3>
+      <button class="btn small" onclick="closeDLModal()">✕</button>
+    </div>
+    <div id="dl-body" style="flex:1;overflow-y:auto;padding:18px 22px"></div>
+    <div style="padding:14px 22px;border-top:1px solid var(--border);background:var(--bg3);display:flex;justify-content:space-between;align-items:center">
+      <span id="dl-sel-count" style="color:var(--muted);font-size:12px">0 selected</span>
+      <button class="btn success" id="dl-confirm-btn" onclick="doDownloadSelected()" disabled>↓ Download Selected</button>
+    </div>
+  </div>
+</div>
+
 <!-- CREATE VM WIZARD -->
 <div id="wizard-bg" onclick="closeWizard(event)">
   <div id="wizard">
     <div class="wiz-header">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:20px;height:20px;color:var(--accent);flex-shrink:0"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="12" y1="8" x2="12" y2="14"/><line x1="9" y1="11" x2="15" y2="11"/></svg>
-      <h3>Create Virtual Machine</h3>
+      <h3 id="wiz-title">Create Virtual Machine</h3>
       <button class="btn small" onclick="closeWizard()">✕</button>
     </div>
     <div class="wiz-steps" id="wiz-steps"></div>
@@ -1055,6 +1079,7 @@ async function openDetail(item) {
   document.getElementById('detail-actions').innerHTML += running
     ? `<button class="btn small" onclick="openConsole('${item.node}','${item.vmid}','${item.type}')">⌨ Console</button>` : '';
   document.getElementById('detail-actions').innerHTML += `<button class="btn small" onclick="openCloneModal('${item.node}','${item.vmid}','${item.type}','${(item.name||'').replace(/['"]/g,'')}')">⎘ Clone</button>`;
+  if (!running) document.getElementById('detail-actions').innerHTML += `<button class="btn small warning" onclick="convertToTemplate('${item.node}','${item.vmid}','${item.type}')" title="Convert to template (irreversible)">⬡ Template</button>`;
   switchDetailTab('overview');
   loadDetailOverview(item);
 }
@@ -2969,16 +2994,23 @@ async function loadCerts() {
 // Official: https://pve.proxmox.com/pve-docs/api-viewer/#/nodes/{node}/qemu
 
 let wiz = {
-  step: 1, isos: [], isoLoaded: false, preISO: null, _selISO: '',
+  step: 1, type: 'vm',
+  isos: [], isoLoaded: false, preISO: null, _selISO: '',
+  tmpl: [], tmplLoaded: false, _selTmpl: '',
   d: { node:'',vmid:'',name:'',pool:'',ostype:'l26',iso:'',
        cores:'2',sockets:'1',memory:'2048',bios:'seabios',machine:'pc',kvm:true,
        disk:'32',storage:'',disktype:'scsi',scsihw:'virtio-scsi-pci',discard:true,
-       bridge:'vmbr0',netmodel:'virtio',vlan:'',mac:'',firewall:true,start:false }
+       bridge:'vmbr0',netmodel:'virtio',vlan:'',mac:'',firewall:true,start:false },
+  cd: { node:'',vmid:'',hostname:'',password:'',password2:'',unprivileged:true,pool:'',
+        tmpl:'',disk:'8',storage:'',memory:'512',swap:'512',cores:'1',
+        bridge:'vmbr0',ipmode:'dhcp',ip:'',gw:'',firewall:true,start:false,
+        nameserver:'',searchdomain:'' }
 };
-const WIZ_LABELS = ['General','OS / ISO','Hardware','Disk','Network','Confirm'];
+const WIZ_LABELS_VM = ['General','OS / ISO','Hardware','Disk','Network','Confirm'];
+const WIZ_LABELS_CT = ['General','Template','Root Disk','Resources','Network','Confirm'];
 
 function openCreateVMWizard(preISO) {
-  wiz.step = 1; wiz.isoLoaded = false; wiz.isos = []; wiz.preISO = preISO || null;
+  wiz.type = 'vm'; wiz.step = 1; wiz.isoLoaded = false; wiz.isos = []; wiz.preISO = preISO || null;
   wiz._selISO = preISO || '';
   const usedIDs = new Set([...PVE.vms,...PVE.containers].map(x=>x.vmid));
   let nextID = 100; while(usedIDs.has(nextID)) nextID++;
@@ -2988,6 +3020,22 @@ function openCreateVMWizard(preISO) {
     bios:'seabios', machine:'pc', kvm:true,
     disk:'32', storage:defStor, disktype:'scsi', scsihw:'virtio-scsi-pci', discard:true,
     bridge:'vmbr0', netmodel:'virtio', vlan:'', mac:'', firewall:true, start:false };
+  document.getElementById('wiz-title').textContent = 'Create Virtual Machine';
+  document.getElementById('wizard-bg').classList.add('open');
+  wizRender();
+}
+
+function openCreateCTWizard() {
+  wiz.type = 'ct'; wiz.step = 1; wiz.tmplLoaded = false; wiz.tmpl = []; wiz._selTmpl = '';
+  const usedIDs = new Set([...PVE.vms,...PVE.containers].map(x=>x.vmid));
+  let nextID = 100; while(usedIDs.has(nextID)) nextID++;
+  const defStor = (PVE.storage.find(s => (s.content||'').includes('rootdir')||(s.content||'').includes('images')) || {}).storage || 'local-lvm';
+  wiz.cd = { node:PVE.nodes[0]&&PVE.nodes[0].node||'', vmid:String(nextID), hostname:'', password:'', password2:'',
+    unprivileged:true, pool:'', tmpl:'',
+    disk:'8', storage:defStor, memory:'512', swap:'512', cores:'1',
+    bridge:'vmbr0', ipmode:'dhcp', ip:'', gw:'', firewall:true, start:false,
+    nameserver:'', searchdomain:'' };
+  document.getElementById('wiz-title').textContent = 'Create Container (LXC)';
   document.getElementById('wizard-bg').classList.add('open');
   wizRender();
 }
@@ -3001,23 +3049,48 @@ function closeWizard(e) {
 
 function wizSave() {
   const g = (id, fb) => { const el=document.getElementById(id); if(!el) return fb; return el.type==='checkbox'?el.checked:el.value; };
-  const d = wiz.d;
-  if (wiz.step===1) { d.node=g('wiz-node',d.node); d.vmid=g('wiz-vmid',d.vmid); d.name=g('wiz-name',d.name); d.pool=g('wiz-pool',d.pool); }
-  else if (wiz.step===2) { d.ostype=g('wiz-ostype',d.ostype); d.iso=wiz._selISO; }
-  else if (wiz.step===3) { d.cores=g('wiz-cores',d.cores); d.sockets=g('wiz-sockets',d.sockets); d.memory=g('wiz-mem',d.memory); d.bios=g('wiz-bios',d.bios); d.machine=g('wiz-machine',d.machine); d.kvm=g('wiz-kvm',d.kvm); }
-  else if (wiz.step===4) { d.disk=g('wiz-disk',d.disk); d.storage=g('wiz-storage',d.storage); d.disktype=g('wiz-disktype',d.disktype); d.scsihw=g('wiz-scsihw',d.scsihw); d.discard=g('wiz-discard',d.discard); }
-  else if (wiz.step===5) { d.bridge=g('wiz-bridge',d.bridge); d.netmodel=g('wiz-netmodel',d.netmodel); d.vlan=g('wiz-vlan',d.vlan); d.mac=g('wiz-mac',d.mac); d.firewall=g('wiz-fw',d.firewall); d.start=g('wiz-start',d.start); }
+  if (wiz.type === 'vm') {
+    const d = wiz.d;
+    if (wiz.step===1) { d.node=g('wiz-node',d.node); d.vmid=g('wiz-vmid',d.vmid); d.name=g('wiz-name',d.name); d.pool=g('wiz-pool',d.pool); }
+    else if (wiz.step===2) { d.ostype=g('wiz-ostype',d.ostype); d.iso=wiz._selISO; }
+    else if (wiz.step===3) { d.cores=g('wiz-cores',d.cores); d.sockets=g('wiz-sockets',d.sockets); d.memory=g('wiz-mem',d.memory); d.bios=g('wiz-bios',d.bios); d.machine=g('wiz-machine',d.machine); d.kvm=g('wiz-kvm',d.kvm); }
+    else if (wiz.step===4) { d.disk=g('wiz-disk',d.disk); d.storage=g('wiz-storage',d.storage); d.disktype=g('wiz-disktype',d.disktype); d.scsihw=g('wiz-scsihw',d.scsihw); d.discard=g('wiz-discard',d.discard); }
+    else if (wiz.step===5) { d.bridge=g('wiz-bridge',d.bridge); d.netmodel=g('wiz-netmodel',d.netmodel); d.vlan=g('wiz-vlan',d.vlan); d.mac=g('wiz-mac',d.mac); d.firewall=g('wiz-fw',d.firewall); d.start=g('wiz-start',d.start); }
+  } else {
+    const c = wiz.cd;
+    if (wiz.step===1) { c.node=g('wiz-node',c.node); c.vmid=g('wiz-vmid',c.vmid); c.hostname=g('wiz-hostname',c.hostname); c.password=g('wiz-pw',c.password); c.password2=g('wiz-pw2',c.password2); c.unprivileged=g('wiz-unpriv',c.unprivileged); c.pool=g('wiz-pool',c.pool); }
+    else if (wiz.step===2) { c.tmpl=wiz._selTmpl; }
+    else if (wiz.step===3) { c.storage=g('wiz-storage',c.storage); c.disk=g('wiz-disk',c.disk); }
+    else if (wiz.step===4) { c.cores=g('wiz-cores',c.cores); c.memory=g('wiz-mem',c.memory); c.swap=g('wiz-swap',c.swap); }
+    else if (wiz.step===5) { c.bridge=g('wiz-bridge',c.bridge); c.ipmode=g('wiz-ipmode',c.ipmode); c.ip=g('wiz-ip',c.ip); c.gw=g('wiz-gw',c.gw); c.firewall=g('wiz-fw',c.firewall); c.nameserver=g('wiz-ns',c.nameserver); c.searchdomain=g('wiz-sd',c.searchdomain); c.start=g('wiz-start',c.start); }
+  }
 }
 
 function wizNext() {
   wizSave();
-  const d = wiz.d;
-  if (wiz.step===1) {
-    if (!d.vmid||isNaN(+d.vmid)||+d.vmid<100) return toast('VM ID must be ≥ 100','error');
-    if (!d.name||!/^[a-zA-Z0-9\-\.]+$/.test(d.name)) return toast('Name: letters, numbers, hyphen and dot only','error');
+  const labels = wiz.type==='vm' ? WIZ_LABELS_VM : WIZ_LABELS_CT;
+  if (wiz.type==='vm') {
+    const d = wiz.d;
+    if (wiz.step===1) {
+      if (!d.vmid||isNaN(+d.vmid)||+d.vmid<100) return toast('VM ID must be ≥ 100','error');
+      if (!d.name||!/^[a-zA-Z0-9\-\.]+$/.test(d.name)) return toast('Name: letters, numbers, hyphen and dot only','error');
+    }
+    if (wiz.step===4 && (!d.disk||+d.disk<1)) return toast('Disk size must be ≥ 1 GB','error');
+  } else {
+    const c = wiz.cd;
+    if (wiz.step===1) {
+      if (!c.vmid||isNaN(+c.vmid)||+c.vmid<100) return toast('CT ID must be ≥ 100','error');
+      if (!c.hostname||!/^[a-zA-Z0-9\-\.]+$/.test(c.hostname)) return toast('Hostname: letters, numbers, hyphen and dot only','error');
+      if (!c.password) return toast('Password is required','error');
+      if (c.password !== c.password2) return toast('Passwords do not match','error');
+    }
+    if (wiz.step===2 && !c.tmpl) return toast('Select a CT template','error');
+    if (wiz.step===3 && (!c.disk||+c.disk<1)) return toast('Disk size must be ≥ 1 GB','error');
   }
-  if (wiz.step===4 && (!d.disk||+d.disk<1)) return toast('Disk size must be ≥ 1 GB','error');
-  if (wiz.step===WIZ_LABELS.length) { wizSubmit(); return; }
+  if (wiz.step===labels.length) {
+    if (wiz.type==='vm') wizSubmitVM(); else wizSubmitCT();
+    return;
+  }
   wiz.step++;
   wizRender();
 }
@@ -3025,16 +3098,19 @@ function wizNext() {
 function wizBack() { wizSave(); wiz.step--; wizRender(); }
 
 function wizRender() {
-  document.getElementById('wiz-steps').innerHTML = WIZ_LABELS.map((lbl,i) => {
+  const labels = wiz.type==='vm' ? WIZ_LABELS_VM : WIZ_LABELS_CT;
+  document.getElementById('wiz-steps').innerHTML = labels.map((lbl,i) => {
     const n=i+1, cls=n===wiz.step?'active':n<wiz.step?'done':'';
     return `<div class="wstep ${cls}"><span class="wstep-num">${n<wiz.step?'✓':n}</span>${lbl}</div>`;
   }).join('');
-  document.getElementById('wiz-step-info').textContent = `Step ${wiz.step} of ${WIZ_LABELS.length}`;
+  document.getElementById('wiz-step-info').textContent = `Step ${wiz.step} of ${labels.length}`;
   document.getElementById('wiz-back-btn').style.display = wiz.step>1?'':'none';
   const nb = document.getElementById('wiz-next-btn');
   nb.disabled = false;
-  nb.textContent = wiz.step===WIZ_LABELS.length?'✓ Create VM':'Next →';
-  nb.className = wiz.step===WIZ_LABELS.length?'btn success':'btn primary';
+  const isLast = wiz.step===labels.length;
+  nb.textContent = isLast ? (wiz.type==='vm'?'✓ Create VM':'✓ Create CT') : 'Next →';
+  nb.className = isLast ? 'btn success' : 'btn primary';
+  if (wiz.type==='ct') { wizRenderCT(); return; }
   const el = document.getElementById('wiz-body');
   const d = wiz.d;
   if (wiz.step===1) {
@@ -3212,7 +3288,7 @@ function wizPickISO(el) {
   wiz.d.iso = wiz._selISO;
 }
 
-async function wizSubmit() {
+async function wizSubmitVM() {
   const d = wiz.d;
   const btn = document.getElementById('wiz-next-btn');
   btn.disabled = true; btn.textContent = 'Creating…';
@@ -3245,6 +3321,226 @@ async function wizSubmit() {
   } catch(e) {
     toast('Create VM failed: '+e.message, 'error');
     btn.disabled = false; btn.textContent = '✓ Create VM';
+  }
+}
+
+// ── CREATE CT WIZARD ──────────────────────────────────────
+// POST /api2/json/nodes/{node}/lxc
+// Official: https://pve.proxmox.com/pve-docs/api-viewer/#/nodes/{node}/lxc
+
+function wizRenderCT() {
+  const el = document.getElementById('wiz-body');
+  const c = wiz.cd;
+  if (wiz.step===1) {
+    const nodeOpts = PVE.nodes.map(n=>`<option value="${n.node}"${n.node===c.node?' selected':''}>${n.node}</option>`).join('');
+    el.innerHTML = `
+      <div class="form-group"><label>NODE — where the container will run</label><select id="wiz-node">${nodeOpts}</select></div>
+      <div class="create-vm-grid">
+        <div class="form-group"><label>CT ID (≥ 100)</label><input id="wiz-vmid" type="number" value="${escHtml(c.vmid)}" min="100" max="999999"/></div>
+        <div class="form-group"><label>HOSTNAME</label><input id="wiz-hostname" value="${escHtml(c.hostname)}" placeholder="e.g. my-container"/></div>
+      </div>
+      <div class="create-vm-grid">
+        <div class="form-group"><label>ROOT PASSWORD</label><input id="wiz-pw" type="password" value="${escHtml(c.password)}" placeholder="root password"/></div>
+        <div class="form-group"><label>CONFIRM PASSWORD</label><input id="wiz-pw2" type="password" value="${escHtml(c.password2)}" placeholder="repeat password"/></div>
+      </div>
+      <div class="create-vm-grid">
+        <div class="form-group"><label>RESOURCE POOL (optional)</label><input id="wiz-pool" value="${escHtml(c.pool)}" placeholder="pool name"/></div>
+        <div class="form-group" style="display:flex;align-items:center;padding-top:22px">
+          <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer">
+            <input type="checkbox" id="wiz-unpriv"${c.unprivileged?' checked':''}> Unprivileged container (recommended)
+          </label>
+        </div>
+      </div>`;
+  } else if (wiz.step===2) {
+    el.innerHTML = `
+      <div class="form-group"><label>CT TEMPLATE — base OS image</label>
+        <div id="wiz-tmpl-panel"><div class="empty"><span class="loading"></span> Loading templates from storage…</div></div>
+      </div>
+      <p style="color:var(--muted);font-size:12px;margin-top:8px">
+        Templates are stored as .tar.gz/.tar.zst files. Download more via: ISO &amp; Templates view or Proxmox web UI → node → local → CT Templates → Templates.
+      </p>`;
+    ctLoadTemplates();
+  } else if (wiz.step===3) {
+    const node = c.node || (PVE.nodes[0]&&PVE.nodes[0].node);
+    const storOpts = PVE.storage
+      .filter(s=>(!node||s.node===node)&&((s.content||'').includes('rootdir')||(s.content||'').includes('images')))
+      .map(s=>`<option value="${s.storage}"${s.storage===c.storage?' selected':''}>${s.storage} [${s.type||'?'}]${s.avail?' ('+fmtBytes(s.avail)+' free)':''}</option>`)
+      .join('') || `<option value="${c.storage||'local-lvm'}">${c.storage||'local-lvm'}</option>`;
+    el.innerHTML = `
+      <div class="create-vm-grid">
+        <div class="form-group"><label>STORAGE POOL — root filesystem</label><select id="wiz-storage">${storOpts}</select></div>
+        <div class="form-group"><label>DISK SIZE (GB)</label>
+          <input id="wiz-disk" type="number" value="${c.disk}" min="1"/>
+          <div style="margin-top:6px;display:flex;gap:5px;flex-wrap:wrap">
+            ${[4,8,16,32,64].map(v=>`<button type="button" class="btn small" onclick="document.getElementById('wiz-disk').value=${v}">${v}G</button>`).join('')}
+          </div>
+        </div>
+      </div>
+      <div style="background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius);padding:10px 12px;font-size:12px;color:var(--muted);margin-top:8px">
+        For LXC containers, use storage that supports <strong style="color:var(--text)">rootdir</strong> content (e.g. local-lvm, ZFS).
+      </div>`;
+  } else if (wiz.step===4) {
+    el.innerHTML = `
+      <div class="form-group"><label>CPU CORES</label>
+        <input id="wiz-cores" type="number" value="${c.cores}" min="1" max="128"/>
+      </div>
+      <div class="form-group"><label>MEMORY (MiB)</label>
+        <input id="wiz-mem" type="number" value="${c.memory}" min="16"/>
+        <div style="margin-top:6px;display:flex;gap:5px;flex-wrap:wrap">
+          ${[128,256,512,1024,2048,4096].map(v=>`<button type="button" class="btn small" onclick="document.getElementById('wiz-mem').value=${v}">${v<1024?v+'M':(v/1024)+'G'}</button>`).join('')}
+        </div>
+      </div>
+      <div class="form-group"><label>SWAP (MiB) — set 0 to disable</label>
+        <input id="wiz-swap" type="number" value="${c.swap}" min="0"/>
+        <div style="margin-top:6px;display:flex;gap:5px;flex-wrap:wrap">
+          ${[0,128,256,512,1024].map(v=>`<button type="button" class="btn small" onclick="document.getElementById('wiz-swap').value=${v}">${v===0?'None':v<1024?v+'M':(v/1024)+'G'}</button>`).join('')}
+        </div>
+      </div>`;
+  } else if (wiz.step===5) {
+    el.innerHTML = `
+      <div class="create-vm-grid">
+        <div class="form-group"><label>NETWORK BRIDGE</label><input id="wiz-bridge" value="${escHtml(c.bridge)}" placeholder="vmbr0"/></div>
+        <div class="form-group"><label>IP CONFIGURATION</label>
+          <select id="wiz-ipmode" onchange="ctIPModeChange()">
+            <option value="dhcp"${c.ipmode==='dhcp'?' selected':''}>DHCP — auto-assign</option>
+            <option value="static"${c.ipmode==='static'?' selected':''}>Static IP</option>
+          </select>
+        </div>
+      </div>
+      <div id="ct-static-fields" style="${c.ipmode!=='static'?'display:none':''}">
+        <div class="create-vm-grid">
+          <div class="form-group"><label>IP ADDRESS / PREFIX (e.g. 192.168.1.100/24)</label><input id="wiz-ip" value="${escHtml(c.ip)}" placeholder="192.168.1.100/24"/></div>
+          <div class="form-group"><label>GATEWAY</label><input id="wiz-gw" value="${escHtml(c.gw)}" placeholder="192.168.1.1"/></div>
+        </div>
+      </div>
+      <div class="create-vm-grid" style="margin-top:8px">
+        <div class="form-group"><label>DNS SERVER (optional)</label><input id="wiz-ns" value="${escHtml(c.nameserver)}" placeholder="inherit from host"/></div>
+        <div class="form-group"><label>DNS SEARCH DOMAIN (optional)</label><input id="wiz-sd" value="${escHtml(c.searchdomain)}" placeholder="inherit from host"/></div>
+      </div>
+      <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;margin-top:8px">
+        <input type="checkbox" id="wiz-fw"${c.firewall?' checked':''}> Enable Proxmox firewall on this NIC
+      </label>
+      <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;margin-top:10px">
+        <input type="checkbox" id="wiz-start"${c.start?' checked':''}> Start container after creation
+      </label>`;
+  } else if (wiz.step===6) {
+    const tmplName = c.tmpl ? c.tmpl.split('/').pop() : '— None selected —';
+    const ipStr = c.ipmode==='dhcp' ? 'DHCP' : (c.ip||'—') + (c.gw?' gw='+c.gw:'');
+    const rows = [
+      ['Node', c.node], ['CT ID', c.vmid], ['Hostname', c.hostname||'(none)'],
+      ['Unprivileged', c.unprivileged?'Yes':'No'],
+      c.pool?['Pool',c.pool]:null,
+      ['Template', tmplName],
+      ['Root Disk', `${c.disk} GB on ${c.storage}`],
+      ['CPU', `${c.cores} core(s)`],
+      ['Memory', `${c.memory} MiB RAM, ${c.swap} MiB swap`],
+      ['Network', `bridge=${c.bridge}, ip=${ipStr}${c.firewall?', firewall=1':''}`],
+      c.nameserver?['DNS',`${c.nameserver}${c.searchdomain?' / '+c.searchdomain:''}`]:null,
+      ['Start after create', c.start?'Yes':'No'],
+    ].filter(Boolean);
+    el.innerHTML = `
+      <div style="background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius);padding:14px;margin-bottom:14px">
+        ${rows.map(([k,v])=>`<div class="wiz-summary-row"><span class="key">${k}</span><span style="font-weight:600;text-align:right;max-width:62%;word-break:break-all">${escHtml(String(v))}</span></div>`).join('')}
+      </div>
+      <div style="background:rgba(249,115,22,.08);border:1px solid rgba(249,115,22,.25);border-radius:var(--radius);padding:10px 14px;font-size:12px;color:var(--muted)">
+        Click <strong style="color:var(--accent)">Create CT</strong> to submit. Progress appears in the Task Monitor.
+      </div>`;
+  }
+}
+
+function ctIPModeChange() {
+  const mode = document.getElementById('wiz-ipmode').value;
+  const sf = document.getElementById('ct-static-fields');
+  if (sf) sf.style.display = mode==='static'?'':'none';
+}
+
+async function ctLoadTemplates() {
+  const panel = document.getElementById('wiz-tmpl-panel');
+  if (!panel) return;
+  if (!wiz.tmplLoaded) {
+    try {
+      const all = [];
+      await Promise.all(PVE.nodes.map(async n => {
+        const storRes = await pveGet(`/api2/json/nodes/${n.node}/storage`).catch(()=>({data:[]}));
+        const stores = storRes.data || [];
+        await Promise.all(stores.map(async s => {
+          const d = await pveGet(`/api2/json/nodes/${n.node}/storage/${s.storage}/content`).catch(()=>({data:[]}));
+          (d.data||[]).filter(i=>i.content==='vztmpl').forEach(item => all.push({ volid:item.volid, node:n.node, storage:s.storage, name:(item.volid||'').split('/').pop(), size:item.size||0 }));
+        }));
+      }));
+      wiz.tmpl = all.sort((a,b)=>a.name.localeCompare(b.name));
+      wiz.tmplLoaded = true;
+    } catch(e) {
+      if (panel) panel.innerHTML = `<div class="empty">Failed to load templates: ${e.message}</div>`;
+      return;
+    }
+  }
+  if (!wiz.tmpl.length) {
+    panel.innerHTML = `<div style="padding:12px;background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius);font-size:13px">
+      <div style="color:var(--muted);margin-bottom:10px">No CT templates found in storage.</div>
+      <button class="btn small success" onclick="openDownloadTemplatesModal()">↓ Download Templates from Proxmox catalogue</button>
+    </div>`;
+    wiz._selTmpl = ''; return;
+  }
+  panel.innerHTML = `<div style="max-height:250px;overflow-y:auto;border:1px solid var(--border);border-radius:var(--radius)">
+    ${wiz.tmpl.map(t => {
+      const sel = wiz._selTmpl === t.volid;
+      return `<div class="iso-item ${sel?'selected':''}" data-volid="${escHtml(t.volid)}" onclick="ctPickTmpl(this)">
+        <input type="radio" name="ct-tmpl-r" ${sel?'checked':''} style="flex-shrink:0;width:auto;height:auto;padding:0;margin:0">
+        <div style="flex:1;min-width:0">
+          <div class="iso-name">📦 ${escHtml(t.name)}</div>
+          <div class="iso-meta">${t.node} / ${t.storage} · ${fmtBytes(t.size)}</div>
+        </div>
+      </div>`;
+    }).join('')}
+  </div>`;
+}
+
+function ctPickTmpl(el) {
+  document.querySelectorAll('#wiz-tmpl-panel .iso-item').forEach(i=>i.classList.remove('selected'));
+  el.classList.add('selected');
+  el.querySelector('input[type=radio]').checked = true;
+  wiz._selTmpl = el.dataset.volid || '';
+  wiz.cd.tmpl = wiz._selTmpl;
+}
+
+async function wizSubmitCT() {
+  const c = wiz.cd;
+  const btn = document.getElementById('wiz-next-btn');
+  btn.disabled = true; btn.textContent = 'Creating…';
+
+  let netVal = `name=eth0,bridge=${c.bridge}`;
+  if (c.ipmode==='dhcp') { netVal += ',ip=dhcp'; }
+  else if (c.ip) { netVal += `,ip=${c.ip}`; if (c.gw) netVal += `,gw=${c.gw}`; }
+  if (c.firewall) netVal += ',firewall=1';
+
+  const params = {
+    vmid: parseInt(c.vmid),
+    ostemplate: c.tmpl,
+    hostname: c.hostname || undefined,
+    password: c.password,
+    unprivileged: c.unprivileged ? 1 : 0,
+    memory: parseInt(c.memory),
+    swap: parseInt(c.swap),
+    cores: parseInt(c.cores),
+    rootfs: `${c.storage}:${c.disk}`,
+    net0: netVal,
+    start: c.start ? 1 : 0,
+  };
+  if (c.pool) params.pool = c.pool;
+  if (c.nameserver) params.nameserver = c.nameserver;
+  if (c.searchdomain) params.searchdomain = c.searchdomain;
+
+  try {
+    const res = await pvePost(`/api2/json/nodes/${c.node}/lxc`, params);
+    const upid = res && res.data;
+    toast(`CT ${c.vmid} (${c.hostname||c.vmid}) creation started on ${c.node}`, 'success');
+    if (upid && typeof upid === 'string') tmRegister(upid, c.node, `Create CT ${c.vmid} (${c.hostname||c.vmid})`);
+    document.getElementById('wizard-bg').classList.remove('open');
+    setTimeout(refreshAll, 3000);
+  } catch(e) {
+    toast('Create CT failed: '+e.message, 'error');
+    btn.disabled = false; btn.textContent = '✓ Create CT';
   }
 }
 
@@ -3914,6 +4210,25 @@ migrateVM = async function(node, vmid, type, targetNode, online, withLocal, targ
   } catch(e) { toast('Migration failed: ' + e.message, 'error'); }
 };
 
+// ── CONVERT TO TEMPLATE ──────────────────────────────────
+// POST /api2/json/nodes/{node}/qemu/{vmid}/template
+// POST /api2/json/nodes/{node}/lxc/{vmid}/template
+function convertToTemplate(node, vmid, type) {
+  document.getElementById('modal-title').textContent = `Convert ${type.toUpperCase()} ${vmid} to Template`;
+  document.getElementById('modal-body').innerHTML = `
+    <p style="color:var(--muted)">Convert <strong style="color:var(--text)">${type.toUpperCase()} ${vmid}</strong> into a template?</p>
+    <p style="color:var(--red);font-size:12px;margin-top:8px">⚠ This is irreversible. The ${type.toUpperCase()} becomes read-only and can only be used as a clone source.</p>`;
+  modalCallback = async () => {
+    const ep = type==='vm'?'qemu':'lxc';
+    try {
+      await pvePost(`/api2/json/nodes/${node}/${ep}/${vmid}/template`,{});
+      toast(`${type.toUpperCase()} ${vmid} converted to template`, 'success');
+      setTimeout(refreshAll, 2000);
+    } catch(e) { toast('Convert failed: '+e.message, 'error'); }
+  };
+  document.getElementById('modal-bg').classList.add('open');
+}
+
 // ── CLONE VM / CT ──────────────────────────────────────────
 // POST /api2/json/nodes/{node}/qemu/{vmid}/clone
 // POST /api2/json/nodes/{node}/lxc/{vmid}/clone
@@ -4080,6 +4395,171 @@ function renderISOLibrary() {
   el.innerHTML = stats
     + (isos.length?`<div class="section-header"><span class="section-title">ISO Images (${isos.length})</span></div><div class="table-wrap" style="margin-bottom:18px"><table>${tHead}<tbody>${mkRows(isos)}</tbody></table></div>`:'')
     + (tmpls.length?`<div class="section-header"><span class="section-title">CT Templates (${tmpls.length})</span></div><div class="table-wrap"><table>${tHead}<tbody>${mkRows(tmpls)}</tbody></table></div>`:'');
+}
+
+// ── DOWNLOAD CT TEMPLATES ─────────────────────────────────
+// GET /api2/json/nodes/{node}/aplinfo            — Proxmox template catalogue
+// POST /api2/json/nodes/{node}/storage/{stor}/download-url — trigger download
+// Official: https://pve.proxmox.com/pve-docs/api-viewer/#/nodes/{node}/aplinfo
+
+let dlState = { catalogue: [], node: '', storage: '', selected: new Set() };
+
+async function openDownloadTemplatesModal() {
+  const bg = document.getElementById('dl-bg');
+  bg.style.display = 'flex';
+  dlState.selected = new Set();
+  dlUpdateCount();
+
+  const el = document.getElementById('dl-body');
+  el.innerHTML = '<div class="empty"><span class="loading"></span> Loading…</div>';
+
+  const node = PVE.nodes[0] && PVE.nodes[0].node;
+  dlState.node = node;
+
+  // Get storage pools that can hold templates on this node
+  const storRes = await pveGet(`/api2/json/nodes/${node}/storage`).catch(()=>({data:[]}));
+  const tmplStores = (storRes.data||[]).filter(s=>(s.content||'').includes('vztmpl'));
+  dlState.storage = (tmplStores[0]||{}).storage || 'local';
+
+  const nodeOpts = PVE.nodes.map(n=>`<option value="${n.node}">${n.node}</option>`).join('');
+  const storOpts = tmplStores.map(s=>`<option value="${s.storage}">${s.storage}</option>`).join('') || '<option value="local">local</option>';
+
+  el.innerHTML = `
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:16px">
+      <div class="form-group" style="margin:0">
+        <label>DOWNLOAD TO NODE</label>
+        <select id="dl-node" onchange="dlNodeChanged()">${nodeOpts}</select>
+      </div>
+      <div class="form-group" style="margin:0">
+        <label>SAVE TO STORAGE</label>
+        <select id="dl-storage">${storOpts}</select>
+      </div>
+      <div class="form-group" style="margin:0">
+        <label>SEARCH</label>
+        <input id="dl-q" placeholder="Filter templates…" oninput="dlRender()"/>
+      </div>
+    </div>
+    <div id="dl-list"><div class="empty"><span class="loading"></span> Fetching template catalogue…</div></div>`;
+
+  dlLoadCatalogue();
+}
+
+async function dlNodeChanged() {
+  const node = (document.getElementById('dl-node')||{}).value || dlState.node;
+  dlState.node = node;
+  const storRes = await pveGet(`/api2/json/nodes/${node}/storage`).catch(()=>({data:[]}));
+  const tmplStores = (storRes.data||[]).filter(s=>(s.content||'').includes('vztmpl'));
+  const storEl = document.getElementById('dl-storage');
+  if (storEl) {
+    storEl.innerHTML = tmplStores.map(s=>`<option value="${s.storage}">${s.storage}</option>`).join('') || '<option value="local">local</option>';
+    dlState.storage = (tmplStores[0]||{}).storage || 'local';
+  }
+  dlLoadCatalogue();
+}
+
+async function dlLoadCatalogue() {
+  const list = document.getElementById('dl-list');
+  if (!list) return;
+  list.innerHTML = '<div class="empty"><span class="loading"></span> Fetching template catalogue from Proxmox…</div>';
+  try {
+    const d = await pveGet(`/api2/json/nodes/${dlState.node}/aplinfo`);
+    dlState.catalogue = (d.data||[]).sort((a,b)=>(a.template||'').localeCompare(b.template||''));
+    dlRender();
+  } catch(e) {
+    list.innerHTML = `<div class="empty">Failed to load catalogue: ${escHtml(e.message)}<br><span style="font-size:11px;color:var(--muted)">Check that the node can reach the internet and that pveam is configured.</span></div>`;
+  }
+}
+
+function dlRender() {
+  const q = ((document.getElementById('dl-q')||{}).value||'').toLowerCase();
+  const items = dlState.catalogue.filter(t => {
+    if (!q) return true;
+    return (t.template||'').toLowerCase().includes(q) || (t.os||'').toLowerCase().includes(q) || (t.description||'').toLowerCase().includes(q);
+  });
+
+  const list = document.getElementById('dl-list');
+  if (!list) return;
+  if (!items.length) { list.innerHTML = '<div class="empty">No templates match</div>'; return; }
+
+  // Group by OS
+  const groups = {};
+  items.forEach(t => { const g = t.os||t.section||'other'; (groups[g]||(groups[g]=[])).push(t); });
+
+  list.innerHTML = Object.entries(groups).sort(([a],[b])=>a.localeCompare(b)).map(([os, tmpls]) => `
+    <div style="margin-bottom:14px">
+      <div style="font-size:10px;text-transform:uppercase;letter-spacing:1.2px;color:var(--muted);margin-bottom:5px;padding-bottom:4px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between">
+        <span>${escHtml(os)} <span style="color:var(--border)">(${tmpls.length})</span></span>
+        <button type="button" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:10px;font-family:var(--font)" onclick="dlSelectOS('${escHtml(os)}',true)">select all</button>
+      </div>
+      ${tmpls.map(t => {
+        const sel = dlState.selected.has(t.template);
+        return `<label style="display:flex;align-items:center;gap:10px;padding:6px 0;cursor:pointer;border-bottom:1px solid var(--border);font-size:13px">
+          <input type="checkbox" data-tmpl="${escHtml(t.template)}" ${sel?'checked':''} onchange="dlToggle('${escHtml(t.template)}')" style="flex-shrink:0;width:auto;height:auto;padding:0;margin:0">
+          <div style="flex:1;min-width:0">
+            <div style="font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escHtml(t.template||'')}</div>
+            <div style="font-size:11px;color:var(--muted)">${escHtml(t.description||'')}${t.version?' · v'+escHtml(t.version):''}${t.size?' · '+fmtBytes(t.size):''}</div>
+          </div>
+        </label>`;
+      }).join('')}
+    </div>`).join('');
+}
+
+function dlSelectOS(os, check) {
+  dlState.catalogue.filter(t=>(t.os||t.section||'other')===os).forEach(t => {
+    if (check) dlState.selected.add(t.template);
+    else dlState.selected.delete(t.template);
+  });
+  dlRender();
+  dlUpdateCount();
+}
+
+function dlToggle(filename) {
+  if (dlState.selected.has(filename)) dlState.selected.delete(filename);
+  else dlState.selected.add(filename);
+  dlUpdateCount();
+}
+
+function dlUpdateCount() {
+  const n = dlState.selected.size;
+  const el = document.getElementById('dl-sel-count');
+  const btn = document.getElementById('dl-confirm-btn');
+  if (el) el.textContent = `${n} template${n!==1?'s':''} selected`;
+  if (btn) btn.disabled = n===0;
+}
+
+async function doDownloadSelected() {
+  const node = (document.getElementById('dl-node')||{}).value || dlState.node;
+  const storage = (document.getElementById('dl-storage')||{}).value || dlState.storage;
+  if (!dlState.selected.size) return toast('No templates selected','error');
+
+  const btn = document.getElementById('dl-confirm-btn');
+  btn.disabled = true; btn.textContent = 'Starting…';
+
+  let started = 0;
+  for (const filename of dlState.selected) {
+    const tmpl = dlState.catalogue.find(t=>t.template===filename);
+    if (!tmpl || !tmpl.location) continue;
+    try {
+      const params = { url:tmpl.location, filename, content:'vztmpl' };
+      if (tmpl.sha512sum) { params.checksum=tmpl.sha512sum; params['checksum-algorithm']='sha512'; }
+      const res = await pvePost(`/api2/json/nodes/${node}/storage/${storage}/download-url`, params);
+      const upid = res && res.data;
+      if (upid && typeof upid === 'string') tmRegister(upid, node, `Download ${filename}`);
+      started++;
+    } catch(e) {
+      toast(`Download failed for ${filename}: ${e.message}`, 'error');
+    }
+  }
+
+  if (started) toast(`${started} download task${started>1?'s':''} started — watch Task Monitor`, 'success');
+  closeDLModal();
+  // Refresh ISO library after a delay so new templates appear
+  setTimeout(() => { if (isoLib.loaded) loadISOLibrary(); }, 5000);
+}
+
+function closeDLModal(e) {
+  if (e && e.target !== document.getElementById('dl-bg')) return;
+  document.getElementById('dl-bg').style.display = 'none';
 }
 
 // ── Stop monitor on disconnect ────────────────────────────
