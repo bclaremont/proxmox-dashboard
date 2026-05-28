@@ -4666,14 +4666,17 @@ function openCreateZoneModal() {
       <div class="form-group"><label>NODES (blank = all)</label><input id="sdn-zone-nodes" placeholder="pve1,pve2"/></div>
       <div class="form-group"><label>MTU (optional)</label><input id="sdn-zone-mtu" type="number" placeholder="1500"/></div>
     </div>
-    <div id="sdn-zone-extra"></div>`;
+    <div id="sdn-zone-extra"></div>
+    <div id="sdn-zone-err" style="display:none;margin-top:10px;padding:8px 12px;background:rgba(248,81,73,.1);border:1px solid var(--red);border-radius:var(--radius);font-size:12px;color:var(--red)"></div>`;
   sdnZoneTypeChange();
   modalCallback = async () => {
-    const zone = document.getElementById('sdn-zone-id').value.trim();
+    const zone = document.getElementById('sdn-zone-id').value.trim().toLowerCase();
     const type = document.getElementById('sdn-zone-type').value;
     const nodes = document.getElementById('sdn-zone-nodes').value.trim();
     const mtu   = document.getElementById('sdn-zone-mtu').value;
-    if (!zone) return toast('Enter a zone ID', 'error');
+    const errEl = document.getElementById('sdn-zone-err');
+    const showErr = msg => { errEl.textContent = msg; errEl.style.display = ''; };
+    if (!zone) return showErr('Zone ID is required');
     const params = { zone, type };
     if (nodes) params.nodes = nodes;
     if (mtu)   params.mtu   = mtu;
@@ -4696,7 +4699,11 @@ function openCreateZoneModal() {
       await pvePost('/api2/json/cluster/sdn/zones', params);
       toast(`Zone "${zone}" created — click Apply to activate`, 'success');
       setTimeout(loadSDN, 800);
-    } catch(e) { toast('Create zone failed: '+e.message,'error'); }
+    } catch(e) {
+      let msg = e.message;
+      try { const b=JSON.parse(msg.split(': ').slice(1).join(': ')); if(b&&b.errors) msg=Object.values(b.errors).join('; '); } catch(_){}
+      showErr('Proxmox error: '+msg);
+    }
   };
   document.getElementById('modal-bg').classList.add('open');
 }
@@ -4728,32 +4735,45 @@ function openCreateVNetModal() {
   document.getElementById('modal-title').textContent = 'Create VNet';
   document.getElementById('modal-body').innerHTML = `
     <div class="create-vm-grid">
-      <div class="form-group"><label>VNET ID</label><input id="sdn-vnet-id" placeholder="myvnet"/></div>
+      <div class="form-group">
+        <label>VNET ID <span style="color:var(--muted);font-size:10px">1–8 chars, lowercase a–z/0–9, start with letter</span></label>
+        <input id="sdn-vnet-id" placeholder="myvnet" maxlength="8" oninput="this.value=this.value.toLowerCase().replace(/[^a-z0-9]/g,'')"/>
+      </div>
       <div class="form-group"><label>ZONE</label><select id="sdn-vnet-zone">${zoneOpts}</select></div>
     </div>
     <div class="create-vm-grid">
       <div class="form-group"><label>ALIAS (optional)</label><input id="sdn-vnet-alias" placeholder="My VNet"/></div>
-      <div class="form-group"><label>VLAN TAG (optional)</label><input id="sdn-vnet-tag" type="number" placeholder="100"/></div>
+      <div class="form-group"><label>VLAN TAG (optional)</label><input id="sdn-vnet-tag" type="number" placeholder="100" min="1" max="4094"/></div>
     </div>
     <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;margin-top:8px">
       <input type="checkbox" id="sdn-vnet-vlanaware" style="width:auto;height:auto;padding:0;margin:0"> VLAN-aware (guests can use multiple VLANs on this VNet)
-    </label>`;
+    </label>
+    <div id="sdn-vnet-err" style="display:none;margin-top:10px;padding:8px 12px;background:rgba(248,81,73,.1);border:1px solid var(--red);border-radius:var(--radius);font-size:12px;color:var(--red)"></div>`;
   modalCallback = async () => {
-    const vnet  = document.getElementById('sdn-vnet-id').value.trim();
+    const vnet  = document.getElementById('sdn-vnet-id').value.trim().toLowerCase();
     const zone  = document.getElementById('sdn-vnet-zone').value;
     const alias = document.getElementById('sdn-vnet-alias').value.trim();
     const tag   = document.getElementById('sdn-vnet-tag').value;
     const vla   = document.getElementById('sdn-vnet-vlanaware').checked;
-    if (!vnet) return toast('Enter a VNet ID','error');
+    const errEl = document.getElementById('sdn-vnet-err');
+    const showErr = msg => { errEl.textContent = msg; errEl.style.display = ''; };
+    if (!vnet)                          return showErr('VNet ID is required');
+    if (!/^[a-z][a-z0-9]{0,7}$/.test(vnet)) return showErr('VNet ID: 1–8 chars, lowercase letters/digits, must start with a letter');
+    errEl.style.display = 'none';
     const params = { vnet, zone };
     if (alias) params.alias = alias;
-    if (tag)   params.tag   = tag;
+    if (tag)   params.tag   = parseInt(tag);
     if (vla)   params.vlanaware = 1;
     try {
       await pvePost('/api2/json/cluster/sdn/vnets', params);
       toast(`VNet "${vnet}" created — click Apply to activate`, 'success');
       setTimeout(loadSDN, 800);
-    } catch(e) { toast('Create VNet failed: '+e.message,'error'); }
+    } catch(e) {
+      // Extract Proxmox error detail and show inline
+      let msg = e.message;
+      try { const b=JSON.parse(msg.split(': ').slice(1).join(': ')); if(b&&b.errors) msg=Object.values(b.errors).join('; '); } catch(_){}
+      showErr('Proxmox error: '+msg);
+    }
   };
   document.getElementById('modal-bg').classList.add('open');
 }
