@@ -5054,12 +5054,12 @@ function _renderUsersTab() {
 
 // ── USER CRUD ─────────────────────────────────────────────
 function openCreateUserModal() {
-  const realmOpts=usersData.domains.map(d=>`<option value="${escHtml(d.realm)}">${escHtml(d.realm)} (${d.type})</option>`).join('');
-  document.getElementById('modal-title').textContent='Create User';
-  document.getElementById('modal-body').innerHTML=`
+  const realmOpts = usersData.domains.map(d=>`<option value="${escHtml(d.realm)}">${escHtml(d.realm)} (${d.type})</option>`).join('');
+  document.getElementById('modal-title').textContent = 'Create User';
+  document.getElementById('modal-body').innerHTML = `
     <div class="create-vm-grid">
-      <div class="form-group"><label>USERNAME</label><input id="uu-name" placeholder="john.doe"/></div>
-      <div class="form-group"><label>REALM</label><select id="uu-realm">${realmOpts}</select></div>
+      <div class="form-group"><label>USERNAME</label><input id="uu-name" placeholder="john.doe" oninput="uuRealmHint()"/></div>
+      <div class="form-group"><label>REALM</label><select id="uu-realm" onchange="uuRealmHint()">${realmOpts}</select></div>
     </div>
     <div class="create-vm-grid">
       <div class="form-group"><label>FIRST NAME</label><input id="uu-fn" placeholder="John"/></div>
@@ -5067,7 +5067,10 @@ function openCreateUserModal() {
     </div>
     <div class="create-vm-grid">
       <div class="form-group"><label>EMAIL</label><input id="uu-email" type="email" placeholder="john@example.com"/></div>
-      <div class="form-group"><label>PASSWORD (pam/pve only)</label><input id="uu-pw" type="password"/></div>
+      <div class="form-group">
+        <label>PASSWORD <span id="uu-pw-hint" style="color:var(--muted);font-size:10px">(required for pam/pve)</span></label>
+        <input id="uu-pw" type="password" placeholder="required for pam/pve realms"/>
+      </div>
     </div>
     <div class="create-vm-grid">
       <div class="form-group"><label>GROUPS (comma-separated)</label><input id="uu-groups" placeholder="admins,devs"/></div>
@@ -5076,24 +5079,60 @@ function openCreateUserModal() {
     <div class="form-group"><label>COMMENT</label><input id="uu-comment"/></div>
     <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;margin-top:8px">
       <input type="checkbox" id="uu-enable" checked style="width:auto;height:auto;padding:0;margin:0"> Enabled
-    </label>`;
-  modalCallback=async()=>{
-    const name=(document.getElementById('uu-name')?.value||'').trim();
-    const realm=document.getElementById('uu-realm')?.value;
-    if(!name)return toast('Enter a username','error');
-    const userid=`${name}@${realm}`;
-    const g=id=>{const el=document.getElementById(id);if(!el)return null;return el.type==='checkbox'?el.checked:(el.value.trim()||null);};
-    const params={userid,enable:g('uu-enable')?1:0};
-    const fn=g('uu-fn');if(fn)params.firstname=fn; const ln=g('uu-ln');if(ln)params.lastname=ln;
-    const em=g('uu-email');if(em)params.email=em; const pw=g('uu-pw');if(pw)params.password=pw;
-    const gr=g('uu-groups');if(gr)params.groups=gr;
-    const ex=g('uu-expire');if(ex)params.expire=Math.floor(new Date(ex).getTime()/1000);
-    const cm=g('uu-comment');if(cm)params.comment=cm;
+    </label>
+    <div id="uu-err" style="display:none;margin-top:10px;padding:8px 12px;background:rgba(248,81,73,.1);border:1px solid var(--red);border-radius:var(--radius);font-size:12px;color:var(--red)"></div>`;
+
+  // Use override pattern so errors show inline
+  modalCallback = null;
+  const btn = document.getElementById('modal-confirm-btn');
+  btn.textContent = 'Create User'; btn.disabled = false;
+  btn.onclick = async () => {
+    const name   = (document.getElementById('uu-name')?.value||'').trim();
+    const realm  = document.getElementById('uu-realm')?.value;
+    const errEl  = document.getElementById('uu-err');
+    const showErr = msg => { if(errEl){errEl.textContent=msg;errEl.style.display='';} };
+    if(errEl) errEl.style.display = 'none';
+    if(!name) return showErr('Enter a username');
+
+    const userid = `${name}@${realm}`;
+    const g = id => { const el=document.getElementById(id); if(!el)return null; return el.type==='checkbox'?el.checked:(el.value.trim()||null); };
+    const params = { userid, enable: g('uu-enable')?1:0 };
+    const fn=g('uu-fn'); if(fn) params.firstname=fn;
+    const ln=g('uu-ln'); if(ln) params.lastname=ln;
+    const em=g('uu-email'); if(em) params.email=em;
+    const pw=g('uu-pw'); if(pw) params.password=pw;
+    const gr=g('uu-groups'); if(gr) params.groups=gr;
+    const cm=g('uu-comment'); if(cm) params.comment=cm;
+    const ex=g('uu-expire');
+    if(ex) {
+      const ts=new Date(ex).getTime();
+      if(isNaN(ts)) return showErr('Invalid expiry date');
+      params.expire=Math.floor(ts/1000);
+    }
+
+    btn.disabled=true; btn.textContent='Creating…';
     const conn=resolveConn(usersData.connId);
-    try{if(conn)await connPost(conn,'/api2/json/access/users',params);else await pvePost('/api2/json/access/users',params);
-    toast(`User "${userid}" created`,'success');setTimeout(loadUsers,800);}catch(e){toast('Create failed: '+e.message,'error');}
+    try {
+      if(conn) await connPost(conn,'/api2/json/access/users',params);
+      else     await pvePost('/api2/json/access/users',params);
+      document.getElementById('modal-bg').classList.remove('open');
+      btn.onclick=confirmModal; btn.textContent='Confirm'; btn.disabled=false;
+      toast(`User "${userid}" created`,'success');
+      setTimeout(loadUsers,800);
+    } catch(e) {
+      btn.disabled=false; btn.textContent='Create User';
+      showErr('Create failed: '+e.message);
+    }
   };
   document.getElementById('modal-bg').classList.add('open');
+}
+
+function uuRealmHint() {
+  const realm = document.getElementById('uu-realm')?.value||'';
+  const hint  = document.getElementById('uu-pw-hint');
+  const needsPw = realm==='pam'||realm==='pve';
+  if(hint) hint.textContent = needsPw?'(required)':'(not used for this realm)';
+  if(hint) hint.style.color = needsPw?'var(--red)':'var(--muted)';
 }
 
 async function openEditUserModal(userid, connId) {
