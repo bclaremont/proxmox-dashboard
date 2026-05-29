@@ -526,6 +526,10 @@
         <span class="sidebar-label-inner"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="4" rx="1"/><rect x="2" y="10" width="20" height="4" rx="1"/><rect x="2" y="17" width="20" height="4" rx="1"/></svg>Infrastructure</span>
         <span class="sidebar-chevron">▾</span>
       </div>
+      <div class="nav-item" data-view="capacity" onclick="switchView('capacity')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/><path d="M2 20h20" stroke-width="1.5"/><polyline points="6 10 12 4 18 10" stroke-width="1.5" stroke-dasharray="3 2"/></svg>
+        Capacity Planning
+      </div>
       <div class="nav-item" data-view="affinity" onclick="switchView('affinity')">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="9" cy="12" r="3"/><circle cx="15" cy="12" r="3"/><path d="M12 3v18M3 12h18"/></svg>
         Affinity Rules
@@ -933,6 +937,30 @@
         </div>
       </div>
       <div id="sdn-content"><div class="empty">Loading…</div></div>
+    </div>
+
+    <!-- CAPACITY PLANNING -->
+    <div id="view-capacity" style="display:none">
+      <div class="section-header">
+        <span class="section-title">Capacity Planning &amp; Forecasting</span>
+        <div style="display:flex;gap:6px;align-items:center">
+          <select class="conn-sel" id="cap-conn" style="width:130px;padding:5px 8px;font-size:13px" onchange="runCapacityAnalysis()"><option value="">Primary</option></select>
+          <label style="font-size:12px;color:var(--muted)">Timeframe:</label>
+          <select id="cap-tf" style="width:100px;padding:5px 8px;font-size:13px">
+            <option value="week">Week</option>
+            <option value="month" selected>Month</option>
+          </select>
+          <label style="font-size:12px;color:var(--muted)">Warn at:</label>
+          <select id="cap-thresh" style="width:80px;padding:5px 8px;font-size:13px">
+            <option value="75">75%</option>
+            <option value="80">80%</option>
+            <option value="85" selected>85%</option>
+            <option value="90">90%</option>
+          </select>
+          <button class="btn small primary" onclick="runCapacityAnalysis()">▶ Analyse</button>
+        </div>
+      </div>
+      <div id="capacity-content"><div class="empty">Click <strong>▶ Analyse</strong> to project resource trends and forecast capacity exhaustion.</div></div>
     </div>
 
     <!-- AFFINITY RULES -->
@@ -2435,7 +2463,7 @@ async function migrateVM(node, vmid, type, targetNode, online=false, withLocal=f
 
 function switchView(view) {
   expandSidebarSection(view); // auto-expand collapsed section if needed
-  const views=['connect','connections','worldmap','savedview','overview','vms','containers','nodes','tasks','syslog','storage','network','heatmap','isolib','sdn','affinity','drs','datacenter','pools','ceph','ha','firewall','backups','users','certs','audit','clustergraphs','tags','tfa','subscriptions','updates','pbs'];
+  const views=['connect','connections','worldmap','savedview','overview','vms','containers','nodes','tasks','syslog','storage','network','heatmap','isolib','sdn','capacity','affinity','drs','datacenter','pools','ceph','ha','firewall','backups','users','certs','audit','clustergraphs','tags','tfa','subscriptions','updates','pbs'];
   views.forEach(v=>{
     const el=document.getElementById('view-'+v);
     if(el) el.style.display=v===view?'':'none';
@@ -2487,6 +2515,7 @@ function switchView(view) {
   if(view==='savedview') renderSavedView();
   if(view==='pools') loadPools();
   if(view==='affinity') renderAffinityView();
+  if(view==='capacity') runCapacityAnalysis();
   if(view==='datacenter') loadDatacenter();
   if(view!=='connect') renderCurrentView();
 }
@@ -9541,6 +9570,288 @@ function acToggleAuth() {
   const m = document.getElementById('ac-authtype').value;
   document.getElementById('ac-pw-group').style.display  = m==='password'?'':'none';
   document.getElementById('ac-tok-group').style.display = m==='token'?'':'none';
+}
+
+// ── CAPACITY PLANNING & FORECASTING ──────────────────────
+// Uses Proxmox RRD time-series data to run linear regression and project
+// resource exhaustion dates for CPU, RAM, rootfs disk, and storage pools.
+// RRD fields used: cpu, memused, memtotal, rootused, roottotal
+
+// ── Maths helpers ─────────────────────────────────────────
+
+function _linReg(points) {
+  // points: [{x, y}] where x=unix timestamp, y=metric value
+  const n=points.length; if(n<2) return null;
+  const sx=points.reduce((a,p)=>a+p.x,0);
+  const sy=points.reduce((a,p)=>a+p.y,0);
+  const sxy=points.reduce((a,p)=>a+p.x*p.y,0);
+  const sx2=points.reduce((a,p)=>a+p.x*p.x,0);
+  const denom=n*sx2-sx*sx; if(Math.abs(denom)<1e-10) return null;
+  const slope=(n*sxy-sx*sy)/denom;       // change per second
+  const intercept=(sy-slope*sx)/n;
+  const slopePerDay=slope*86400;         // change per day (%)
+  return {slope,intercept,slopePerDay};
+}
+
+function _daysUntil(reg, currentTime, threshold) {
+  if(!reg||reg.slope<=0) return Infinity; // flat or decreasing — no issue
+  const secsUntil=(threshold-reg.intercept)/reg.slope - currentTime;
+  return secsUntil/86400;
+}
+
+function _trendLabel(slopePerDay) {
+  if(Math.abs(slopePerDay)<0.05) return {icon:'→',col:'var(--muted)',text:'Stable'};
+  if(slopePerDay>0) return {icon:'▲',col:'var(--red)',text:`+${slopePerDay.toFixed(2)}%/day`};
+  return {icon:'▼',col:'var(--green)',text:`${slopePerDay.toFixed(2)}%/day`};
+}
+
+function _urgencyColor(days) {
+  if(days===Infinity||days>180) return {col:'var(--green)',label:'✓ OK'};
+  if(days>90)  return {col:'var(--teal)',  label:`${Math.round(days)}d`};
+  if(days>30)  return {col:'var(--yellow)',label:`⚠ ${Math.round(days)}d`};
+  return {col:'var(--red)',label:`🚨 ${Math.round(days)}d`};
+}
+
+// ── Main analysis ─────────────────────────────────────────
+
+let _capCharts={};
+
+async function runCapacityAnalysis() {
+  const el=document.getElementById('capacity-content'); if(!el) return;
+  el.innerHTML='<div class="empty"><span class="loading"></span> Fetching RRD data and computing forecasts…</div>';
+
+  // Destroy old charts
+  Object.values(_capCharts).forEach(c=>{try{c.destroy();}catch(e){}});
+  _capCharts={};
+
+  const conn    = getViewConn('cap-conn');
+  const get     = conn?(p=>connGet(conn,p)):pveGet;
+  const nodes   = conn?(conn.nodes||[]):PVE.nodes;
+  const tf      = document.getElementById('cap-tf')?.value||'month';
+  const thresh  = parseFloat(document.getElementById('cap-thresh')?.value||'85');
+
+  try {
+    // Fetch RRD for every node in parallel
+    const nodeRRD={};
+    await Promise.all(nodes.map(async n=>{
+      const d=await get(`/api2/json/nodes/${n.node}/rrddata?timeframe=${tf}&cf=AVERAGE`).catch(()=>({data:[]}));
+      nodeRRD[n.node]=d.data||[];
+    }));
+
+    // Also fetch storage pool data for disk forecasting
+    const storList=conn?(conn.storage||[]):PVE.storage;
+
+    // Build per-node forecasts
+    const nodeForecasts=nodes.map(n=>{
+      const rrd=nodeRRD[n.node].filter(p=>p.time&&p.cpu!=null);
+      if(!rrd.length) return {node:n.node,error:true};
+
+      // CPU (0–100%)
+      const cpuPts=rrd.map(p=>({x:p.time,y:p.cpu*100}));
+      const cpuReg=_linReg(cpuPts);
+      const cpuCur=cpuPts[cpuPts.length-1]?.y||0;
+      const cpuDays=_daysUntil(cpuReg,rrd[rrd.length-1]?.time,thresh);
+
+      // Memory (0–100%)
+      const memPts=rrd.filter(p=>p.memtotal>0).map(p=>({x:p.time,y:(p.memused/p.memtotal)*100}));
+      const memReg=_linReg(memPts);
+      const memCur=memPts[memPts.length-1]?.y||0;
+      const memDays=_daysUntil(memReg,rrd[rrd.length-1]?.time,thresh);
+
+      // Root filesystem (0–100%)
+      const rootPts=rrd.filter(p=>p.roottotal>0).map(p=>({x:p.time,y:(p.rootused/p.roottotal)*100}));
+      const rootReg=_linReg(rootPts);
+      const rootCur=rootPts[rootPts.length-1]?.y||0;
+      const rootDays=_daysUntil(rootReg,rrd[rrd.length-1]?.time,thresh);
+
+      const minDays=Math.min(cpuDays,memDays,rootDays);
+      return {node:n.node,rrd,cpuReg,memReg,rootReg,cpuCur,memCur,rootCur,cpuDays,memDays,rootDays,minDays};
+    });
+
+    // Storage pool forecasts (current usage only — RRD not available per pool)
+    // We estimate from current usage + a user-adjustable growth rate stored in localStorage
+    const storForecasts=storList
+      .filter(s=>s.total>0&&(s.content||'').includes('images'))
+      .map(s=>{
+        const pct=((s.used||0)/s.total)*100;
+        const growthKey=`cap-growth-${s.storage}-${s.node}`;
+        const growthPerDay=parseFloat(localStorage.getItem(growthKey)||'0.1'); // % per day default
+        const days=growthPerDay>0?(thresh-pct)/growthPerDay:Infinity;
+        return {...s,pct,growthPerDay,days};
+      });
+
+    // Summary numbers
+    const critNodes=nodeForecasts.filter(n=>!n.error&&n.minDays<30).length;
+    const warnNodes=nodeForecasts.filter(n=>!n.error&&n.minDays>=30&&n.minDays<90).length;
+    const critStor=storForecasts.filter(s=>s.days<30).length;
+
+    el.innerHTML=`
+      <div class="stats-grid" style="margin-bottom:16px">
+        <div class="stat-card accent-${critNodes?'red':'green'}"><div class="label">Critical Nodes</div><div class="value" style="color:${critNodes?'var(--red)':'var(--green)'}">${critNodes}</div><div class="sub">&lt;30 days to ${thresh}%</div></div>
+        <div class="stat-card accent-${warnNodes?'yellow':'green'}"><div class="label">Warning Nodes</div><div class="value" style="color:${warnNodes?'var(--yellow)':'var(--green)'}">${warnNodes}</div><div class="sub">30–90 days</div></div>
+        <div class="stat-card accent-${critStor?'red':'green'}"><div class="label">Storage Critical</div><div class="value" style="color:${critStor?'var(--red)':'var(--green)'}">${critStor}</div><div class="sub">pool(s) &lt;30 days</div></div>
+        <div class="stat-card"><div class="label">Threshold</div><div class="value" style="color:var(--accent)">${thresh}%</div><div class="sub">${tf} data · linear projection</div></div>
+      </div>
+
+      <!-- Node forecast table -->
+      <div class="section-header" style="margin-bottom:8px"><span class="section-title">Node Resource Forecast</span></div>
+      <div class="table-wrap" style="margin-bottom:20px"><table>
+        <thead><tr><th>Node</th><th>CPU Now</th><th>CPU Trend</th><th>CPU → ${thresh}%</th><th>RAM Now</th><th>RAM Trend</th><th>RAM → ${thresh}%</th><th>Disk Now</th><th>Disk Trend</th><th>Disk → ${thresh}%</th><th>Outlook</th></tr></thead>
+        <tbody>${nodeForecasts.map(f=>{
+          if(f.error) return `<tr><td><strong>${f.node}</strong></td><td colspan="10" class="empty">No RRD data</td></tr>`;
+          const cpu=_urgencyColor(f.cpuDays), mem=_urgencyColor(f.memDays), root=_urgencyColor(f.rootDays);
+          const cpuT=_trendLabel(f.cpuReg?.slopePerDay||0), memT=_trendLabel(f.memReg?.slopePerDay||0), rootT=_trendLabel(f.rootReg?.slopePerDay||0);
+          const worst=_urgencyColor(f.minDays);
+          return `<tr>
+            <td><strong>${f.node}</strong></td>
+            <td>${f.cpuCur.toFixed(1)}%</td>
+            <td style="color:${cpuT.col};font-size:12px">${cpuT.icon} ${cpuT.text}</td>
+            <td style="color:${cpu.col};font-weight:600">${cpu.label}</td>
+            <td>${f.memCur.toFixed(1)}%</td>
+            <td style="color:${memT.col};font-size:12px">${memT.icon} ${memT.text}</td>
+            <td style="color:${mem.col};font-weight:600">${mem.label}</td>
+            <td>${f.rootCur.toFixed(1)}%</td>
+            <td style="color:${rootT.col};font-size:12px">${rootT.icon} ${rootT.text}</td>
+            <td style="color:${root.col};font-weight:600">${root.label}</td>
+            <td style="color:${worst.col};font-weight:700">${worst.label}</td>
+          </tr>`;}).join('')}
+        </tbody></table></div>
+
+      <!-- Storage forecast -->
+      <div class="section-header" style="margin-bottom:8px">
+        <span class="section-title">Storage Pool Forecast</span>
+        <span style="font-size:11px;color:var(--muted)">Growth rate is estimated — edit to refine</span>
+      </div>
+      <div class="table-wrap" style="margin-bottom:20px"><table>
+        <thead><tr><th>Pool</th><th>Node</th><th>Type</th><th>Used</th><th>Free</th><th>Growth Rate (% /day)</th><th>Days to ${thresh}%</th></tr></thead>
+        <tbody>${storForecasts.map(s=>{
+          const urg=_urgencyColor(s.days);
+          const bar=`<div class="gauge-wrap"><span style="min-width:36px;font-size:12px">${s.pct.toFixed(0)}%</span><div class="gauge-bar"><div class="gauge-fill ${gaugeClass(s.pct)}" style="width:${Math.min(s.pct,100)}%"></div></div></div>`;
+          return `<tr>
+            <td><strong>${escHtml(s.storage)}</strong></td>
+            <td style="color:var(--muted)">${s.node}</td>
+            <td><span class="type-chip vm">${escHtml(s.type||'?')}</span></td>
+            <td style="min-width:120px">${bar}</td>
+            <td style="font-size:12px;color:var(--muted)">${fmtBytes(s.avail||0)}</td>
+            <td><input type="number" value="${s.growthPerDay}" step="0.01" min="0"
+              style="width:80px;background:var(--bg3);border:1px solid var(--border);border-radius:4px;color:var(--text);padding:3px 6px;font-size:12px;font-family:var(--font)"
+              onchange="saveStorageGrowth('${s.storage}','${s.node}',this.value);runCapacityAnalysis()"/></td>
+            <td style="color:${urg.col};font-weight:600">${urg.label}</td>
+          </tr>`;}).join('')||'<tr><td colspan="7" class="empty">No image storage found</td></tr>'}
+        </tbody></table></div>
+
+      <!-- Trend charts with projection -->
+      <div class="section-header" style="margin-bottom:10px"><span class="section-title">Resource Trends &amp; Projections (dashed = forecast)</span></div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px">
+        <div style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);padding:14px">
+          <div style="font-size:11px;text-transform:uppercase;letter-spacing:1px;color:var(--muted);margin-bottom:8px">CPU Usage</div>
+          <canvas id="cap-cpu-chart" style="max-height:180px"></canvas>
+        </div>
+        <div style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);padding:14px">
+          <div style="font-size:11px;text-transform:uppercase;letter-spacing:1px;color:var(--muted);margin-bottom:8px">Memory Usage</div>
+          <canvas id="cap-mem-chart" style="max-height:180px"></canvas>
+        </div>
+        <div style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);padding:14px">
+          <div style="font-size:11px;text-transform:uppercase;letter-spacing:1px;color:var(--muted);margin-bottom:8px">Root Disk Usage</div>
+          <canvas id="cap-disk-chart" style="max-height:180px"></canvas>
+        </div>
+        <div style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);padding:14px">
+          <div style="font-size:11px;text-transform:uppercase;letter-spacing:1px;color:var(--muted);margin-bottom:8px">Storage Pool Usage</div>
+          <canvas id="cap-stor-chart" style="max-height:180px"></canvas>
+        </div>
+      </div>
+      <div style="font-size:12px;color:var(--muted);padding:9px 12px;background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius)">
+        📊 Projections use linear regression on the selected timeframe. Growth rate accuracy improves with longer timeframes.
+        Storage pools require manual growth rate input since Proxmox does not record per-pool historical usage.
+      </div>`;
+
+    // ── Draw charts ───────────────────────────────────────
+    const palette=['#f97316','#58a6ff','#3fb950','#bc8cff','#ff6eb4'];
+    const projDays=90; // project 90 days forward
+
+    function buildChartData(nodeForecasts, metricKey, regKey) {
+      const refNode=nodeForecasts.find(n=>!n.error&&n.rrd?.length);
+      if(!refNode) return null;
+      const labels=refNode.rrd.map(p=>new Date(p.time*1000).toLocaleDateString([],{month:'short',day:'numeric'}));
+      // Add future labels
+      const lastTime=refNode.rrd[refNode.rrd.length-1]?.time||0;
+      for(let d=7;d<=projDays;d+=7) labels.push(new Date((lastTime+d*86400)*1000).toLocaleDateString([],{month:'short',day:'numeric'}));
+
+      const datasets=[];
+      nodeForecasts.filter(n=>!n.error).forEach((n,i)=>{
+        const col=palette[i%palette.length];
+        // Historical
+        const histData=n.rrd.map(p=>p[metricKey]!=null?+p[metricKey].toFixed(2):null);
+        datasets.push({label:n.node,data:histData,borderColor:col,backgroundColor:col+'20',borderWidth:1.5,pointRadius:0,tension:.3,spanGaps:true});
+        // Projection (dashed)
+        const reg=n[regKey]; if(!reg) return;
+        const histLen=n.rrd.length;
+        const projData=new Array(histLen-1).fill(null);
+        projData.push(histData[histLen-1]); // connect to last historical point
+        const projPoints=Math.floor(projDays/7);
+        for(let d=7;d<=projDays;d+=7) {
+          const t=lastTime+d*86400;
+          const val=Math.min(100,Math.max(0,+(reg.slope*t+reg.intercept).toFixed(2)));
+          projData.push(val);
+        }
+        datasets.push({label:`${n.node} (proj)`,data:projData,borderColor:col,borderDash:[5,4],borderWidth:1,pointRadius:0,tension:.3,fill:false,spanGaps:true});
+      });
+
+      // Threshold line
+      const threshData=new Array(labels.length).fill(thresh);
+      datasets.push({label:`${thresh}% threshold`,data:threshData,borderColor:'var(--red)',borderDash:[3,3],borderWidth:1,pointRadius:0,fill:false});
+
+      return {labels,datasets};
+    }
+
+    const chartOpts={
+      responsive:true,animation:false,
+      interaction:{mode:'index',intersect:false},
+      plugins:{legend:{labels:{color:'#8b949e',font:{size:10},boxWidth:10}}},
+      scales:{
+        x:{ticks:{color:'#8b949e',maxTicksLimit:8,font:{size:9},maxRotation:0},grid:{color:'rgba(48,54,61,.6)'}},
+        y:{min:0,max:105,ticks:{color:'#8b949e',font:{size:9},callback:v=>v+'%'},grid:{color:'rgba(48,54,61,.6)'}}
+      }
+    };
+
+    // Transform metric values to percentages for each key
+    const cpuData=buildChartData(nodeForecasts,'_cpuPct','cpuReg');
+    const memData=buildChartData(nodeForecasts,'_memPct','memReg');
+    const rootData=buildChartData(nodeForecasts,'_rootPct','rootReg');
+
+    // Pre-compute percentage fields on rrd for chart helper
+    nodeForecasts.filter(n=>!n.error).forEach(n=>{
+      n.rrd.forEach(p=>{ p._cpuPct=p.cpu!=null?+(p.cpu*100).toFixed(2):null; p._memPct=p.memtotal>0?+((p.memused/p.memtotal)*100).toFixed(2):null; p._rootPct=p.roottotal>0?+((p.rootused/p.roottotal)*100).toFixed(2):null; });
+    });
+
+    ['cpu','mem','disk'].forEach(k=>{
+      const d=k==='cpu'?buildChartData(nodeForecasts,'_cpuPct','cpuReg'):k==='mem'?buildChartData(nodeForecasts,'_memPct','memReg'):buildChartData(nodeForecasts,'_rootPct','rootReg');
+      const canvas=document.getElementById(`cap-${k}-chart`);
+      if(d&&canvas) _capCharts[k]=new Chart(canvas,{type:'line',data:d,options:chartOpts});
+    });
+
+    // Storage bar chart (current snapshot, no historical)
+    const storCanvas=document.getElementById('cap-stor-chart');
+    if(storCanvas&&storForecasts.length) {
+      _capCharts.stor=new Chart(storCanvas,{type:'bar',
+        data:{
+          labels:storForecasts.map(s=>`${s.storage} (${s.node})`),
+          datasets:[
+            {label:'Used %',data:storForecasts.map(s=>+s.pct.toFixed(1)),backgroundColor:storForecasts.map(s=>s.pct>85?'rgba(248,81,73,.6)':s.pct>70?'rgba(210,153,34,.6)':'rgba(63,185,80,.6)')},
+            {label:`${thresh}% threshold`,data:storForecasts.map(()=>thresh),type:'line',borderColor:'rgba(248,81,73,.7)',borderDash:[4,3],borderWidth:1,pointRadius:0},
+          ]
+        },
+        options:{...chartOpts,scales:{...chartOpts.scales,y:{...chartOpts.scales.y,max:100}}}
+      });
+    }
+
+  } catch(e) {
+    el.innerHTML=`<div class="empty">Analysis failed: ${e.message}</div>`;
+  }
+}
+
+function saveStorageGrowth(storage, node, rate) {
+  localStorage.setItem(`cap-growth-${storage}-${node}`, parseFloat(rate)||0);
 }
 
 // ── AFFINITY / ANTI-AFFINITY RULES ───────────────────────
