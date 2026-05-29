@@ -2257,7 +2257,15 @@ function openBulkModal(){
 }
 
 function confirmModal(){closeModal();if(modalCallback)modalCallback();modalCallback=null;}
-function closeModal(e){if(e&&e.target!==document.getElementById('modal-bg'))return;document.getElementById('modal-bg').classList.remove('open');}
+function closeModal(e){
+  if(e&&e.target!==document.getElementById('modal-bg'))return;
+  document.getElementById('modal-bg').classList.remove('open');
+  // Always restore the confirm button — some modals override onclick directly
+  // and only restore on success, leaving a stale handler if the user cancels
+  const btn = document.getElementById('modal-confirm-btn');
+  if(btn){btn.onclick=confirmModal;btn.textContent='Confirm';btn.disabled=false;}
+  modalCallback=null;
+}
 
 // ── UTILITIES ─────────────────────────────────────────────
 
