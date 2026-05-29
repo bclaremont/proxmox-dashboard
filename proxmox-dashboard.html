@@ -431,6 +431,10 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="2" width="6" height="6" rx="1"/><rect x="16" y="2" width="6" height="6" rx="1"/><rect x="9" y="16" width="6" height="6" rx="1"/><path d="M5 8v4a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8"/><line x1="12" y1="14" x2="12" y2="16"/></svg>
         SDN
       </div>
+      <div class="nav-item" data-view="pools" onclick="switchView('pools')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v2"/><line x1="12" y1="12" x2="12" y2="16"/><line x1="10" y1="14" x2="14" y2="14"/></svg>
+        Resource Pools
+      </div>
       <div class="nav-item" data-view="ceph" onclick="switchView('ceph')">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
         Ceph
@@ -752,6 +756,18 @@
         </div>
       </div>
       <div id="sdn-content"><div class="empty">Loading…</div></div>
+    </div>
+
+    <!-- RESOURCE POOLS -->
+    <div id="view-pools" style="display:none">
+      <div class="section-header">
+        <span class="section-title">Resource Pools</span>
+        <div style="display:flex;gap:6px">
+          <button class="btn small primary" onclick="openCreatePoolModal()">+ Create Pool</button>
+          <button class="btn small" onclick="loadPools()">Refresh</button>
+        </div>
+      </div>
+      <div id="pools-content"><div class="empty">Loading…</div></div>
     </div>
 
     <!-- CEPH -->
@@ -1804,7 +1820,7 @@ async function migrateVM(node, vmid, type, targetNode, online=false, withLocal=f
 // ── RENDERING ─────────────────────────────────────────────
 
 function switchView(view) {
-  const views=['connect','connections','savedview','overview','vms','containers','nodes','tasks','syslog','storage','network','heatmap','isolib','sdn','ceph','ha','firewall','backups','users','certs','audit','clustergraphs','subscriptions','updates','pbs'];
+  const views=['connect','connections','savedview','overview','vms','containers','nodes','tasks','syslog','storage','network','heatmap','isolib','sdn','pools','ceph','ha','firewall','backups','users','certs','audit','clustergraphs','subscriptions','updates','pbs'];
   views.forEach(v=>{
     const el=document.getElementById('view-'+v);
     if(el) el.style.display=v===view?'':'none';
@@ -1851,6 +1867,7 @@ function switchView(view) {
   if(view==='connections') renderConnections();
   if(view==='subscriptions') loadSubscriptions();
   if(view==='savedview') renderSavedView();
+  if(view==='pools') loadPools();
   if(view!=='connect') renderCurrentView();
 }
 
@@ -6175,6 +6192,303 @@ function deleteCurrentView() {
   renderSavedViewsSidebar();
   switchView('overview');
   toast(`View "${name}" deleted`, 'info');
+}
+
+// ── RESOURCE POOLS ───────────────────────────────────────
+// GET    /api2/json/pools            — list all pools
+// POST   /api2/json/pools            — create pool
+// GET    /api2/json/pools/{poolid}   — pool details + members
+// PUT    /api2/json/pools/{poolid}   — update comment / add-remove members
+// DELETE /api2/json/pools/{poolid}   — delete pool
+// Official: https://pve.proxmox.com/pve-docs/api-viewer/#/pools
+
+let poolsData = [];    // [{poolid, comment, connId, connName, members:[]}]
+let activePool = null; // currently expanded pool card
+
+async function loadPools() {
+  const el = document.getElementById('pools-content');
+  el.innerHTML = '<div class="empty"><span class="loading"></span> Loading resource pools…</div>';
+  poolsData = [];
+
+  // Fetch pool list from all connections
+  const fetchForConn = async (get, connId, connName) => {
+    const d = await get('/api2/json/pools').catch(()=>({data:[]}));
+    (d.data||[]).forEach(p => poolsData.push({poolid:p.poolid, comment:p.comment||'', connId, connName, members:[]}));
+  };
+  await fetchForConn(pveGet, '', 'Primary');
+  await Promise.all(extraConns.map(c => fetchForConn(path=>connGet(c,path), c.id, c.name||c.host)));
+
+  // Load member details for every pool in parallel
+  await Promise.all(poolsData.map(async p => {
+    try {
+      const get = p.connId ? (path=>connGet(resolveConn(p.connId),path)) : pveGet;
+      const d = await get(`/api2/json/pools/${encodeURIComponent(p.poolid)}`);
+      p.members = (d.data||{}).members || [];
+      p.comment = (d.data||{}).comment || p.comment;
+    } catch(e) { p.members = []; }
+  }));
+
+  renderPools();
+}
+
+function renderPools() {
+  const el = document.getElementById('pools-content');
+  const multi = extraConns.length > 0;
+
+  const totalVMs  = poolsData.reduce((a,p)=>a+(p.members||[]).filter(m=>m.type==='qemu').length, 0);
+  const totalCTs  = poolsData.reduce((a,p)=>a+(p.members||[]).filter(m=>m.type==='lxc').length, 0);
+  const totalStor = poolsData.reduce((a,p)=>a+(p.members||[]).filter(m=>m.type==='storage').length, 0);
+
+  const stats = `
+    <div class="stats-grid" style="margin-bottom:16px">
+      <div class="stat-card accent-blue"><div class="label">Pools</div><div class="value">${poolsData.length}</div></div>
+      <div class="stat-card accent-orange"><div class="label">VMs in Pools</div><div class="value">${totalVMs}</div></div>
+      <div class="stat-card accent-purple"><div class="label">CTs in Pools</div><div class="value">${totalCTs}</div></div>
+      <div class="stat-card accent-green"><div class="label">Storage in Pools</div><div class="value">${totalStor}</div></div>
+    </div>`;
+
+  if (!poolsData.length) {
+    el.innerHTML = stats + `<div class="empty">No resource pools configured.<br>
+      <button class="btn small primary" onclick="openCreatePoolModal()" style="margin-top:10px">+ Create your first pool</button></div>`;
+    return;
+  }
+
+  // Pool cards
+  let html = stats + '<div class="node-grid">';
+  poolsData.forEach(p => {
+    const vms  = (p.members||[]).filter(m=>m.type==='qemu');
+    const cts  = (p.members||[]).filter(m=>m.type==='lxc');
+    const stor = (p.members||[]).filter(m=>m.type==='storage');
+    const running = [...vms,...cts].filter(m=>m.status==='running').length;
+    const isActive = activePool && activePool.poolid===p.poolid && activePool.connId===p.connId;
+    const pd = JSON.stringify(p).replace(/"/g,'&quot;');
+    html += `<div class="node-card" style="cursor:pointer;${isActive?'border:1px solid var(--accent);background:rgba(249,115,22,.04);':''}" onclick="selectPool(${pd})">
+      <div class="node-card-header">
+        <div>
+          <div class="node-name">${escHtml(p.poolid)}</div>
+          ${p.comment?`<div style="font-size:11px;color:var(--muted);margin-top:2px">${escHtml(p.comment)}</div>`:''}
+        </div>
+        ${multi?`<span style="font-size:10px;color:var(--muted);text-align:right">${escHtml(p.connName)}</span>`:''}
+      </div>
+      <div class="node-metric"><span class="key">VMs</span><span>${vms.length} <span style="color:var(--muted);font-size:11px">(${running} running)</span></span></div>
+      <div class="node-metric"><span class="key">Containers</span><span>${cts.length}</span></div>
+      <div class="node-metric"><span class="key">Storage</span><span>${stor.length}</span></div>
+      <div style="margin-top:10px;display:flex;gap:5px;flex-wrap:wrap" onclick="event.stopPropagation()">
+        <button class="btn small" onclick="openEditPoolModal(${pd})">✎ Edit</button>
+        <button class="btn small danger" onclick="confirmDeletePool('${escHtml(p.poolid)}','${p.connId}')">Delete</button>
+      </div>
+    </div>`;
+  });
+  html += '</div>';
+
+  // Expanded pool detail
+  if (activePool) {
+    const p = poolsData.find(x=>x.poolid===activePool.poolid&&x.connId===activePool.connId);
+    if (p) html += renderPoolDetail(p);
+    else activePool = null;
+  }
+
+  el.innerHTML = html;
+}
+
+function selectPool(pool) {
+  activePool = (activePool && activePool.poolid===pool.poolid && activePool.connId===pool.connId) ? null : pool;
+  renderPools();
+  if (activePool) setTimeout(()=>{ const d=document.getElementById('pool-detail'); if(d) d.scrollIntoView({behavior:'smooth',block:'nearest'}); }, 60);
+}
+
+function renderPoolDetail(p) {
+  const vms  = (p.members||[]).filter(m=>m.type==='qemu');
+  const cts  = (p.members||[]).filter(m=>m.type==='lxc');
+  const stor = (p.members||[]).filter(m=>m.type==='storage');
+
+  const mkRow = (m, ep) => {
+    const vmid = m.vmid;
+    const cpuStr = m.cpu ? (m.cpu*100).toFixed(1)+'%' : '—';
+    const memPct = m.mem&&m.maxmem ? ((m.mem/m.maxmem)*100).toFixed(0)+'%' : '—';
+    return `<tr class="clickable-row" onclick="openDetail(${JSON.stringify(m).replace(/"/g,'&quot;')})">
+      <td><span class="type-chip ${ep==='qemu'?'vm':'ct'}">${ep==='qemu'?'VM':'CT'}</span></td>
+      <td style="color:var(--muted);font-size:12px">${vmid}</td>
+      <td><strong>${escHtml(m.name||String(vmid))}</strong></td>
+      <td style="color:var(--muted);font-size:12px">${escHtml(m.node||'—')}</td>
+      <td>${statusBadge(m.status||'stopped')}</td>
+      <td style="font-size:12px;color:var(--muted)">${cpuStr}</td>
+      <td style="font-size:12px;color:var(--muted)">${memPct}</td>
+      <td onclick="event.stopPropagation()">
+        <button class="btn small danger" onclick="removeFromPool('${escHtml(p.poolid)}','${p.connId}','vms',${vmid})">Remove</button>
+      </td>
+    </tr>`;
+  };
+
+  return `<div id="pool-detail" style="margin-top:18px;border:1px solid var(--accent);border-radius:var(--radius);overflow:hidden">
+    <div style="background:rgba(249,115,22,.08);padding:12px 18px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:12px">
+      <span style="font-size:15px;font-weight:700;color:var(--accent)">${escHtml(p.poolid)}</span>
+      ${p.comment?`<span style="font-size:12px;color:var(--muted)">${escHtml(p.comment)}</span>`:''}
+      <div style="margin-left:auto;display:flex;gap:6px">
+        <button class="btn small primary" onclick="openAddMembersModal('${escHtml(p.poolid)}','${p.connId}')">+ Add Members</button>
+        <button class="btn small" onclick="activePool=null;renderPools()">✕ Close</button>
+      </div>
+    </div>
+    <div style="padding:16px">
+      ${[...vms,...cts].length ? `
+        <div class="section-header" style="margin-top:0"><span class="section-title">VMs &amp; Containers (${[...vms,...cts].length})</span></div>
+        <div class="table-wrap" style="margin-bottom:16px"><table>
+          <thead><tr><th>Type</th><th>ID</th><th>Name</th><th>Node</th><th>Status</th><th>CPU</th><th>Memory</th><th></th></tr></thead>
+          <tbody>${[...vms.map(m=>mkRow(m,'qemu')),...cts.map(m=>mkRow(m,'lxc'))].join('')}</tbody>
+        </table></div>` : `<div class="empty" style="margin-bottom:14px">No VMs or containers — click <strong>+ Add Members</strong> to assign some.</div>`}
+      ${stor.length ? `
+        <div class="section-header"><span class="section-title">Storage (${stor.length})</span></div>
+        <div class="table-wrap"><table>
+          <thead><tr><th>Storage</th><th>Node</th><th>Type</th><th></th></tr></thead>
+          <tbody>${stor.map(s=>`<tr>
+            <td><strong>${escHtml(s.storage||'—')}</strong></td>
+            <td style="color:var(--muted)">${escHtml(s.node||'—')}</td>
+            <td><span class="type-chip vm">${escHtml(s.plugintype||s.type||'—')}</span></td>
+            <td onclick="event.stopPropagation()"><button class="btn small danger" onclick="removeFromPool('${escHtml(p.poolid)}','${p.connId}','storage','${escHtml(s.storage||'')}')">Remove</button></td>
+          </tr>`).join('')}</tbody>
+        </table></div>` : ''}
+    </div>
+  </div>`;
+}
+
+function openCreatePoolModal() {
+  document.getElementById('modal-title').textContent = 'Create Resource Pool';
+  const connOpts = ['<option value="">Primary</option>',
+    ...extraConns.map(c=>`<option value="${c.id}">${escHtml(c.name||c.host)}</option>`)].join('');
+  document.getElementById('modal-body').innerHTML = `
+    <div class="form-group"><label>POOL ID</label>
+      <input id="pool-id" placeholder="e.g. production, dev-team"/>
+    </div>
+    <div class="form-group"><label>COMMENT (optional)</label>
+      <input id="pool-comment" placeholder="Description of this pool"/>
+    </div>
+    ${extraConns.length?`<div class="form-group"><label>CLUSTER / HOST</label><select id="pool-conn">${connOpts}</select></div>`:''}`;
+  modalCallback = async () => {
+    const poolid  = document.getElementById('pool-id').value.trim();
+    const comment = document.getElementById('pool-comment').value.trim();
+    const connId  = (document.getElementById('pool-conn')||{}).value || '';
+    if (!poolid) return toast('Enter a pool ID', 'error');
+    const conn = resolveConn(connId);
+    try {
+      const params = { poolid };
+      if (comment) params.comment = comment;
+      if (conn) await connPost(conn, '/api2/json/pools', params);
+      else      await pvePost('/api2/json/pools', params);
+      toast(`Pool "${poolid}" created`, 'success');
+      setTimeout(loadPools, 800);
+    } catch(e) { toast('Create pool failed: '+e.message, 'error'); }
+  };
+  document.getElementById('modal-bg').classList.add('open');
+}
+
+function openEditPoolModal(pool) {
+  document.getElementById('modal-title').textContent = `Edit Pool — ${pool.poolid}`;
+  document.getElementById('modal-body').innerHTML = `
+    <div class="form-group"><label>COMMENT</label>
+      <input id="pool-edit-comment" value="${escHtml(pool.comment||'')}" placeholder="Description"/>
+    </div>`;
+  modalCallback = async () => {
+    const comment = document.getElementById('pool-edit-comment').value.trim();
+    const conn = resolveConn(pool.connId);
+    try {
+      if (conn) await pvePut.call(null, `/api2/json/pools/${pool.poolid}`, {comment}) // use generic put via conn
+        .catch(()=>connPost(conn, `/api2/json/pools/${pool.poolid}`, {comment}));
+      else await pvePut(`/api2/json/pools/${pool.poolid}`, { comment });
+      toast(`Pool "${pool.poolid}" updated`, 'success');
+      setTimeout(loadPools, 800);
+    } catch(e) { toast('Update failed: '+e.message, 'error'); }
+  };
+  document.getElementById('modal-bg').classList.add('open');
+}
+
+function openAddMembersModal(poolid, connId) {
+  const conn = resolveConn(connId);
+  const vms = conn ? (conn.vms||[]) : PVE.vms;
+  const cts = conn ? (conn.containers||[]) : PVE.containers;
+  const pool = poolsData.find(p=>p.poolid===poolid&&p.connId===connId);
+  const inPool = new Set((pool?.members||[]).filter(m=>m.vmid).map(m=>String(m.vmid)));
+
+  const vmOpts = [...vms,...cts].filter(x=>!inPool.has(String(x.vmid))).map(x=>
+    `<option value="${x.vmid}">[${x.type.toUpperCase()}] ${x.vmid} — ${escHtml(x.name||String(x.vmid))} (${x.node})</option>`
+  ).join('');
+
+  const storList = (conn ? (conn.storage||[]) : PVE.storage)
+    .filter(s => !(pool?.members||[]).some(m=>m.storage===s.storage&&m.node===s.node));
+  const storOpts = storList.map(s=>
+    `<option value="${s.storage}">${escHtml(s.storage)} [${s.type||'?'}] — ${s.node}</option>`
+  ).join('');
+
+  document.getElementById('modal-title').textContent = `Add Members to "${poolid}"`;
+  document.getElementById('modal-body').innerHTML = `
+    <div class="form-group">
+      <label>VMs / CONTAINERS — hold Ctrl/Cmd to select multiple</label>
+      <select id="add-vms" multiple size="6" style="width:100%;height:150px;background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius);color:var(--text);padding:4px;font-family:var(--font);font-size:13px">
+        ${vmOpts||'<option disabled>All VMs/CTs already in pool</option>'}
+      </select>
+    </div>
+    <div class="form-group">
+      <label>STORAGE — hold Ctrl/Cmd to select multiple</label>
+      <select id="add-stor" multiple size="4" style="width:100%;height:100px;background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius);color:var(--text);padding:4px;font-family:var(--font);font-size:13px">
+        ${storOpts||'<option disabled>All storage already in pool</option>'}
+      </select>
+    </div>`;
+  modalCallback = async () => {
+    const vmSel   = [...document.getElementById('add-vms').selectedOptions].map(o=>o.value);
+    const storSel = [...document.getElementById('add-stor').selectedOptions].map(o=>o.value);
+    if (!vmSel.length && !storSel.length) return toast('Select at least one member to add', 'error');
+    try {
+      const params = {};
+      if (vmSel.length)   params.vms     = vmSel.join(',');
+      if (storSel.length) params.storage = storSel.join(',');
+      if (conn) {
+        // pvePut equivalent for extra connection
+        const h = connHeaders(conn, {'Content-Type':'application/x-www-form-urlencoded'});
+        const body = Object.entries(params).map(([k,v])=>`${encodeURIComponent(k)}=${encodeURIComponent(v)}`).join('&');
+        const r = await fetch(conn.host+`/api2/json/pools/${poolid}`, {method:'PUT', headers:h, body});
+        if (!r.ok){const t=await r.text();throw new Error(`HTTP ${r.status}: ${t}`);}
+      } else {
+        await pvePut(`/api2/json/pools/${poolid}`, params);
+      }
+      toast(`Members added to "${poolid}"`, 'success');
+      setTimeout(loadPools, 800);
+    } catch(e) { toast('Add members failed: '+e.message, 'error'); }
+  };
+  document.getElementById('modal-bg').classList.add('open');
+}
+
+async function removeFromPool(poolid, connId, field, value) {
+  const conn = resolveConn(connId);
+  try {
+    const params = { [field]: String(value), delete: 1 };
+    if (conn) {
+      const h = connHeaders(conn, {'Content-Type':'application/x-www-form-urlencoded'});
+      const body = Object.entries(params).map(([k,v])=>`${encodeURIComponent(k)}=${encodeURIComponent(v)}`).join('&');
+      const r = await fetch(conn.host+`/api2/json/pools/${poolid}`, {method:'PUT', headers:h, body});
+      if (!r.ok){const t=await r.text();throw new Error(`HTTP ${r.status}: ${t}`);}
+    } else {
+      await pvePut(`/api2/json/pools/${poolid}`, params);
+    }
+    toast(`Removed from pool "${poolid}"`, 'success');
+    setTimeout(loadPools, 800);
+  } catch(e) { toast('Remove failed: '+e.message, 'error'); }
+}
+
+function confirmDeletePool(poolid, connId) {
+  document.getElementById('modal-title').textContent = `Delete Pool "${poolid}"`;
+  document.getElementById('modal-body').innerHTML = `
+    <p style="color:var(--muted)">Delete pool <strong style="color:var(--red)">${escHtml(poolid)}</strong>?</p>
+    <p style="font-size:12px;color:var(--muted);margin-top:8px">This only removes the pool grouping — VMs, CTs and storage are NOT deleted.</p>`;
+  modalCallback = async () => {
+    const conn = resolveConn(connId);
+    try {
+      if (conn) await connDelete(conn, `/api2/json/pools/${poolid}`);
+      else      await pveDelete(`/api2/json/pools/${poolid}`);
+      if (activePool && activePool.poolid===poolid) activePool=null;
+      toast(`Pool "${poolid}" deleted`, 'success');
+      setTimeout(loadPools, 800);
+    } catch(e) { toast('Delete failed: '+e.message, 'error'); }
+  };
+  document.getElementById('modal-bg').classList.add('open');
 }
 
 // ── SUBSCRIPTION MANAGEMENT ──────────────────────────────
