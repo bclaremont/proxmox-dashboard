@@ -995,6 +995,7 @@
         <span class="section-title">TLS Certificates</span>
         <div style="display:flex;gap:6px">
           <select class="conn-sel" id="certs-conn" style="width:140px;padding:5px 8px;font-size:13px" onchange="loadCerts()"><option value="">Primary</option></select>
+          <button class="btn small primary" onclick="openACMEAccountsModal()">⚙ ACME Accounts</button>
           <button class="btn small" onclick="loadCerts()">Refresh</button>
         </div>
       </div>
@@ -5227,84 +5228,358 @@ function confirmDeleteRole(roleid,connId){
 // ── CERTIFICATES ──────────────────────────────────────────
 // GET /api2/json/nodes/{node}/certificates/info
 // Official: https://pve.proxmox.com/pve-docs/api-viewer/#/nodes/{node}/certificates
+// ── CERTIFICATE MANAGEMENT ────────────────────────────────
+// GET    /nodes/{n}/certificates/info        — cert details
+// POST   /nodes/{n}/certificates/acme/certificate  — order ACME cert (UPID)
+// DELETE /nodes/{n}/certificates/acme/certificate  — delete ACME cert
+// PUT    /nodes/{n}/certificates/custom      — upload custom PEM
+// DELETE /nodes/{n}/certificates/custom      — delete custom cert
+// GET/POST/DELETE /cluster/acme/account      — ACME account management
+// GET    /cluster/acme/directories           — ACME server list
+// Official: https://pve.proxmox.com/pve-docs/api-viewer/#/nodes/{node}/certificates
+
+let certsData = { certs:[], acmeAccounts:[], acmeDirs:[], connId:'' };
+
+function _certType(cert) {
+  const issuer  = cert.issuer  || '';
+  const subject = cert.subject || '';
+  if (/Let.?s Encrypt|ISRG|R[0-9]+|E[0-9]+|acme/i.test(issuer)) return 'acme';
+  if (!issuer || issuer === subject || /Proxmox Virtual Environment/i.test(issuer)) return 'self-signed';
+  return 'custom';
+}
+
 async function loadCerts() {
   const conn = getViewConn('certs-conn');
-  const get = conn ? (p=>connGet(conn,p)) : pveGet;
-  const nodes = conn ? (conn.nodes||[]) : PVE.nodes;
+  const get  = conn ? (p=>connGet(conn,p)) : pveGet;
+  const nodes= conn ? (conn.nodes||[]) : PVE.nodes;
+  certsData.connId = conn ? (extraConns.find(c=>c===conn)||{}).id||'' : '';
   const el = document.getElementById('certs-content');
   el.innerHTML = '<div class="empty"><span class="loading"></span> Loading certificates…</div>';
   const now = Date.now();
   try {
-    const allCerts = [];
-    await Promise.all(nodes.map(async n => {
-      const d = await get(`/api2/json/nodes/${n.node}/certificates/info`).catch(() => ({ data: [] }));
-      (d.data || []).forEach(c => allCerts.push({ ...c, node: n.node }));
-    }));
+    const [certs, acmeRes, dirsRes] = await Promise.all([
+      (async()=>{
+        const all=[];
+        await Promise.all(nodes.map(async n=>{
+          const d=await get(`/api2/json/nodes/${n.node}/certificates/info`).catch(()=>({data:[]}));
+          (d.data||[]).forEach(c=>all.push({...c,node:n.node}));
+        }));
+        return all;
+      })(),
+      get('/api2/json/cluster/acme/account').catch(()=>({data:[]})),
+      get('/api2/json/cluster/acme/directories').catch(()=>({data:[]})),
+    ]);
+    certsData.certs        = certs;
+    certsData.acmeAccounts = acmeRes.data || [];
+    certsData.acmeDirs     = dirsRes.data || [];
+    const cid = certsData.connId;
 
     let warnCount = 0;
-    const certRows = allCerts.map(cert => {
-      const exp = cert.notafter * 1000;
+    const certRows = certs.map(cert => {
+      const exp  = cert.notafter * 1000;
       const days = Math.floor((exp - now) / 86400000);
-      let cls = '', icon = '';
-      if (days < 7)       { cls = 'cert-crit'; icon = '🚨'; warnCount++; }
-      else if (days < 30) { cls = 'cert-warn'; icon = '⚠';  warnCount++; }
-      else                { cls = 'cert-ok';   icon = '✓'; }
-
-      const notBefore = cert.notbefore ? new Date(cert.notbefore * 1000).toLocaleDateString() : '—';
+      let cls='',icon='';
+      if (days<7){cls='cert-crit';icon='🚨';warnCount++;}
+      else if (days<30){cls='cert-warn';icon='⚠';warnCount++;}
+      else{cls='cert-ok';icon='✓';}
+      const notBefore = cert.notbefore?new Date(cert.notbefore*1000).toLocaleDateString():'—';
       const notAfter  = new Date(exp).toLocaleDateString();
-      const sans = (cert.san || []).join(', ');
-
+      const sans      = (cert.san||[]).join(', ');
+      const type      = _certType(cert);
+      const typeLabel = type==='acme'?'<span class="role-chip" style="color:var(--green)">ACME</span>':
+                        type==='self-signed'?'<span style="font-size:11px;color:var(--muted)">self-signed</span>':
+                        '<span class="type-chip vm">custom</span>';
+      // Action buttons only on the main proxy cert
+      const isProxy   = cert.filename==='pveproxy-ssl.pem';
+      const actions   = isProxy ? `<div class="actions-row">
+        <button class="btn small success" onclick="openOrderACMEModal('${escHtml(cert.node)}','${cid}')" title="Order / renew ACME (Let's Encrypt) certificate">⚡ ACME</button>
+        <button class="btn small" onclick="openUploadCertModal('${escHtml(cert.node)}','${cid}')" title="Upload custom PEM certificate">↑ Custom</button>
+        ${type!=='self-signed'?`<button class="btn small warning" onclick="confirmRevertCert('${escHtml(cert.node)}','${cid}','${type}')" title="Revert to self-signed">Revert</button>`:''}
+      </div>` : '';
       return `<tr>
         <td><strong>${escHtml(cert.node)}</strong></td>
-        <td style="font-size:11px;color:var(--muted)">${escHtml(cert.filename || '—')}</td>
-        <td style="font-size:11px">${escHtml(cert.subject || '—')}</td>
-        <td style="font-size:10px;color:var(--muted);max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escHtml(sans)}">${escHtml(sans || '—')}</td>
-        <td style="font-size:11px;color:var(--muted)">${escHtml(cert.issuer || '—')}</td>
+        <td style="font-size:11px;color:var(--muted)">${escHtml(cert.filename||'—')}</td>
+        <td>${typeLabel}</td>
+        <td style="font-size:11px">${escHtml(cert.subject||'—')}</td>
+        <td style="font-size:10px;color:var(--muted);max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escHtml(sans)}">${escHtml(sans||'—')}</td>
+        <td style="font-size:11px;color:var(--muted);max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escHtml(cert.issuer||'—')}</td>
         <td style="font-size:12px;color:var(--muted)">${notBefore}</td>
         <td style="font-size:12px">${notAfter}</td>
         <td class="${cls}" style="text-align:center">${icon} ${days}d</td>
-        <td style="font-size:11px;color:var(--muted)">${escHtml(cert.fingerprint ? cert.fingerprint.substring(0,20)+'…' : '—')}</td>
+        <td onclick="event.stopPropagation()">${actions}</td>
       </tr>`;
     });
 
-    // Update sidebar badge
-    const badge = document.getElementById('cert-badge');
-    if (warnCount > 0) { badge.textContent = warnCount; badge.style.display = ''; }
-    else badge.style.display = 'none';
+    const badge=document.getElementById('cert-badge');
+    if(warnCount>0){badge.textContent=warnCount;badge.style.display='';}else badge.style.display='none';
+
+    // ACME accounts summary
+    const acmeSection = certsData.acmeAccounts.length
+      ? `<div class="section-header" style="margin-bottom:10px">
+          <span class="section-title">ACME Accounts (${certsData.acmeAccounts.length})</span>
+          <button class="btn small primary" onclick="openCreateACMEAccountModal()">+ Register Account</button>
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:18px">
+          ${certsData.acmeAccounts.map(a=>`
+            <div style="background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius);padding:10px 14px;display:flex;align-items:center;gap:10px">
+              <span class="badge running" style="font-size:10px"><span class="badge-dot"></span>registered</span>
+              <strong style="font-size:13px">${escHtml(a.name||'default')}</strong>
+              <button class="btn small danger" onclick="confirmDeleteACMEAccount('${escHtml(a.name||'')}','${cid}')">Delete</button>
+            </div>`).join('')}
+        </div>`
+      : `<div style="background:rgba(249,115,22,.08);border:1px solid rgba(249,115,22,.25);border-radius:var(--radius);padding:10px 14px;font-size:13px;margin-bottom:18px;display:flex;align-items:center;justify-content:space-between">
+          <span style="color:var(--muted)">No ACME accounts registered. Register one to use Let's Encrypt certificates.</span>
+          <button class="btn small primary" onclick="openCreateACMEAccountModal()">+ Register ACME Account</button>
+        </div>`;
 
     el.innerHTML = `
-      <div class="stats-grid">
-        <div class="stat-card">
-          <div class="label">Total Certs</div>
-          <div class="value" style="color:var(--blue)">${allCerts.length}</div>
-          <div class="sub">across ${nodes.length} node(s)</div>
-        </div>
-        <div class="stat-card">
-          <div class="label">Expiring Soon</div>
-          <div class="value" style="color:${warnCount ? 'var(--yellow)' : 'var(--green)'}">${warnCount}</div>
-          <div class="sub">within 30 days</div>
-        </div>
-        <div class="stat-card">
-          <div class="label">Critical</div>
-          <div class="value" style="color:${allCerts.filter((cert) => Math.floor((cert.notafter*1000-now)/86400000) < 7).length ? 'var(--red)' : 'var(--green)'}">
-            ${allCerts.filter((cert) => Math.floor((cert.notafter*1000-now)/86400000) < 7).length}
-          </div>
-          <div class="sub">under 7 days</div>
-        </div>
+      <div class="stats-grid" style="margin-bottom:16px">
+        <div class="stat-card accent-blue"><div class="label">Certificates</div><div class="value">${certs.length}</div><div class="sub">across ${nodes.length} node(s)</div></div>
+        <div class="stat-card accent-${warnCount?'yellow':'green'}"><div class="label">Expiring Soon</div><div class="value" style="color:${warnCount?'var(--yellow)':'var(--green)'}">${warnCount}</div><div class="sub">within 30 days</div></div>
+        <div class="stat-card accent-${certs.filter(c=>Math.floor((c.notafter*1000-now)/86400000)<7).length?'red':'green'}"><div class="label">Critical</div><div class="value" style="color:${certs.filter(c=>Math.floor((c.notafter*1000-now)/86400000)<7).length?'var(--red)':'var(--green)'}">
+          ${certs.filter(c=>Math.floor((c.notafter*1000-now)/86400000)<7).length}
+        </div><div class="sub">under 7 days</div></div>
+        <div class="stat-card accent-${certsData.acmeAccounts.length?'green':'yellow'}"><div class="label">ACME Accounts</div><div class="value">${certsData.acmeAccounts.length}</div><div class="sub">${certsData.acmeAccounts.length?'registered':'none'}</div></div>
       </div>
+      ${acmeSection}
       <div class="section-header"><span class="section-title">Certificate Details</span></div>
       <div class="table-wrap">
         <table>
-          <thead><tr><th>Node</th><th>File</th><th>Subject</th><th>SANs</th><th>Issuer</th><th>Valid From</th><th>Expires</th><th>Days Left</th><th>Fingerprint</th></tr></thead>
-          <tbody>${certRows.join('') || '<tr><td colspan="9" class="empty">No certificates found</td></tr>'}</tbody>
+          <thead><tr><th>Node</th><th>File</th><th>Type</th><th>Subject</th><th>SANs</th><th>Issuer</th><th>Valid From</th><th>Expires</th><th>Days</th><th>Actions</th></tr></thead>
+          <tbody>${certRows.join('')||'<tr><td colspan="10" class="empty">No certificates found</td></tr>'}</tbody>
         </table>
-      </div>
-      <p style="color:var(--muted);font-size:12px;margin-top:8px">
-        🔒 To renew certificates: Proxmox web UI → Node → System → Certificates → Order Certificates Now
-      </p>`;
+      </div>`;
   } catch(e) {
     el.innerHTML = `<div class="empty">Failed to load certificates: ${e.message}</div>`;
   }
+}
+
+// ── ACME ACCOUNT MANAGEMENT ───────────────────────────────
+
+async function openACMEAccountsModal() {
+  // Reload and show ACME management summary
+  await loadCerts();
+  toast('ACME accounts shown in the Certificates view', 'info');
+}
+
+function openCreateACMEAccountModal() {
+  const dirOpts = (certsData.acmeDirs.length
+    ? certsData.acmeDirs.map(d=>`<option value="${escHtml(d.url)}">${escHtml(d.name||d.url)}</option>`)
+    : [`<option value="https://acme-v02.api.letsencrypt.org/directory">Let's Encrypt V2 (Production)</option>`,
+       `<option value="https://acme-staging-v02.api.letsencrypt.org/directory">Let's Encrypt V2 (Staging)</option>`]
+  ).join('');
+
+  document.getElementById('modal-title').textContent = 'Register ACME Account';
+  document.getElementById('modal-body').innerHTML = `
+    <p style="color:var(--muted);font-size:13px;margin-bottom:14px">
+      Register with an ACME Certificate Authority (e.g. Let's Encrypt) to enable automated TLS certificates.
+    </p>
+    <div class="create-vm-grid">
+      <div class="form-group"><label>ACCOUNT NAME</label>
+        <input id="aa-name" value="default" placeholder="default"/>
+      </div>
+      <div class="form-group"><label>ACME DIRECTORY</label>
+        <select id="aa-dir">${dirOpts}</select>
+      </div>
+    </div>
+    <div class="form-group"><label>EMAIL (for expiry notifications)</label>
+      <input id="aa-email" type="email" placeholder="admin@example.com"/>
+    </div>
+    <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;margin-top:10px">
+      <input type="checkbox" id="aa-tos" style="width:auto;height:auto;padding:0;margin:0">
+      I agree to the ACME provider's Terms of Service
+    </label>
+    <div style="background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius);padding:9px 12px;font-size:12px;color:var(--muted);margin-top:10px">
+      Use <strong>Staging</strong> for testing — staging certs are not trusted by browsers but don't hit rate limits.
+      Switch to <strong>Production</strong> once everything works.
+    </div>`;
+
+  modalCallback = async () => {
+    const name  = (document.getElementById('aa-name')?.value||'default').trim();
+    const dir   = document.getElementById('aa-dir')?.value;
+    const email = document.getElementById('aa-email')?.value?.trim();
+    const tos   = document.getElementById('aa-tos')?.checked;
+    if (!email) return toast('Enter an email address', 'error');
+    if (!tos)   return toast('You must agree to the Terms of Service', 'error');
+    const conn = resolveConn(certsData.connId);
+    const params = { name, contact: `mailto:${email}`, directory: dir };
+    // Fetch TOS URL from directory
+    try {
+      const tosRes = await (conn?connGet(conn,'/api2/json/cluster/acme/tos?directory='+encodeURIComponent(dir)):pveGet('/api2/json/cluster/acme/tos?directory='+encodeURIComponent(dir))).catch(()=>null);
+      if (tosRes?.data) params.tos_url = tosRes.data;
+    } catch(e){}
+    try {
+      if (conn) await connPost(conn, '/api2/json/cluster/acme/account', params);
+      else      await pvePost('/api2/json/cluster/acme/account', params);
+      toast(`ACME account "${name}" registered`, 'success');
+      setTimeout(loadCerts, 1000);
+    } catch(e) { toast('Registration failed: '+e.message, 'error'); }
+  };
+  document.getElementById('modal-bg').classList.add('open');
+}
+
+function confirmDeleteACMEAccount(name, connId) {
+  document.getElementById('modal-title').textContent = `Delete ACME Account "${name}"`;
+  document.getElementById('modal-body').innerHTML = `
+    <p style="color:var(--muted)">Delete ACME account <strong style="color:var(--red)">${escHtml(name)}</strong>?</p>
+    <p style="color:var(--yellow);font-size:12px;margin-top:8px">⚠ Nodes using this account will no longer be able to renew their certificates automatically.</p>`;
+  modalCallback = async () => {
+    const conn = resolveConn(connId);
+    try {
+      if (conn) await connDelete(conn, `/api2/json/cluster/acme/account/${encodeURIComponent(name)}`);
+      else      await pveDelete(`/api2/json/cluster/acme/account/${encodeURIComponent(name)}`);
+      toast(`ACME account "${name}" deleted`, 'success');
+      setTimeout(loadCerts, 800);
+    } catch(e) { toast('Delete failed: '+e.message, 'error'); }
+  };
+  document.getElementById('modal-bg').classList.add('open');
+}
+
+// ── ORDER ACME CERTIFICATE ────────────────────────────────
+
+async function openOrderACMEModal(node, connId) {
+  // Check if ACME account exists
+  if (!certsData.acmeAccounts.length) {
+    if (confirm('No ACME account registered yet. Register one first?')) openCreateACMEAccountModal();
+    return;
+  }
+  // Fetch current node config to pre-fill domain
+  const conn = resolveConn(connId);
+  const get  = conn ? (p=>connGet(conn,p)) : pveGet;
+  let nodeCfg = {};
+  try { const d=await get(`/api2/json/nodes/${node}/config`); nodeCfg=d.data||{}; } catch(e){}
+
+  const acctOpts = certsData.acmeAccounts.map(a=>`<option value="${escHtml(a.name)}">${escHtml(a.name)}</option>`).join('');
+  // Current domain from node config
+  const curDomain = nodeCfg.acmedomain0 || nodeCfg['acmedomain0'] || '';
+
+  document.getElementById('modal-title').textContent = `Order ACME Certificate — ${node}`;
+  document.getElementById('modal-body').innerHTML = `
+    <p style="color:var(--muted);font-size:13px;margin-bottom:14px">
+      This will configure the node's ACME settings and request a certificate from Let's Encrypt.
+      The node must be publicly reachable on port 80 for the HTTP-01 challenge.
+    </p>
+    <div class="form-group"><label>ACME ACCOUNT</label>
+      <select id="oa-acct">${acctOpts}</select>
+    </div>
+    <div class="form-group"><label>DOMAIN (FQDN — must resolve to this node)</label>
+      <input id="oa-domain" value="${escHtml(curDomain)}" placeholder="pve.yourdomain.com"/>
+    </div>
+    <div style="background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius);padding:10px 12px;font-size:12px;color:var(--muted);margin-top:8px">
+      <strong style="color:var(--text)">Before ordering:</strong><br>
+      1. The domain must have a DNS A record pointing to this node's IP<br>
+      2. Port 80 (HTTP) must be reachable from the internet for the ACME challenge<br>
+      3. The certificate will be used for the Proxmox web UI (port 8006)
+    </div>`;
+
+  modalCallback = null;
+  const btn = document.getElementById('modal-confirm-btn');
+  btn.textContent = '⚡ Configure & Order'; btn.disabled = false;
+  btn.onclick = async () => {
+    const acct   = document.getElementById('oa-acct')?.value;
+    const domain = (document.getElementById('oa-domain')?.value||'').trim();
+    if (!domain) return toast('Enter a domain name', 'error');
+    btn.disabled=true; btn.textContent='Ordering…';
+    try {
+      // Step 1: configure node ACME settings
+      const cfgParams = { acme: `account=${acct}`, acmedomain0: domain };
+      if (conn) {
+        const h=connHeaders(conn,{'Content-Type':'application/x-www-form-urlencoded'});
+        const body=Object.entries(cfgParams).map(([k,v])=>`${encodeURIComponent(k)}=${encodeURIComponent(v)}`).join('&');
+        const r=await fetch(conn.host+`/api2/json/nodes/${node}/config`,{method:'PUT',headers:h,body});
+        if(!r.ok){const t=await r.text();throw new Error(`Config: HTTP ${r.status}: ${t}`);}
+      } else {
+        await pvePut(`/api2/json/nodes/${node}/config`, cfgParams);
+      }
+      // Step 2: order certificate
+      let res;
+      if (conn) res = await connPost(conn, `/api2/json/nodes/${node}/certificates/acme/certificate`, {});
+      else      res = await pvePost(`/api2/json/nodes/${node}/certificates/acme/certificate`, {});
+      const upid = res && res.data;
+      document.getElementById('modal-bg').classList.remove('open');
+      btn.onclick=confirmModal; btn.textContent='Confirm'; btn.disabled=false;
+      if (upid && typeof upid==='string') tmRegister(upid, node, `Order ACME cert on ${node}`);
+      toast(`ACME certificate order started for ${node} — watch Task Monitor`, 'success');
+      setTimeout(loadCerts, 5000);
+    } catch(e) {
+      btn.disabled=false; btn.textContent='⚡ Configure & Order';
+      toast('Order failed: '+e.message, 'error');
+    }
+  };
+  document.getElementById('modal-bg').classList.add('open');
+}
+
+// ── UPLOAD CUSTOM CERTIFICATE ─────────────────────────────
+
+function openUploadCertModal(node, connId) {
+  document.getElementById('modal-title').textContent = `Upload Custom Certificate — ${node}`;
+  document.getElementById('modal-body').innerHTML = `
+    <p style="color:var(--muted);font-size:13px;margin-bottom:12px">
+      Upload a PEM-encoded certificate and private key. This replaces the current certificate on <strong>${escHtml(node)}</strong>.
+    </p>
+    <div class="form-group"><label>CERTIFICATE (PEM) — include full chain if needed</label>
+      <textarea id="uc-cert" rows="6" style="width:100%;background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius);color:var(--text);padding:8px;font-family:monospace;font-size:11px;resize:vertical" placeholder="-----BEGIN CERTIFICATE-----&#10;...&#10;-----END CERTIFICATE-----"></textarea>
+    </div>
+    <div class="form-group"><label>PRIVATE KEY (PEM)</label>
+      <textarea id="uc-key" rows="5" style="width:100%;background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius);color:var(--text);padding:8px;font-family:monospace;font-size:11px;resize:vertical" placeholder="-----BEGIN PRIVATE KEY-----&#10;...&#10;-----END PRIVATE KEY-----"></textarea>
+    </div>
+    <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;margin-top:6px">
+      <input type="checkbox" id="uc-force" style="width:auto;height:auto;padding:0;margin:0"> Force replace even if validation fails
+    </label>`;
+
+  modalCallback = null;
+  const btn = document.getElementById('modal-confirm-btn');
+  btn.textContent = '↑ Upload Certificate'; btn.disabled = false;
+  btn.onclick = async () => {
+    const cert  = (document.getElementById('uc-cert')?.value||'').trim();
+    const key   = (document.getElementById('uc-key')?.value||'').trim();
+    const force = document.getElementById('uc-force')?.checked;
+    if (!cert) return toast('Paste the certificate PEM', 'error');
+    if (!key)  return toast('Paste the private key PEM', 'error');
+    const params = { certificates: cert, key, force: force?1:0 };
+    const conn = resolveConn(connId);
+    btn.disabled=true; btn.textContent='Uploading…';
+    try {
+      if (conn) {
+        const h=connHeaders(conn,{'Content-Type':'application/x-www-form-urlencoded'});
+        const body=Object.entries(params).map(([k,v])=>`${encodeURIComponent(k)}=${encodeURIComponent(v)}`).join('&');
+        const r=await fetch(conn.host+`/api2/json/nodes/${node}/certificates/custom`,{method:'PUT',headers:h,body});
+        if(!r.ok){const t=await r.text();throw new Error(`HTTP ${r.status}: ${t}`);}
+      } else {
+        await pvePut(`/api2/json/nodes/${node}/certificates/custom`, params);
+      }
+      document.getElementById('modal-bg').classList.remove('open');
+      btn.onclick=confirmModal; btn.textContent='Confirm'; btn.disabled=false;
+      toast(`Custom certificate uploaded for ${node}`, 'success');
+      setTimeout(loadCerts, 1500);
+    } catch(e) {
+      btn.disabled=false; btn.textContent='↑ Upload Certificate';
+      toast('Upload failed: '+e.message, 'error');
+    }
+  };
+  document.getElementById('modal-bg').classList.add('open');
+}
+
+// ── REVERT CERTIFICATE ────────────────────────────────────
+
+function confirmRevertCert(node, connId, certType) {
+  document.getElementById('modal-title').textContent = `Revert Certificate — ${node}`;
+  document.getElementById('modal-body').innerHTML = `
+    <p style="color:var(--muted)">Revert <strong>${escHtml(node)}</strong> back to a self-signed certificate?</p>
+    <p style="color:var(--yellow);font-size:12px;margin-top:8px">⚠ The Proxmox web UI will show a browser certificate warning after this. The ${certType} certificate will be deleted.</p>`;
+  modalCallback = async () => {
+    const conn = resolveConn(connId);
+    const path = certType==='acme'
+      ? `/api2/json/nodes/${node}/certificates/acme/certificate`
+      : `/api2/json/nodes/${node}/certificates/custom`;
+    try {
+      if (conn) await connDelete(conn, path);
+      else      await pveDelete(path);
+      toast(`Certificate reverted to self-signed on ${node}`, 'success');
+      setTimeout(loadCerts, 1500);
+    } catch(e) { toast('Revert failed: '+e.message, 'error'); }
+  };
+  document.getElementById('modal-bg').classList.add('open');
 }
 
 // ── CREATE VM WIZARD ──────────────────────────────────────
