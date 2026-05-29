@@ -864,6 +864,8 @@
         <span class="section-title">High Availability</span>
         <div style="display:flex;gap:6px">
           <select class="conn-sel" id="ha-conn" style="width:140px;padding:5px 8px;font-size:13px" onchange="loadHA()"><option value="">Primary</option></select>
+          <button class="btn small primary" onclick="openAddHAResourceModal()">+ Add Resource</button>
+          <button class="btn small primary" onclick="openAddHAGroupModal()">+ Add Group</button>
           <button class="btn small" onclick="loadHA()">Refresh</button>
         </div>
       </div>
@@ -3828,101 +3830,422 @@ function _cephDetailHtml(s, osds, pools) {
 // GET /api2/json/cluster/ha/status/current
 // GET /api2/json/cluster/ha/resources
 // GET /api2/json/cluster/ha/groups
+let haData = { resources:[], groups:[], connId:'' };
+
+const HA_STATES = ['started','stopped','enabled','disabled','ignored'];
+const HA_STATE_COLORS = {started:'var(--green)',stopped:'var(--red)',enabled:'var(--teal)',disabled:'var(--muted)',ignored:'var(--muted)',error:'var(--red)'};
+
+function _haStateBadge(state) {
+  const col = HA_STATE_COLORS[state]||'var(--muted)';
+  return `<span style="display:inline-flex;align-items:center;gap:5px;padding:3px 8px;border-radius:20px;font-size:11px;font-weight:600;background:${col}20;color:${col};border:1px solid ${col}40"><span style="width:6px;height:6px;border-radius:50%;background:currentColor"></span>${state||'—'}</span>`;
+}
+
 async function loadHA() {
   const conn = getViewConn('ha-conn');
-  const get = conn ? (p=>connGet(conn,p)) : pveGet;
-  const el = document.getElementById('ha-content');
+  const get  = conn ? (p=>connGet(conn,p)) : pveGet;
+  const el   = document.getElementById('ha-content');
   el.innerHTML = '<div class="empty"><span class="loading"></span> Loading HA status…</div>';
+  haData.connId = conn ? (extraConns.find(c=>c===conn)||{}).id||'' : '';
   try {
     const [statusRes, resourcesRes, groupsRes] = await Promise.all([
-      get('/api2/json/cluster/ha/status/current').catch(() => null),
-      get('/api2/json/cluster/ha/resources').catch(() => null),
-      get('/api2/json/cluster/ha/groups').catch(() => null)
+      get('/api2/json/cluster/ha/status/current').catch(()=>null),
+      get('/api2/json/cluster/ha/resources').catch(()=>null),
+      get('/api2/json/cluster/ha/groups').catch(()=>null)
     ]);
-
     if (!statusRes) {
       el.innerHTML = '<div class="empty">High Availability is not configured on this cluster.</div>';
       document.getElementById('ha-badge').style.display = 'none';
       return;
     }
-
     const sList = statusRes.data || [];
-    const rList = (resourcesRes && resourcesRes.data) || [];
-    const gList = (groupsRes && groupsRes.data) || [];
+    const rList = (resourcesRes?.data) || [];
+    const gList = (groupsRes?.data) || [];
+    haData.resources = rList;
+    haData.groups    = gList;
 
-    // Flag issues — HA resources not in started/ignored state
-    const issues = rList.filter(r => r.status && r.status !== 'started' && r.status !== 'ignored');
+    const issues = rList.filter(r=>r.state&&r.state!=='started'&&r.state!=='ignored'&&r.state!=='enabled');
     document.getElementById('ha-badge').style.display = issues.length ? '' : 'none';
 
+    // Get all nodes for the migrate dropdown
+    const nodes = conn ? (conn.nodes||[]) : PVE.nodes;
+    const nodeOpts = nodes.map(n=>`<option value="${n.node}">${n.node}</option>`).join('');
+    const cid = haData.connId;
+
     el.innerHTML = `
-      <div class="stats-grid">
-        <div class="stat-card">
-          <div class="label">HA Resources</div>
-          <div class="value" style="color:var(--blue)">${rList.length}</div>
-          <div class="sub">${rList.filter(r => r.status === 'started').length} started</div>
-        </div>
-        <div class="stat-card">
-          <div class="label">Issues</div>
-          <div class="value" style="color:${issues.length ? 'var(--red)' : 'var(--green)'}">${issues.length}</div>
-          <div class="sub">${issues.length ? 'needs attention' : 'all healthy'}</div>
-        </div>
-        <div class="stat-card">
-          <div class="label">HA Groups</div>
-          <div class="value" style="color:var(--purple)">${gList.length}</div>
-        </div>
-        <div class="stat-card">
-          <div class="label">Manager Nodes</div>
-          <div class="value" style="color:var(--teal)">${sList.length}</div>
-        </div>
+      <div class="stats-grid" style="margin-bottom:16px">
+        <div class="stat-card accent-blue"><div class="label">HA Resources</div><div class="value">${rList.length}</div><div class="sub">${rList.filter(r=>r.state==='started').length} started</div></div>
+        <div class="stat-card accent-${issues.length?'red':'green'}"><div class="label">Issues</div><div class="value" style="color:${issues.length?'var(--red)':'var(--green)'}">${issues.length}</div><div class="sub">${issues.length?'needs attention':'all healthy'}</div></div>
+        <div class="stat-card accent-purple"><div class="label">HA Groups</div><div class="value">${gList.length}</div></div>
+        <div class="stat-card accent-teal"><div class="label">Manager Nodes</div><div class="value">${sList.length}</div></div>
       </div>
 
       <div class="section-header"><span class="section-title">Manager Status</span></div>
-      <div class="table-wrap">
-        <table><thead><tr><th>Node</th><th>State</th><th>Votes</th><th>Master</th></tr></thead>
-        <tbody>${sList.map(s => `
-          <tr>
-            <td><strong>${escHtml(s.node || '—')}</strong></td>
-            <td>${statusBadge(s.state === 'master' || s.state === 'slave' ? 'running' : 'stopped')}</td>
-            <td style="color:var(--muted)">${s.votes || '—'}</td>
-            <td>${s.state === 'master' ? '<span class="badge running"><span class="badge-dot"></span>master</span>' : '<span style="color:var(--muted);font-size:12px">—</span>'}</td>
-          </tr>`).join('') || '<tr><td colspan="4" class="empty">No status data</td></tr>'}
+      <div class="table-wrap" style="margin-bottom:18px">
+        <table><thead><tr><th>Node</th><th>State</th><th>CRM State</th><th>Quorate</th></tr></thead>
+        <tbody>${sList.map(s=>`<tr>
+          <td><strong>${escHtml(s.node||'—')}</strong></td>
+          <td>${_haStateBadge(s.state)}</td>
+          <td style="font-size:12px;color:var(--muted)">${escHtml(s.crm_state||'—')}</td>
+          <td>${s.quorate?'<span class="badge ok" style="font-size:10px"><span class="badge-dot"></span>yes</span>':'<span style="color:var(--muted);font-size:12px">—</span>'}</td>
+        </tr>`).join('')||'<tr><td colspan="4" class="empty">No status data</td></tr>'}
         </tbody></table>
       </div>
 
-      <div class="section-header" style="margin-top:8px"><span class="section-title">HA Resources</span></div>
-      <div class="table-wrap">
-        <table><thead><tr><th>Resource</th><th>Type</th><th>State</th><th>Node</th><th>Group</th><th>Max Restart</th><th>Max Relocate</th></tr></thead>
-        <tbody>${rList.length ? rList.map(r => `
-          <tr>
-            <td><strong>${escHtml(r.sid || '—')}</strong></td>
-            <td><span class="type-chip ${r.type === 'vm' ? 'vm' : 'ct'}">${escHtml(r.type || '—')}</span></td>
-            <td>${statusBadge(r.status === 'started' ? 'running' : r.status === 'stopped' ? 'stopped' : 'paused')}</td>
-            <td style="color:var(--muted)">${escHtml(r.node || '—')}</td>
-            <td style="color:var(--muted)">${escHtml(r.group || '—')}</td>
-            <td style="color:var(--muted)">${r.max_restart != null ? r.max_restart : '—'}</td>
-            <td style="color:var(--muted)">${r.max_relocate != null ? r.max_relocate : '—'}</td>
-          </tr>`).join('') : '<tr><td colspan="7" class="empty">No HA resources configured</td></tr>'}
+      <div class="section-header">
+        <span class="section-title">HA Resources (${rList.length})</span>
+      </div>
+      <div class="table-wrap" style="margin-bottom:18px">
+        <table><thead><tr><th>SID</th><th>Type</th><th>State</th><th>Current Node</th><th>Group</th><th>Restarts</th><th>Relocates</th><th>Actions</th></tr></thead>
+        <tbody>${rList.length ? rList.map(r=>{
+          const sid = r.sid||'—';
+          const type= sid.startsWith('ct:')?'ct':'vm';
+          return `<tr>
+            <td><strong>${escHtml(sid)}</strong>${r.comment?`<div style="font-size:10px;color:var(--muted)">${escHtml(r.comment)}</div>`:''}</td>
+            <td><span class="type-chip ${type}">${type.toUpperCase()}</span></td>
+            <td>${_haStateBadge(r.state)}</td>
+            <td style="color:var(--muted);font-size:12px">${escHtml(r.node||'—')}</td>
+            <td style="color:var(--muted);font-size:12px">${escHtml(r.group||'—')}</td>
+            <td style="color:var(--muted);font-size:12px">${r.max_restart!=null?r.max_restart:'—'}</td>
+            <td style="color:var(--muted);font-size:12px">${r.max_relocate!=null?r.max_relocate:'—'}</td>
+            <td onclick="event.stopPropagation()" style="white-space:nowrap">
+              <div class="actions-row">
+                <button class="btn small" onclick="openEditHAResourceModal('${escHtml(sid)}','${cid}')">✎ Edit</button>
+                <button class="btn small" onclick="openMigrateHAModal('${escHtml(sid)}','${cid}')" title="Migrate to node">⇢</button>
+                <button class="btn small danger" onclick="confirmRemoveHAResource('${escHtml(sid)}','${cid}')">Remove</button>
+              </div>
+            </td>
+          </tr>`;}).join('')
+          :'<tr><td colspan="8" class="empty">No HA resources — click <strong>+ Add Resource</strong> to protect a VM or container.</td></tr>'}
         </tbody></table>
       </div>
 
-      ${gList.length ? `
-        <div class="section-header" style="margin-top:8px"><span class="section-title">HA Groups</span></div>
-        <div class="table-wrap">
-          <table><thead><tr><th>Group</th><th>Nodes</th><th>Restricted</th><th>No Failback</th><th>Comment</th></tr></thead>
-          <tbody>${gList.map(g => `
-            <tr>
-              <td><strong>${escHtml(g.group || '—')}</strong></td>
-              <td style="font-size:12px;color:var(--muted)">${escHtml(g.nodes || '—')}</td>
-              <td>${g.restricted ? '<span class="badge paused">Yes</span>' : '<span style="color:var(--muted)">No</span>'}</td>
-              <td>${g.nofailback ? '<span class="badge paused">Yes</span>' : '<span style="color:var(--muted)">No</span>'}</td>
-              <td style="font-size:12px;color:var(--muted)">${escHtml(g.comment || '—')}</td>
-            </tr>`).join('')}
-          </tbody></table>
-        </div>` : ''}`;
+      <div class="section-header">
+        <span class="section-title">HA Groups (${gList.length})</span>
+      </div>
+      <div class="table-wrap">
+        <table><thead><tr><th>Group</th><th>Nodes (priority)</th><th>Restricted</th><th>No Failback</th><th>Comment</th><th>Actions</th></tr></thead>
+        <tbody>${gList.length ? gList.map(g=>`<tr>
+          <td><strong>${escHtml(g.group||'—')}</strong></td>
+          <td style="font-family:monospace;font-size:12px;color:var(--muted)">${escHtml(g.nodes||'—')}</td>
+          <td>${g.restricted?'<span class="badge paused" style="font-size:10px">yes</span>':'<span style="color:var(--muted);font-size:12px">no</span>'}</td>
+          <td>${g.nofailback?'<span class="badge paused" style="font-size:10px">yes</span>':'<span style="color:var(--muted);font-size:12px">no</span>'}</td>
+          <td style="font-size:12px;color:var(--muted)">${escHtml(g.comment||'—')}</td>
+          <td onclick="event.stopPropagation()" style="white-space:nowrap">
+            <div class="actions-row">
+              <button class="btn small" onclick="openEditHAGroupModal('${escHtml(g.group)}','${cid}')">✎ Edit</button>
+              <button class="btn small danger" onclick="confirmDeleteHAGroup('${escHtml(g.group)}','${cid}')">Delete</button>
+            </div>
+          </td>
+        </tr>`).join(''):'<tr><td colspan="6" class="empty">No HA groups — click <strong>+ Add Group</strong> to create one.</td></tr>'}
+        </tbody></table>
+      </div>`;
 
   } catch(e) {
-    el.innerHTML = `<div class="empty">Failed to load HA status: ${e.message}</div>`;
+    el.innerHTML = `<div class="empty">Failed to load HA: ${e.message}</div>`;
   }
+}
+
+// ── HA RESOURCE MANAGEMENT ────────────────────────────────
+
+function openAddHAResourceModal() {
+  const conn  = resolveConn(haData.connId);
+  const vms   = conn ? (conn.vms||[]) : PVE.vms;
+  const cts   = conn ? (conn.containers||[]) : PVE.containers;
+  const inHA  = new Set(haData.resources.map(r=>r.sid));
+  const opts  = [...vms.map(x=>({sid:`vm:${x.vmid}`,label:`VM ${x.vmid} — ${x.name||x.vmid} (${x.node})`})),
+                 ...cts.map(x=>({sid:`ct:${x.vmid}`,label:`CT ${x.vmid} — ${x.name||x.vmid} (${x.node})`}))]
+    .filter(x=>!inHA.has(x.sid))
+    .map(x=>`<option value="${escHtml(x.sid)}">${escHtml(x.label)}</option>`).join('');
+  const groupOpts = haData.groups.map(g=>`<option value="${escHtml(g.group)}">${escHtml(g.group)}</option>`).join('');
+
+  document.getElementById('modal-title').textContent = 'Add HA Resource';
+  document.getElementById('modal-body').innerHTML = `
+    <div class="form-group"><label>VM / CONTAINER</label>
+      <select id="ha-sid">${opts||'<option value="">— no unprotected VMs/CTs found —</option>'}</select>
+      <div style="font-size:11px;color:var(--muted);margin-top:4px">Or enter SID manually:</div>
+      <input id="ha-sid-manual" placeholder="vm:100 or ct:200" style="margin-top:4px"/>
+    </div>
+    <div class="create-vm-grid">
+      <div class="form-group"><label>STATE</label>
+        <select id="ha-state">
+          <option value="started">started — ensure VM is running</option>
+          <option value="stopped">stopped — ensure VM is stopped</option>
+          <option value="enabled">enabled — monitor, don't force state</option>
+          <option value="ignored">ignored — HA monitors but ignores</option>
+        </select>
+      </div>
+      <div class="form-group"><label>GROUP (optional)</label>
+        <select id="ha-group"><option value="">— none —</option>${groupOpts}</select>
+      </div>
+    </div>
+    <div class="create-vm-grid">
+      <div class="form-group"><label>MAX RESTARTS (default 1)</label>
+        <input id="ha-maxrestart" type="number" value="1" min="0" max="10"/>
+      </div>
+      <div class="form-group"><label>MAX RELOCATES (default 1)</label>
+        <input id="ha-maxrelocate" type="number" value="1" min="0" max="10"/>
+      </div>
+    </div>
+    <div class="form-group"><label>COMMENT (optional)</label>
+      <input id="ha-comment" placeholder="description"/>
+    </div>`;
+
+  modalCallback = async () => {
+    const manual = (document.getElementById('ha-sid-manual')?.value||'').trim();
+    const sid    = manual || document.getElementById('ha-sid')?.value;
+    if (!sid) return toast('Select or enter a resource SID', 'error');
+    const params = {
+      sid,
+      state:        document.getElementById('ha-state')?.value,
+      max_restart:  parseInt(document.getElementById('ha-maxrestart')?.value||'1'),
+      max_relocate: parseInt(document.getElementById('ha-maxrelocate')?.value||'1'),
+    };
+    const grp = document.getElementById('ha-group')?.value; if (grp) params.group = grp;
+    const cmt = document.getElementById('ha-comment')?.value?.trim(); if (cmt) params.comment = cmt;
+    const c = resolveConn(haData.connId);
+    try {
+      if (c) await connPost(c,'/api2/json/cluster/ha/resources',params);
+      else   await pvePost('/api2/json/cluster/ha/resources',params);
+      toast(`"${sid}" added to HA`, 'success');
+      setTimeout(loadHA, 800);
+    } catch(e) { toast('Add failed: '+e.message,'error'); }
+  };
+  document.getElementById('modal-bg').classList.add('open');
+}
+
+async function openEditHAResourceModal(sid, connId) {
+  document.getElementById('modal-title').textContent = `Edit HA Resource — ${sid}`;
+  document.getElementById('modal-body').innerHTML = '<div class="empty"><span class="loading"></span> Loading…</div>';
+  modalCallback = null;
+  document.getElementById('modal-bg').classList.add('open');
+  const conn = resolveConn(connId);
+  const get  = conn ? (p=>connGet(conn,p)) : pveGet;
+  let cfg = {};
+  try {
+    const d = await get(`/api2/json/cluster/ha/resources/${encodeURIComponent(sid)}`);
+    cfg = d.data || {};
+  } catch(e) { toast('Load failed: '+e.message,'error'); document.getElementById('modal-bg').classList.remove('open'); return; }
+
+  const groupOpts = haData.groups.map(g=>`<option value="${escHtml(g.group)}"${cfg.group===g.group?' selected':''}>${escHtml(g.group)}</option>`).join('');
+  document.getElementById('modal-body').innerHTML = `
+    <div style="background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius);padding:8px 12px;font-size:12px;color:var(--muted);margin-bottom:12px">
+      Resource: <strong style="color:var(--text)">${sid}</strong>
+    </div>
+    <div class="create-vm-grid">
+      <div class="form-group"><label>STATE</label>
+        <select id="ha-state">
+          ${HA_STATES.map(s=>`<option value="${s}"${cfg.state===s?' selected':''}>${s}</option>`).join('')}
+        </select>
+      </div>
+      <div class="form-group"><label>GROUP</label>
+        <select id="ha-group"><option value=""${!cfg.group?' selected':''}>— none —</option>${groupOpts}</select>
+      </div>
+    </div>
+    <div class="create-vm-grid">
+      <div class="form-group"><label>MAX RESTARTS</label>
+        <input id="ha-maxrestart" type="number" value="${cfg.max_restart??1}" min="0" max="10"/>
+      </div>
+      <div class="form-group"><label>MAX RELOCATES</label>
+        <input id="ha-maxrelocate" type="number" value="${cfg.max_relocate??1}" min="0" max="10"/>
+      </div>
+    </div>
+    <div class="form-group"><label>COMMENT</label>
+      <input id="ha-comment" value="${escHtml(cfg.comment||'')}"/>
+    </div>`;
+
+  const btn = document.getElementById('modal-confirm-btn');
+  btn.textContent = 'Save'; btn.disabled = false;
+  btn.onclick = async () => {
+    const params = {
+      state:        document.getElementById('ha-state')?.value,
+      max_restart:  parseInt(document.getElementById('ha-maxrestart')?.value||'1'),
+      max_relocate: parseInt(document.getElementById('ha-maxrelocate')?.value||'1'),
+      group:        document.getElementById('ha-group')?.value || '',
+      comment:      document.getElementById('ha-comment')?.value?.trim() || '',
+    };
+    btn.disabled=true; btn.textContent='Saving…';
+    try {
+      if (conn) {
+        const h=connHeaders(conn,{'Content-Type':'application/x-www-form-urlencoded'});
+        const body=Object.entries(params).map(([k,v])=>`${encodeURIComponent(k)}=${encodeURIComponent(v)}`).join('&');
+        const r=await fetch(conn.host+`/api2/json/cluster/ha/resources/${encodeURIComponent(sid)}`,{method:'PUT',headers:h,body});
+        if(!r.ok){const t=await r.text();throw new Error(`HTTP ${r.status}: ${t}`);}
+      } else {
+        await pvePut(`/api2/json/cluster/ha/resources/${encodeURIComponent(sid)}`,params);
+      }
+      document.getElementById('modal-bg').classList.remove('open');
+      btn.onclick=confirmModal; btn.textContent='Confirm'; btn.disabled=false;
+      toast(`"${sid}" updated`, 'success');
+      setTimeout(loadHA, 800);
+    } catch(e) { btn.disabled=false; btn.textContent='Save'; toast('Save failed: '+e.message,'error'); }
+  };
+}
+
+function openMigrateHAModal(sid, connId) {
+  const conn  = resolveConn(connId);
+  const nodes = conn ? (conn.nodes||[]) : PVE.nodes;
+  const nodeOpts = nodes.map(n=>`<option value="${n.node}">${n.node}</option>`).join('');
+  document.getElementById('modal-title').textContent = `Migrate HA Resource — ${sid}`;
+  document.getElementById('modal-body').innerHTML = `
+    <p style="color:var(--muted);font-size:13px;margin-bottom:14px">Request the HA manager to migrate <strong style="color:var(--text)">${escHtml(sid)}</strong> to a specific node.</p>
+    <div class="form-group"><label>TARGET NODE</label><select id="ha-mig-node">${nodeOpts}</select></div>
+    <div style="font-size:12px;color:var(--muted);margin-top:8px">
+      <strong>Migrate</strong> = live migration (resource stays running). Use for running resources.<br>
+      <strong>Relocate</strong> = controlled move (may briefly stop). Use for stopped resources.
+    </div>
+    <div style="display:flex;gap:8px;margin-top:10px">
+      <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer">
+        <input type="radio" name="ha-mig-type" value="migrate" checked style="width:auto;height:auto;padding:0;margin:0"> Migrate (live)
+      </label>
+      <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer">
+        <input type="radio" name="ha-mig-type" value="relocate" style="width:auto;height:auto;padding:0;margin:0"> Relocate
+      </label>
+    </div>`;
+  modalCallback = async () => {
+    const node = document.getElementById('ha-mig-node')?.value;
+    const type = document.querySelector('input[name="ha-mig-type"]:checked')?.value || 'migrate';
+    if (!node) return toast('Select a target node','error');
+    const c = resolveConn(connId);
+    try {
+      const path = `/api2/json/cluster/ha/resources/${encodeURIComponent(sid)}/${type}`;
+      if (c) await connPost(c,path,{node});
+      else   await pvePost(path,{node});
+      toast(`${type} of "${sid}" → ${node} requested`, 'success');
+      setTimeout(loadHA, 1500);
+    } catch(e) { toast(`${type} failed: `+e.message,'error'); }
+  };
+  document.getElementById('modal-bg').classList.add('open');
+}
+
+function confirmRemoveHAResource(sid, connId) {
+  document.getElementById('modal-title').textContent = `Remove HA Resource — ${sid}`;
+  document.getElementById('modal-body').innerHTML = `
+    <p style="color:var(--muted)">Remove <strong style="color:var(--text)">${escHtml(sid)}</strong> from HA management?</p>
+    <p style="color:var(--yellow);font-size:12px;margin-top:8px">⚠ The VM/CT itself is NOT deleted — it is just no longer monitored or restarted by HA.</p>`;
+  modalCallback = async () => {
+    const c = resolveConn(connId);
+    try {
+      if (c) await connDelete(c,`/api2/json/cluster/ha/resources/${encodeURIComponent(sid)}`);
+      else   await pveDelete(`/api2/json/cluster/ha/resources/${encodeURIComponent(sid)}`);
+      toast(`"${sid}" removed from HA`, 'success');
+      setTimeout(loadHA, 800);
+    } catch(e) { toast('Remove failed: '+e.message,'error'); }
+  };
+  document.getElementById('modal-bg').classList.add('open');
+}
+
+// ── HA GROUP MANAGEMENT ───────────────────────────────────
+
+function _haGroupForm(g={}) {
+  const nodes = (PVE.nodeStatuses||[]).map(n=>n.node);
+  return `
+    <div class="form-group"><label>NODES AND PRIORITIES</label>
+      <input id="hag-nodes" value="${escHtml(g.nodes||'')}" placeholder="pve1:100,pve2:50  (or just pve1,pve2 for equal priority)"/>
+      <div style="font-size:11px;color:var(--muted);margin-top:4px">Available nodes: ${nodes.join(', ')||'—'} — higher number = preferred node</div>
+    </div>
+    <div class="create-vm-grid" style="margin-top:8px">
+      <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;padding-top:4px">
+        <input type="checkbox" id="hag-restricted"${g.restricted?' checked':''} style="width:auto;height:auto;padding:0;margin:0">
+        Restricted — only run on listed nodes
+      </label>
+      <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;padding-top:4px">
+        <input type="checkbox" id="hag-nofailback"${g.nofailback?' checked':''} style="width:auto;height:auto;padding:0;margin:0">
+        No failback — don't migrate back to preferred node
+      </label>
+    </div>
+    <div class="form-group" style="margin-top:10px"><label>COMMENT (optional)</label>
+      <input id="hag-comment" value="${escHtml(g.comment||'')}" placeholder="description"/>
+    </div>`;
+}
+
+function openAddHAGroupModal() {
+  document.getElementById('modal-title').textContent = 'Create HA Group';
+  document.getElementById('modal-body').innerHTML = `
+    <div class="form-group"><label>GROUP NAME</label>
+      <input id="hag-name" placeholder="e.g. production, storage-nodes"/>
+    </div>
+    ${_haGroupForm()}`;
+  modalCallback = async () => {
+    const name  = (document.getElementById('hag-name')?.value||'').trim();
+    const nodes = document.getElementById('hag-nodes')?.value?.trim();
+    if (!name)  return toast('Enter a group name','error');
+    if (!nodes) return toast('Enter at least one node','error');
+    const params = { group:name, nodes,
+      restricted: document.getElementById('hag-restricted')?.checked ? 1 : 0,
+      nofailback: document.getElementById('hag-nofailback')?.checked ? 1 : 0,
+      comment:    document.getElementById('hag-comment')?.value?.trim()||'' };
+    const c = resolveConn(haData.connId);
+    try {
+      if (c) await connPost(c,'/api2/json/cluster/ha/groups',params);
+      else   await pvePost('/api2/json/cluster/ha/groups',params);
+      toast(`Group "${name}" created`, 'success');
+      setTimeout(loadHA, 800);
+    } catch(e) { toast('Create failed: '+e.message,'error'); }
+  };
+  document.getElementById('modal-bg').classList.add('open');
+}
+
+async function openEditHAGroupModal(group, connId) {
+  document.getElementById('modal-title').textContent = `Edit HA Group — ${group}`;
+  document.getElementById('modal-body').innerHTML = '<div class="empty"><span class="loading"></span> Loading…</div>';
+  modalCallback = null;
+  document.getElementById('modal-bg').classList.add('open');
+  const conn = resolveConn(connId);
+  const get  = conn ? (p=>connGet(conn,p)) : pveGet;
+  let cfg = {};
+  try {
+    const d = await get(`/api2/json/cluster/ha/groups/${encodeURIComponent(group)}`);
+    cfg = d.data || {};
+  } catch(e) { toast('Load failed: '+e.message,'error'); document.getElementById('modal-bg').classList.remove('open'); return; }
+
+  document.getElementById('modal-body').innerHTML = `
+    <div style="background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius);padding:8px 12px;font-size:12px;color:var(--muted);margin-bottom:12px">
+      Group: <strong style="color:var(--text)">${group}</strong>
+    </div>
+    ${_haGroupForm(cfg)}`;
+
+  const btn = document.getElementById('modal-confirm-btn');
+  btn.textContent = 'Save'; btn.disabled = false;
+  btn.onclick = async () => {
+    const nodes = document.getElementById('hag-nodes')?.value?.trim();
+    if (!nodes) return toast('Enter at least one node','error');
+    const params = { nodes,
+      restricted: document.getElementById('hag-restricted')?.checked ? 1 : 0,
+      nofailback: document.getElementById('hag-nofailback')?.checked ? 1 : 0,
+      comment:    document.getElementById('hag-comment')?.value?.trim()||'' };
+    btn.disabled=true; btn.textContent='Saving…';
+    try {
+      if (conn) {
+        const h=connHeaders(conn,{'Content-Type':'application/x-www-form-urlencoded'});
+        const body=Object.entries(params).map(([k,v])=>`${encodeURIComponent(k)}=${encodeURIComponent(v)}`).join('&');
+        const r=await fetch(conn.host+`/api2/json/cluster/ha/groups/${encodeURIComponent(group)}`,{method:'PUT',headers:h,body});
+        if(!r.ok){const t=await r.text();throw new Error(`HTTP ${r.status}: ${t}`);}
+      } else {
+        await pvePut(`/api2/json/cluster/ha/groups/${encodeURIComponent(group)}`,params);
+      }
+      document.getElementById('modal-bg').classList.remove('open');
+      btn.onclick=confirmModal; btn.textContent='Confirm'; btn.disabled=false;
+      toast(`Group "${group}" updated`, 'success');
+      setTimeout(loadHA, 800);
+    } catch(e) { btn.disabled=false; btn.textContent='Save'; toast('Save failed: '+e.message,'error'); }
+  };
+}
+
+function confirmDeleteHAGroup(group, connId) {
+  document.getElementById('modal-title').textContent = `Delete HA Group — ${group}`;
+  document.getElementById('modal-body').innerHTML = `
+    <p style="color:var(--muted)">Delete HA group <strong style="color:var(--red)">${escHtml(group)}</strong>?</p>
+    <p style="color:var(--yellow);font-size:12px;margin-top:8px">⚠ Resources assigned to this group will fall back to default HA behaviour.</p>`;
+  modalCallback = async () => {
+    const c = resolveConn(connId);
+    try {
+      if (c) await connDelete(c,`/api2/json/cluster/ha/groups/${encodeURIComponent(group)}`);
+      else   await pveDelete(`/api2/json/cluster/ha/groups/${encodeURIComponent(group)}`);
+      toast(`Group "${group}" deleted`, 'success');
+      setTimeout(loadHA, 800);
+    } catch(e) { toast('Delete failed: '+e.message,'error'); }
+  };
+  document.getElementById('modal-bg').classList.add('open');
 }
 
 // ── FIREWALL ──────────────────────────────────────────────
