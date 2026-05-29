@@ -737,13 +737,14 @@
           <select id="storage-node-filter" style="width:140px;padding:5px 8px;font-size:13px" onchange="renderStorage()">
             <option value="">All Nodes</option>
           </select>
+          <button class="btn small primary" onclick="openAddStorageModal()">+ Add Storage</button>
           <button class="btn small" onclick="loadStorage()">Refresh</button>
         </div>
       </div>
       <div class="stats-grid" id="storage-summary"></div>
       <div class="table-wrap">
         <table>
-          <thead><tr><th>Storage</th><th>Node</th><th>Type</th><th>Content</th><th>Status</th><th>Used</th><th>Available</th><th>Total</th><th>Usage</th></tr></thead>
+          <thead><tr><th>Storage</th><th>Node</th><th>Type</th><th>Content</th><th>Status</th><th>Used</th><th>Available</th><th>Total</th><th>Usage</th><th>Actions</th></tr></thead>
           <tbody id="storage-body"></tbody>
         </table>
       </div>
@@ -2674,32 +2675,313 @@ function renderStorage(overrideData) {
     <div class="stat-card accent-green"><div class="label">Available</div><div class="value" style="font-size:20px">${fmtBytes(availBytes)}</div><div class="sub">free space</div></div>`;
 
   if (!stores.length) {
-    document.getElementById('storage-body').innerHTML='<tr><td colspan="9" class="empty">No storage found</td></tr>';
+    document.getElementById('storage-body').innerHTML='<tr><td colspan="10" class="empty">No storage found</td></tr>';
     return;
   }
 
+  const connId = conn ? (extraConns.find(c=>c===conn)||{}).id||'' : '';
+
   document.getElementById('storage-body').innerHTML = stores.map(s => {
-    const used = s.used||0, total = s.total||0, avail = s.avail||0;
-    const pct = total>0?((used/total)*100).toFixed(0):0;
+    const used   = s.used||0, total = s.total||0, avail = s.avail||0;
+    const pct    = total>0?((used/total)*100).toFixed(0):0;
     const active = s.active!==undefined ? s.active : (s.enabled!==undefined?s.enabled:true);
+    const disabled = s.disable || !active;
     const content = Array.isArray(s.content) ? s.content.join(', ') : (s.content||'—');
     return `<tr>
       <td><strong>${escHtml(s.storage)}</strong></td>
       <td style="color:var(--muted)">${s.node}</td>
       <td><span class="type-chip vm">${escHtml(s.type||'—')}</span></td>
-      <td style="font-size:12px;color:var(--muted)">${escHtml(content)}</td>
-      <td>${active?'<span class="badge online"><span class="badge-dot"></span>active</span>':'<span class="badge stopped"><span class="badge-dot"></span>inactive</span>'}</td>
+      <td style="font-size:12px;color:var(--muted);max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escHtml(content)}">${escHtml(content)}</td>
+      <td>${disabled?'<span class="badge stopped"><span class="badge-dot"></span>disabled</span>':'<span class="badge online"><span class="badge-dot"></span>active</span>'}</td>
       <td>${fmtBytes(used)}</td>
       <td>${fmtBytes(avail)}</td>
       <td>${total>0?fmtBytes(total):'—'}</td>
-      <td style="min-width:120px">
+      <td style="min-width:100px">
         <div class="gauge-wrap">
           <span style="min-width:34px;text-align:right;font-size:12px">${pct}%</span>
           <div class="gauge-bar"><div class="gauge-fill ${gaugeClass(parseFloat(pct))}" style="width:${Math.min(pct,100)}%"></div></div>
         </div>
       </td>
+      <td onclick="event.stopPropagation()" style="white-space:nowrap">
+        <div class="actions-row">
+          <button class="btn small" onclick="openEditStorageModal('${escHtml(s.storage)}','${connId}')" title="Edit">✎</button>
+          <button class="btn small ${disabled?'success':'warning'}" onclick="toggleStorageDisable('${escHtml(s.storage)}','${connId}',${!!disabled})" title="${disabled?'Enable':'Disable'}">${disabled?'Enable':'Disable'}</button>
+          <button class="btn small danger" onclick="confirmDeleteStorage('${escHtml(s.storage)}','${connId}')" title="Delete">Delete</button>
+        </div>
+      </td>
     </tr>`;
   }).join('');
+}
+
+// ── STORAGE MANAGEMENT ───────────────────────────────────
+// POST   /api2/json/storage           — create storage definition (cluster-wide)
+// GET    /api2/json/storage/{id}      — fetch full config
+// PUT    /api2/json/storage/{id}      — update config / enable-disable
+// DELETE /api2/json/storage/{id}      — remove definition (data NOT deleted)
+// Official: https://pve.proxmox.com/pve-docs/api-viewer/#/storage
+
+const STOR_TYPES = [
+  ['dir','Directory (local path)'],['nfs','NFS'],['cifs','CIFS / Samba'],
+  ['lvmthin','LVM-Thin'],['lvm','LVM'],['zfspool','ZFS Pool'],
+  ['rbd','Ceph / RBD'],['pbs','Proxmox Backup Server'],['iscsi','iSCSI'],
+];
+const STOR_CONTENT_OPTS = [
+  ['images','Disk Images (VMs)'],['rootdir','Containers (rootdir)'],
+  ['iso','ISO Images'],['vztmpl','CT Templates'],
+  ['backup','Backups (vzdump)'],['snippets','Snippets'],
+];
+
+function _storContentCheckboxes(cur, defaultContent) {
+  const have = (cur ? String(cur) : defaultContent||'').split(',').map(x=>x.trim()).filter(Boolean);
+  return `<div style="display:grid;grid-template-columns:1fr 1fr;gap:4px 16px">
+    ${STOR_CONTENT_OPTS.map(([v,l])=>`
+      <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer">
+        <input type="checkbox" name="sf-ct" value="${v}"${have.includes(v)?' checked':''} style="width:auto;height:auto;padding:0;margin:0"> ${l}
+      </label>`).join('')}
+  </div>`;
+}
+
+function _storTypeFields(type, c={}) {
+  const v = (k,fb='') => escHtml(String(c[k]!=null?c[k]:fb));
+  const chk = (k) => c[k]?' checked':'';
+  if (type==='dir') return `
+    <div class="form-group"><label>DIRECTORY PATH (required)</label><input id="sf-path" value="${v('path','/mnt/storage')}" placeholder="/mnt/storage"/></div>
+    <div class="form-group"><label>PRE-ALLOCATION</label>
+      <select id="sf-prealloc">${['off','metadata','falloc','full'].map(x=>`<option value="${x}"${(c.preallocation||'off')===x?' selected':''}>${x}</option>`).join('')}</select>
+    </div>`;
+  if (type==='nfs') return `
+    <div class="create-vm-grid">
+      <div class="form-group"><label>NFS SERVER (required)</label><input id="sf-server" value="${v('server')}" placeholder="192.168.1.10"/></div>
+      <div class="form-group"><label>EXPORT PATH (required)</label><input id="sf-export" value="${v('export')}" placeholder="/export/storage"/></div>
+    </div>
+    <div class="form-group"><label>MOUNT OPTIONS (optional)</label><input id="sf-options" value="${v('options')}" placeholder="soft,timeo=100"/></div>`;
+  if (type==='cifs') return `
+    <div class="create-vm-grid">
+      <div class="form-group"><label>SERVER (required)</label><input id="sf-server" value="${v('server')}" placeholder="192.168.1.10"/></div>
+      <div class="form-group"><label>SHARE (required)</label><input id="sf-share" value="${v('share')}" placeholder="backup"/></div>
+    </div>
+    <div class="create-vm-grid">
+      <div class="form-group"><label>USERNAME</label><input id="sf-username" value="${v('username')}" placeholder="optional"/></div>
+      <div class="form-group"><label>PASSWORD</label><input id="sf-password" type="password" placeholder="leave blank to keep"/></div>
+    </div>
+    <div class="create-vm-grid">
+      <div class="form-group"><label>DOMAIN</label><input id="sf-domain" value="${v('domain')}" placeholder="optional"/></div>
+      <div class="form-group"><label>SMB VERSION</label>
+        <select id="sf-smbver">${['','2.0','2.1','3','3.0','3.11'].map(x=>`<option value="${x}"${(c.smbver||'')===x?' selected':''}>${x||'auto'}</option>`).join('')}</select>
+      </div>
+    </div>`;
+  if (type==='lvmthin') return `
+    <div class="create-vm-grid">
+      <div class="form-group"><label>VOLUME GROUP (required)</label><input id="sf-vgname" value="${v('vgname')}" placeholder="pve"/></div>
+      <div class="form-group"><label>THIN POOL (required)</label><input id="sf-thinpool" value="${v('thinpool')}" placeholder="data"/></div>
+    </div>`;
+  if (type==='lvm') return `
+    <div class="form-group"><label>VOLUME GROUP (required)</label><input id="sf-vgname" value="${v('vgname')}" placeholder="datavg"/></div>
+    <div class="form-group"><label>BASE VOLUME (optional)</label><input id="sf-base" value="${v('base')}" placeholder="/dev/sdb"/></div>`;
+  if (type==='zfspool') return `
+    <div class="form-group"><label>ZFS POOL / DATASET (required)</label><input id="sf-pool" value="${v('pool')}" placeholder="tank or tank/data"/></div>
+    <div class="create-vm-grid">
+      <div class="form-group"><label>BLOCK SIZE</label>
+        <select id="sf-blocksize">${['','512','1k','2k','4k','8k','16k','32k','64k'].map(x=>`<option value="${x}"${(c.blocksize||'')===x?' selected':''}>${x||'default (8k)'}</option>`).join('')}</select>
+      </div>
+      <div class="form-group" style="display:flex;align-items:center;padding-top:22px">
+        <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer">
+          <input type="checkbox" id="sf-sparse"${chk('sparse')} style="width:auto;height:auto;padding:0;margin:0"> Sparse allocation
+        </label>
+      </div>
+    </div>`;
+  if (type==='rbd') return `
+    <div class="form-group"><label>CEPH POOL (required)</label><input id="sf-pool" value="${v('pool','rbd')}" placeholder="rbd"/></div>
+    <div class="form-group"><label>MONITOR HOSTS (blank = use local Ceph cluster)</label><input id="sf-monhost" value="${v('monhost')}" placeholder="10.0.0.1:6789,10.0.0.2:6789"/></div>
+    <div class="create-vm-grid">
+      <div class="form-group"><label>USERNAME</label><input id="sf-username" value="${v('username','admin')}" placeholder="admin"/></div>
+      <div class="form-group"><label>KEYRING (base64, optional)</label><input id="sf-keyring" value="${v('keyring')}" placeholder="auth key"/></div>
+    </div>`;
+  if (type==='pbs') return `
+    <div class="form-group"><label>PBS SERVER (required)</label><input id="sf-server" value="${v('server')}" placeholder="192.168.1.20"/></div>
+    <div class="create-vm-grid">
+      <div class="form-group"><label>DATASTORE (required)</label><input id="sf-datastore" value="${v('datastore')}" placeholder="backup-store"/></div>
+      <div class="form-group"><label>USERNAME (required)</label><input id="sf-username" value="${v('username','root@pam')}" placeholder="user@pam"/></div>
+    </div>
+    <div class="create-vm-grid">
+      <div class="form-group"><label>PASSWORD / TOKEN</label><input id="sf-password" type="password" placeholder="leave blank to keep"/></div>
+      <div class="form-group"><label>TLS FINGERPRINT (optional)</label><input id="sf-fingerprint" value="${v('fingerprint')}" placeholder="AA:BB:CC…"/></div>
+    </div>`;
+  if (type==='iscsi') return `
+    <div class="form-group"><label>PORTAL (required) — IP:port of iSCSI target</label><input id="sf-portal" value="${v('portal')}" placeholder="192.168.1.10:3260"/></div>
+    <div class="form-group"><label>TARGET IQN (required)</label><input id="sf-target" value="${v('target')}" placeholder="iqn.2000-01.com.example:storage"/></div>`;
+  return `<div style="padding:8px 12px;background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius);font-size:12px;color:var(--muted)">No additional fields for this type.</div>`;
+}
+
+function _gatherStorageParams(type) {
+  const g = id => { const el=document.getElementById(id); if(!el) return null; return el.type==='checkbox'?el.checked:(el.value.trim()||null); };
+  const content = [...document.querySelectorAll('input[name="sf-ct"]:checked')].map(c=>c.value).join(',');
+  const params = {};
+  if (content) params.content = content;
+  const nodes = g('sf-nodes');       if (nodes) params.nodes = nodes;
+  const maxbk = g('sf-maxbackups'); if (maxbk) params.maxfiles = parseInt(maxbk);
+  const shared = g('sf-shared');    if (shared!==null) params.shared = shared?1:0;
+  const disable= g('sf-disable');   if (disable!==null) params.disable = disable?1:0;
+  // Type-specific
+  const take = (...ids) => ids.forEach(id=>{ const v=g(id); if(v) params[id.replace('sf-','')] = v; });
+  if (type==='dir')     { take('sf-path','sf-prealloc'); params.preallocation=g('sf-prealloc')||'off'; delete params.prealloc; }
+  if (type==='nfs')     { take('sf-server','sf-export','sf-options'); }
+  if (type==='cifs')    { take('sf-server','sf-share','sf-username','sf-domain','sf-smbver'); const pw=g('sf-password');if(pw)params.password=pw; }
+  if (type==='lvmthin') { take('sf-vgname','sf-thinpool'); }
+  if (type==='lvm')     { take('sf-vgname','sf-base'); }
+  if (type==='zfspool') { take('sf-pool','sf-blocksize'); params.sparse=g('sf-sparse')?1:0; }
+  if (type==='rbd')     { take('sf-pool','sf-monhost','sf-username','sf-keyring'); }
+  if (type==='pbs')     { take('sf-server','sf-datastore','sf-username','sf-fingerprint'); const pw=g('sf-password');if(pw)params.password=pw; }
+  if (type==='iscsi')   { take('sf-portal','sf-target'); }
+  return params;
+}
+
+function storTypeChanged() {
+  const type = document.getElementById('sf-type')?.value;
+  const el   = document.getElementById('sf-type-fields');
+  if (el && type) el.innerHTML = _storTypeFields(type);
+}
+
+function openAddStorageModal() {
+  const connId = (getViewConn('storage-conn')&&(extraConns.find(c=>c===getViewConn('storage-conn'))||{}).id)||'';
+  document.getElementById('modal-title').textContent = 'Add Storage';
+  document.getElementById('modal-body').innerHTML = `
+    <div class="create-vm-grid">
+      <div class="form-group"><label>STORAGE ID</label><input id="sf-id" placeholder="e.g. nas-nfs, backup-store"/></div>
+      <div class="form-group"><label>TYPE</label>
+        <select id="sf-type" onchange="storTypeChanged()">
+          ${STOR_TYPES.map(([v,l])=>`<option value="${v}">${l}</option>`).join('')}
+        </select>
+      </div>
+    </div>
+    <div id="sf-type-fields" style="margin-bottom:12px">${_storTypeFields('dir')}</div>
+    <div class="form-group"><label>CONTENT TYPES</label>${_storContentCheckboxes('','images,rootdir')}</div>
+    <div class="create-vm-grid" style="margin-top:10px">
+      <div class="form-group"><label>NODES (blank = all)</label><input id="sf-nodes" placeholder="pve1,pve2 or blank for all"/></div>
+      <div class="form-group"><label>MAX BACKUPS (0 = unlimited)</label><input id="sf-maxbackups" type="number" value="0" min="0"/></div>
+    </div>
+    <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;margin-top:8px">
+      <input type="checkbox" id="sf-shared" style="width:auto;height:auto;padding:0;margin:0"> Shared storage (accessible from all nodes via network)
+    </label>`;
+  modalCallback = null;
+  const btn = document.getElementById('modal-confirm-btn');
+  btn.textContent = 'Add Storage'; btn.disabled = false;
+  btn.onclick = async () => {
+    const id   = (document.getElementById('sf-id')?.value||'').trim();
+    const type = document.getElementById('sf-type')?.value;
+    if (!id)   return toast('Enter a storage ID', 'error');
+    if (!type) return toast('Select a type', 'error');
+    const params = { storage:id, type, ..._gatherStorageParams(type) };
+    const conn = resolveConn(connId);
+    btn.disabled=true; btn.textContent='Adding…';
+    try {
+      if (conn) await connPost(conn, '/api2/json/storage', params);
+      else      await pvePost('/api2/json/storage', params);
+      document.getElementById('modal-bg').classList.remove('open');
+      btn.onclick=confirmModal; btn.textContent='Confirm'; btn.disabled=false;
+      toast(`Storage "${id}" added`, 'success');
+      setTimeout(loadStorage, 1000);
+    } catch(e) {
+      btn.disabled=false; btn.textContent='Add Storage';
+      toast('Add failed: '+e.message, 'error');
+    }
+  };
+  document.getElementById('modal-bg').classList.add('open');
+}
+
+async function openEditStorageModal(storageName, connId) {
+  document.getElementById('modal-title').textContent = `Edit Storage — ${storageName}`;
+  document.getElementById('modal-body').innerHTML = '<div class="empty"><span class="loading"></span> Loading config…</div>';
+  modalCallback = null;
+  document.getElementById('modal-bg').classList.add('open');
+  const conn = resolveConn(connId);
+  const get  = conn ? (p=>connGet(conn,p)) : pveGet;
+  let cfg = {};
+  try {
+    const d = await get(`/api2/json/storage/${encodeURIComponent(storageName)}`);
+    cfg = d.data || {};
+  } catch(e) {
+    toast('Failed to load config: '+e.message, 'error');
+    document.getElementById('modal-bg').classList.remove('open');
+    return;
+  }
+  const type = cfg.type || 'dir';
+  document.getElementById('modal-body').innerHTML = `
+    <div style="background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius);padding:8px 12px;font-size:12px;color:var(--muted);margin-bottom:12px">
+      Type: <strong style="color:var(--text)">${type}</strong> &nbsp;·&nbsp; ID: <strong style="color:var(--text)">${escHtml(storageName)}</strong> &nbsp;(type and ID cannot be changed)
+    </div>
+    <div id="sf-type-fields" style="margin-bottom:12px">${_storTypeFields(type, cfg)}</div>
+    <div class="form-group"><label>CONTENT TYPES</label>${_storContentCheckboxes(cfg.content)}</div>
+    <div class="create-vm-grid" style="margin-top:10px">
+      <div class="form-group"><label>NODES (blank = all)</label><input id="sf-nodes" value="${escHtml(cfg.nodes||'')}" placeholder="pve1,pve2"/></div>
+      <div class="form-group"><label>MAX BACKUPS</label><input id="sf-maxbackups" type="number" value="${cfg.maxfiles||0}" min="0"/></div>
+    </div>
+    <div style="display:flex;gap:16px;margin-top:8px;flex-wrap:wrap">
+      <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer">
+        <input type="checkbox" id="sf-shared"${cfg.shared?' checked':''} style="width:auto;height:auto;padding:0;margin:0"> Shared storage
+      </label>
+      <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer">
+        <input type="checkbox" id="sf-disable"${cfg.disable?' checked':''} style="width:auto;height:auto;padding:0;margin:0"> Disabled
+      </label>
+    </div>`;
+  const btn = document.getElementById('modal-confirm-btn');
+  btn.textContent = 'Save Changes'; btn.disabled = false;
+  btn.onclick = async () => {
+    const params = _gatherStorageParams(type);
+    btn.disabled=true; btn.textContent='Saving…';
+    try {
+      if (conn) {
+        const h = connHeaders(conn,{'Content-Type':'application/x-www-form-urlencoded'});
+        const body = Object.entries(params).filter(([,v])=>v!=null).map(([k,v])=>`${encodeURIComponent(k)}=${encodeURIComponent(v)}`).join('&');
+        const r = await fetch(conn.host+`/api2/json/storage/${encodeURIComponent(storageName)}`,{method:'PUT',headers:h,body});
+        if(!r.ok){const t=await r.text();throw new Error(`HTTP ${r.status}: ${t}`);}
+      } else {
+        const filteredParams = Object.fromEntries(Object.entries(params).filter(([,v])=>v!=null));
+        await pvePut(`/api2/json/storage/${encodeURIComponent(storageName)}`, filteredParams);
+      }
+      document.getElementById('modal-bg').classList.remove('open');
+      btn.onclick=confirmModal; btn.textContent='Confirm'; btn.disabled=false;
+      toast(`Storage "${storageName}" updated`, 'success');
+      setTimeout(loadStorage, 1000);
+    } catch(e) {
+      btn.disabled=false; btn.textContent='Save Changes';
+      toast('Save failed: '+e.message, 'error');
+    }
+  };
+}
+
+function confirmDeleteStorage(storageName, connId) {
+  document.getElementById('modal-title').textContent = `Delete Storage — ${storageName}`;
+  document.getElementById('modal-body').innerHTML = `
+    <p style="color:var(--muted)">Remove storage definition <strong style="color:var(--red)">${escHtml(storageName)}</strong>?</p>
+    <p style="font-size:12px;margin-top:8px;color:var(--yellow)">⚠ This removes the <strong>configuration only</strong> — data on the device is NOT deleted.</p>
+    <p style="font-size:12px;margin-top:4px;color:var(--red)">Proxmox will refuse deletion if VMs or containers still reference this storage.</p>`;
+  modalCallback = async () => {
+    const conn = resolveConn(connId);
+    try {
+      if (conn) await connDelete(conn, `/api2/json/storage/${encodeURIComponent(storageName)}`);
+      else      await pveDelete(`/api2/json/storage/${encodeURIComponent(storageName)}`);
+      toast(`Storage "${storageName}" removed`, 'success');
+      setTimeout(loadStorage, 800);
+    } catch(e) { toast('Delete failed: '+e.message, 'error'); }
+  };
+  document.getElementById('modal-bg').classList.add('open');
+}
+
+async function toggleStorageDisable(storageName, connId, currentlyDisabled) {
+  const conn = resolveConn(connId);
+  const newVal = currentlyDisabled ? 0 : 1;
+  try {
+    if (conn) {
+      const h = connHeaders(conn,{'Content-Type':'application/x-www-form-urlencoded'});
+      const r = await fetch(conn.host+`/api2/json/storage/${encodeURIComponent(storageName)}`,{method:'PUT',headers:h,body:`disable=${newVal}`});
+      if(!r.ok){const t=await r.text();throw new Error(`HTTP ${r.status}: ${t}`);}
+    } else {
+      await pvePut(`/api2/json/storage/${encodeURIComponent(storageName)}`,{disable:newVal});
+    }
+    toast(`Storage "${storageName}" ${newVal?'disabled':'enabled'}`, 'success');
+    setTimeout(loadStorage, 800);
+  } catch(e) { toast('Failed: '+e.message, 'error'); }
 }
 
 // ── NETWORK ───────────────────────────────────────────────
