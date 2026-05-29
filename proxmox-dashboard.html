@@ -225,9 +225,13 @@
     /* THEME TOGGLE */
     [data-theme="light"]{--bg:#f0f2f5;--bg2:#ffffff;--bg3:#e8eaed;--border:#d0d7de;--text:#1f2328;--muted:#656d76;}
     /* SEARCH */
-    #global-search{background:var(--bg3);border:1px solid var(--border);border-radius:20px;color:var(--text);padding:5px 14px;font-family:var(--font);font-size:13px;outline:none;width:190px;transition:all .15s;}
-    #global-search:focus{border-color:var(--accent);width:250px;}
-    #search-results{position:absolute;top:54px;left:50%;transform:translateX(-50%);width:480px;background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);z-index:200;box-shadow:0 8px 30px rgba(0,0,0,.4);display:none;}
+    #search-wrap{position:relative;display:flex;align-items:center;}
+    #search-icon{position:absolute;left:10px;color:var(--muted);pointer-events:none;width:14px;height:14px;}
+    #search-kbd{position:absolute;right:10px;background:var(--bg2);border:1px solid var(--border);border-radius:4px;padding:1px 5px;font-size:10px;color:var(--muted);pointer-events:none;transition:opacity .15s;}
+    #global-search{background:var(--bg3);border:1px solid var(--border);border-radius:20px;color:var(--text);padding:6px 56px 6px 30px;font-family:var(--font);font-size:13px;outline:none;width:260px;transition:all .2s;}
+    #global-search:focus{border-color:var(--accent);width:400px;background:var(--bg2);}
+    #global-search:focus ~ #search-kbd{opacity:0;}
+    #search-results{position:absolute;top:58px;left:50%;transform:translateX(-50%);width:520px;background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);z-index:200;box-shadow:0 8px 30px rgba(0,0,0,.4);display:none;}
     #search-results.show{display:block;}
     .sr-item{padding:9px 14px;display:flex;align-items:center;gap:10px;cursor:pointer;border-bottom:1px solid var(--border);font-size:13px;}
     .sr-item:last-child{border-bottom:none;}
@@ -356,8 +360,10 @@
     PROXMOX DASHBOARD
   </div>
   <div class="spacer"></div>
-  <div style="position:relative">
-    <input id="global-search" type="text" placeholder="⌕  Search VMs, nodes, storage…" oninput="globalSearch(this.value)" onblur="setTimeout(()=>hideSearch(),200)"/>
+  <div id="search-wrap">
+    <svg id="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+    <input id="global-search" type="text" placeholder="Search VMs, nodes, storage…" oninput="globalSearch(this.value)" onblur="setTimeout(()=>hideSearch(),200)"/>
+    <span id="search-kbd">Ctrl K</span>
     <div id="search-results"></div>
   </div>
   <button class="btn small" onclick="toggleTheme()" title="Toggle light/dark mode">◐</button>
@@ -3435,6 +3441,19 @@ function searchSelect(i) {
 function hideSearch() {
   document.getElementById('search-results').classList.remove('show');
 }
+
+// Ctrl+K / Cmd+K to focus search
+document.addEventListener('keydown', e => {
+  if ((e.ctrlKey||e.metaKey) && e.key==='k') {
+    e.preventDefault();
+    const s = document.getElementById('global-search');
+    if (s) { s.focus(); s.select(); }
+  }
+  if (e.key==='Escape') {
+    hideSearch();
+    document.getElementById('global-search')?.blur();
+  }
+});
 
 // ── CONSOLE ──────────────────────────────────────────────
 // Opens noVNC console in a new tab via standard Proxmox VE URL
