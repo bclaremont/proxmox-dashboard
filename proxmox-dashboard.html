@@ -43,6 +43,8 @@
   -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js" crossorigin="anonymous"></script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css"/>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
   <style>
     :root {
       --bg: #0d1117; --bg2: #161b22; --bg3: #21262d;
@@ -314,6 +316,15 @@
     .tm-done{background:var(--green)!important;animation:none!important;}
     .tm-err{background:var(--red)!important;animation:none!important;}
     @media(max-width:700px){#app{grid-template-columns:1fr;}#sidebar{display:none;}#detail-panel{width:100%;}}
+    /* WORLD MAP */
+    #world-map{height:480px;border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;z-index:1;}
+    .leaflet-popup-content-wrapper{background:var(--bg2);border:1px solid var(--border);color:var(--text);box-shadow:0 4px 16px rgba(0,0,0,.4);border-radius:var(--radius);}
+    .leaflet-popup-tip{background:var(--bg2);}
+    .leaflet-popup-close-button{color:var(--muted)!important;}
+    .leaflet-control-zoom a{background:var(--bg2)!important;color:var(--text)!important;border-color:var(--border)!important;}
+    .leaflet-bar{border-color:var(--border)!important;}
+    .map-pin{width:22px;height:22px;border-radius:50%;border:3px solid rgba(255,255,255,.9);box-shadow:0 2px 6px rgba(0,0,0,.5);cursor:pointer;transition:transform .15s;}
+    .map-pin:hover{transform:scale(1.25);}
     /* NOTIFICATION PANEL */
     #notif-panel{position:fixed;top:62px;right:10px;width:390px;max-height:540px;background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);z-index:350;box-shadow:0 8px 30px rgba(0,0,0,.4);display:flex;flex-direction:column;overflow:hidden;}
     .notif-hdr{padding:10px 14px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px;background:var(--bg3);}
@@ -364,6 +375,10 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="M8.59 13.51l6.83 3.98M15.41 6.51l-6.82 3.98"/></svg>
         Clusters &amp; Hosts
         <span class="nav-badge" id="conn-count-badge" style="display:none;background:var(--blue)">0</span>
+      </div>
+      <div class="nav-item" data-view="worldmap" onclick="switchView('worldmap')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+        World Map
       </div>
       <div class="nav-item active" data-view="overview" onclick="switchView('overview')">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
@@ -419,7 +434,7 @@
       </div>
       <div class="nav-item" onclick="openBulkModal()">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>
-        Bulk Power
+        Bulk Actions
       </div>
       <div class="nav-item" data-view="isolib" onclick="switchView('isolib')">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="3"/><line x1="12" y1="2" x2="12" y2="5"/><line x1="12" y1="19" x2="12" y2="22"/><line x1="2" y1="12" x2="5" y2="12"/><line x1="19" y1="12" x2="22" y2="12"/></svg>
@@ -596,6 +611,19 @@
         <button class="btn small" onclick="loadSubscriptions()">Refresh</button>
       </div>
       <div id="subscriptions-content"><div class="empty">Loading…</div></div>
+    </div>
+
+    <!-- WORLD MAP -->
+    <div id="view-worldmap" style="display:none">
+      <div class="section-header">
+        <span class="section-title">Infrastructure World Map</span>
+        <div style="display:flex;gap:6px">
+          <button class="btn small primary" onclick="openSetLocationModal()">📍 Set Locations</button>
+          <button class="btn small" onclick="renderWorldMap()">Refresh</button>
+        </div>
+      </div>
+      <div id="world-map"></div>
+      <div id="world-map-legend" style="margin-top:16px"></div>
     </div>
 
     <!-- CONNECTIONS -->
@@ -1911,7 +1939,7 @@ async function migrateVM(node, vmid, type, targetNode, online=false, withLocal=f
 // ── RENDERING ─────────────────────────────────────────────
 
 function switchView(view) {
-  const views=['connect','connections','savedview','overview','vms','containers','nodes','tasks','syslog','storage','network','heatmap','isolib','sdn','pools','ceph','ha','firewall','backups','users','certs','audit','clustergraphs','tfa','sso','subscriptions','updates','pbs'];
+  const views=['connect','connections','worldmap','savedview','overview','vms','containers','nodes','tasks','syslog','storage','network','heatmap','isolib','sdn','pools','ceph','ha','firewall','backups','users','certs','audit','clustergraphs','tfa','sso','subscriptions','updates','pbs'];
   views.forEach(v=>{
     const el=document.getElementById('view-'+v);
     if(el) el.style.display=v===view?'':'none';
@@ -1956,6 +1984,7 @@ function switchView(view) {
   if(view==='pbs') loadPBS();
   if(view==='sdn') loadSDN();
   if(view==='connections') renderConnections();
+  if(view==='worldmap') { initWorldMap(); renderWorldMap(); }
   if(view==='subscriptions') loadSubscriptions();
   if(view==='sso') loadSSO();
   if(view==='tfa') loadTFA();
@@ -2273,23 +2302,76 @@ function migTypeChanged() {
 }
 
 function openBulkModal(){
-  const running=[...PVE.vms,...PVE.containers].filter(x=>x.status==='running');
-  const stopped=[...PVE.vms,...PVE.containers].filter(x=>x.status==='stopped');
-  document.getElementById('modal-title').textContent='Bulk Power Action';
+  const all     = allVMs().concat(allCTs());
+  const running = all.filter(x=>x.status==='running');
+  const stopped = all.filter(x=>x.status==='stopped');
+  const nodes   = [...new Set(all.map(x=>x.node))];
+  const nodeOpts= nodes.map(n=>`<option value="${n}">${n}</option>`).join('');
+
+  document.getElementById('modal-title').textContent='Bulk Action';
   document.getElementById('modal-body').innerHTML=`
     <div class="form-group"><label>ACTION</label>
-      <select id="bulk-action">
+      <select id="bulk-action" onchange="bulkActionChanged()">
         <option value="shutdown">Shutdown all running (${running.length})</option>
         <option value="start">Start all stopped (${stopped.length})</option>
         <option value="stop">Force stop all running (${running.length})</option>
-      </select></div>
-    <p style="color:var(--red);font-size:12px;margin-top:8px">⚠ Affects ALL matching VMs and containers across all nodes.</p>`;
-  modalCallback=async()=>{
-    const action=document.getElementById('bulk-action').value;
-    const targets=action==='start'?stopped:running;
-    for(const x of targets){await vmAction(x.node,x.vmid,x.type,action);await new Promise(r=>setTimeout(r,300));}
+        <option value="migrate">Migrate — move all VMs/CTs to another node</option>
+      </select>
+    </div>
+    <div id="bulk-migrate-opts" style="display:none">
+      <div class="form-row">
+        <div class="form-group">
+          <label>SOURCE NODE (migrate from)</label>
+          <select id="bulk-mig-src">${nodeOpts}</select>
+        </div>
+        <div class="form-group">
+          <label>TARGET NODE (migrate to)</label>
+          <select id="bulk-mig-tgt">${nodeOpts}</select>
+        </div>
+      </div>
+      <div class="form-group">
+        <label><input type="checkbox" id="bulk-mig-online" checked style="width:auto;height:auto;padding:0;margin-right:6px"> Online migration (keep VMs running)</label>
+      </div>
+      <div class="form-group">
+        <label><input type="checkbox" id="bulk-mig-local" checked style="width:auto;height:auto;padding:0;margin-right:6px"> With local disks</label>
+      </div>
+    </div>
+    <p style="color:var(--red);font-size:12px;margin-top:8px" id="bulk-warning">⚠ Affects ALL matching VMs and containers across all nodes.</p>`;
+
+  modalCallback = async () => {
+    const action = document.getElementById('bulk-action').value;
+    if (action==='migrate') {
+      const src    = document.getElementById('bulk-mig-src').value;
+      const tgt    = document.getElementById('bulk-mig-tgt').value;
+      const online = document.getElementById('bulk-mig-online').checked;
+      const local  = document.getElementById('bulk-mig-local').checked;
+      if (src===tgt) return toast('Source and target nodes must be different','error');
+      const targets = all.filter(x=>x.node===src);
+      if (!targets.length) return toast(`No VMs or CTs on node ${src}`,'error');
+      toast(`Starting migration of ${targets.length} guest(s) from ${src} → ${tgt}…`,'info');
+      for (const x of targets) {
+        await migrateVM(src, x.vmid, x.type, tgt, online, local, '_keep', x.connId||'');
+        await new Promise(r=>setTimeout(r,500));
+      }
+    } else {
+      const targets = action==='start' ? stopped : running;
+      for (const x of targets) {
+        await vmAction(x.node, x.vmid, x.type, action, x.connId||'');
+        await new Promise(r=>setTimeout(r,300));
+      }
+    }
   };
   document.getElementById('modal-bg').classList.add('open');
+}
+
+function bulkActionChanged() {
+  const action = document.getElementById('bulk-action').value;
+  const migrOpts = document.getElementById('bulk-migrate-opts');
+  const warning  = document.getElementById('bulk-warning');
+  if (migrOpts) migrOpts.style.display = action==='migrate' ? '' : 'none';
+  if (warning) warning.textContent = action==='migrate'
+    ? '⚠ Migrates ALL VMs and containers on the source node. Ensure the target has enough resources.'
+    : '⚠ Affects ALL matching VMs and containers across all nodes.';
 }
 
 function confirmModal(){
@@ -5586,6 +5668,178 @@ function deleteSDNVNet(vnet) {
     } catch(e) { toast('Delete VNet failed: '+e.message,'error'); }
   };
   document.getElementById('modal-bg').classList.add('open');
+}
+
+// ── WORLD MAP ─────────────────────────────────────────────
+// Uses Leaflet.js + OpenStreetMap (no API key required).
+// Cluster locations stored in localStorage as { connId: {lat,lng,label} }.
+
+let worldMap    = null;
+let worldPins   = {};   // connId → Leaflet marker
+
+function getConnLocations() {
+  try { return JSON.parse(localStorage.getItem('pve-locations')||'{}'); } catch(e) { return {}; }
+}
+function saveConnLocation(connId, lat, lng, label) {
+  const locs = getConnLocations();
+  if (lat===null) { delete locs[connId]; } else { locs[connId] = { lat:+lat, lng:+lng, label:label||'' }; }
+  localStorage.setItem('pve-locations', JSON.stringify(locs));
+}
+
+function _mapConns() {
+  return [
+    { id:'primary', name:'Primary', host:PVE.host, nodes:PVE.nodeStatuses, vms:PVE.vms, containers:PVE.containers, status:PVE.host?'connected':'disconnected' },
+    ...extraConns.map(c=>({ id:c.id, name:c.name||c.host, host:c.host, nodes:c.nodeStatuses||[], vms:c.vms||[], containers:c.containers||[], status:c.status }))
+  ];
+}
+
+function initWorldMap() {
+  if (worldMap) return;
+  if (typeof L === 'undefined') return;
+  worldMap = L.map('world-map', { zoomControl:true }).setView([30, 10], 2);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    attribution:'© <a href="https://openstreetmap.org" target="_blank">OpenStreetMap</a> contributors',
+    maxZoom:18
+  }).addTo(worldMap);
+}
+
+function renderWorldMap() {
+  if (!worldMap) { initWorldMap(); if (!worldMap) return; }
+  worldMap.invalidateSize();
+
+  // Clear existing pins
+  Object.values(worldPins).forEach(m => m.remove());
+  worldPins = {};
+
+  const locs  = getConnLocations();
+  const conns = _mapConns();
+  const pinned = [];
+
+  conns.forEach(conn => {
+    const loc = locs[conn.id];
+    if (!loc) return;
+
+    const color = conn.status==='connected' ? '#3fb950' : conn.status==='error' ? '#f85149' : '#8b949e';
+    const runVMs = (conn.vms||[]).filter(x=>x.status==='running').length;
+    const runCTs = (conn.containers||[]).filter(x=>x.status==='running').length;
+
+    const icon = L.divIcon({
+      html: `<div class="map-pin" style="background:${color}" title="${escHtml(conn.name)}"></div>`,
+      iconSize:[22,22], iconAnchor:[11,11], className:''
+    });
+
+    const popupHtml = `
+      <div style="font-size:13px;line-height:1.7;min-width:180px">
+        <strong>${escHtml(conn.name)}</strong><br>
+        <span style="color:var(--muted);font-size:11px">${escHtml(conn.host)}</span>
+        <hr style="border:none;border-top:1px solid var(--border);margin:6px 0">
+        <span style="color:${color};font-weight:700">${conn.status}</span><br>
+        ${conn.nodes.length} node(s) &nbsp;·&nbsp; ${(conn.vms||[]).length} VMs <span style="color:var(--muted);font-size:11px">(${runVMs} running)</span><br>
+        ${(conn.containers||[]).length} CTs <span style="color:var(--muted);font-size:11px">(${runCTs} running)</span>
+        ${loc.label?`<br><span style="color:var(--muted);font-size:11px">📍 ${escHtml(loc.label)}</span>`:''}
+      </div>`;
+
+    const marker = L.marker([loc.lat, loc.lng], { icon }).addTo(worldMap);
+    marker.bindPopup(popupHtml, { maxWidth:260 });
+    worldPins[conn.id] = marker;
+    pinned.push(conn.id);
+  });
+
+  // Fit map to markers if any
+  if (pinned.length) {
+    const group = L.featureGroup(Object.values(worldPins));
+    worldMap.fitBounds(group.getBounds().pad(0.3));
+  }
+
+  // Legend below map
+  const legendEl = document.getElementById('world-map-legend');
+  if (!legendEl) return;
+
+  const withLoc = conns.filter(c => locs[c.id]);
+  const noLoc   = conns.filter(c => !locs[c.id]);
+
+  legendEl.innerHTML = `
+    <div class="stats-grid" style="margin-bottom:14px">
+      <div class="stat-card accent-blue"><div class="label">Clusters / Hosts</div><div class="value">${conns.length}</div></div>
+      <div class="stat-card accent-green"><div class="label">Mapped</div><div class="value">${withLoc.length}</div></div>
+      <div class="stat-card accent-${noLoc.length?'yellow':'green'}"><div class="label">No Location</div><div class="value" style="color:${noLoc.length?'var(--yellow)':'var(--green)'}">${noLoc.length}</div></div>
+    </div>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Cluster / Host</th><th>Location Label</th><th>Coordinates</th><th></th></tr></thead>
+      <tbody>${conns.map(conn => {
+        const loc = locs[conn.id];
+        return `<tr>
+          <td><strong>${escHtml(conn.name)}</strong><div style="font-size:11px;color:var(--muted)">${escHtml(conn.host)}</div></td>
+          <td style="font-size:12px;color:var(--muted)">${loc ? escHtml(loc.label||'—') : '<span style="color:var(--yellow)">Not set</span>'}</td>
+          <td style="font-family:monospace;font-size:12px;color:var(--muted)">${loc ? `${loc.lat.toFixed(4)}, ${loc.lng.toFixed(4)}` : '—'}</td>
+          <td onclick="event.stopPropagation()">
+            <div class="actions-row">
+              <button class="btn small primary" onclick="openSetLocationModal('${conn.id}')">📍 ${loc?'Edit':'Set'}</button>
+              ${loc ? `<button class="btn small danger" onclick="clearConnLocation('${conn.id}')">Clear</button>` : ''}
+              ${loc ? `<button class="btn small" onclick="worldPins['${conn.id}']&&worldPins['${conn.id}'].openPopup()">Focus</button>` : ''}
+            </div>
+          </td>
+        </tr>`;
+      }).join('')}</tbody>
+    </table></div>`;
+}
+
+function openSetLocationModal(preselectedId) {
+  const conns  = _mapConns();
+  const locs   = getConnLocations();
+  const selId  = preselectedId || 'primary';
+  const existing = locs[selId] || {};
+  const connOpts = conns.map(c=>`<option value="${c.id}"${c.id===selId?' selected':''}>${escHtml(c.name)} (${escHtml(c.host)})</option>`).join('');
+
+  document.getElementById('modal-title').textContent = '📍 Set Cluster Location';
+  document.getElementById('modal-body').innerHTML = `
+    <div class="form-group"><label>CLUSTER / HOST</label>
+      <select id="loc-conn" onchange="locConnChanged()">${connOpts}</select>
+    </div>
+    <div class="create-vm-grid">
+      <div class="form-group"><label>LATITUDE</label>
+        <input id="loc-lat" type="number" step="0.0001" value="${existing.lat||''}" placeholder="e.g. 51.5074"/>
+      </div>
+      <div class="form-group"><label>LONGITUDE</label>
+        <input id="loc-lng" type="number" step="0.0001" value="${existing.lng||''}" placeholder="e.g. -0.1278"/>
+      </div>
+    </div>
+    <div class="form-group"><label>LOCATION LABEL (optional)</label>
+      <input id="loc-label" value="${escHtml(existing.label||'')}" placeholder="e.g. London DC, AWS us-east-1"/>
+    </div>
+    <div style="background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius);padding:9px 12px;font-size:12px;color:var(--muted)">
+      Find coordinates:
+      <a href="https://www.openstreetmap.org" target="_blank" style="color:var(--blue)">openstreetmap.org</a>
+      — right-click any location → "Show address" or use the URL bar (lat,lon shown in URL).
+    </div>`;
+
+  modalCallback = () => {
+    const connId = document.getElementById('loc-conn').value;
+    const lat    = parseFloat(document.getElementById('loc-lat').value);
+    const lng    = parseFloat(document.getElementById('loc-lng').value);
+    const label  = document.getElementById('loc-label').value.trim();
+    if (isNaN(lat)||isNaN(lng)) return toast('Enter valid latitude and longitude', 'error');
+    if (lat<-90||lat>90)        return toast('Latitude must be between -90 and 90', 'error');
+    if (lng<-180||lng>180)      return toast('Longitude must be between -180 and 180', 'error');
+    saveConnLocation(connId, lat, lng, label);
+    toast('Location saved', 'success');
+    if (currentView==='worldmap') renderWorldMap();
+  };
+  document.getElementById('modal-bg').classList.add('open');
+}
+
+function locConnChanged() {
+  const connId   = document.getElementById('loc-conn').value;
+  const existing = getConnLocations()[connId] || {};
+  document.getElementById('loc-lat').value   = existing.lat   || '';
+  document.getElementById('loc-lng').value   = existing.lng   || '';
+  document.getElementById('loc-label').value = existing.label || '';
+}
+
+function clearConnLocation(connId) {
+  saveConnLocation(connId, null);
+  toast('Location cleared', 'info');
+  if (currentView==='worldmap') renderWorldMap();
 }
 
 // ── CONNECTIONS VIEW ──────────────────────────────────────
