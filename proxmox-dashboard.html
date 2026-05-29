@@ -5059,19 +5059,18 @@ function openCreateUserModal() {
   document.getElementById('modal-body').innerHTML = `
     <div class="create-vm-grid">
       <div class="form-group"><label>USERNAME</label><input id="uu-name" placeholder="john.doe" oninput="uuRealmHint()"/></div>
-      <div class="form-group"><label>REALM</label><select id="uu-realm" onchange="uuRealmHint()">${realmOpts}</select></div>
+      <div class="form-group"><label>REALM</label><select id="uu-realm" onchange="uuRealmHint()">${realmOpts||'<option value="pve">pve</option>'}</select></div>
     </div>
     <div class="create-vm-grid">
       <div class="form-group"><label>FIRST NAME</label><input id="uu-fn" placeholder="John"/></div>
       <div class="form-group"><label>LAST NAME</label><input id="uu-ln" placeholder="Doe"/></div>
     </div>
-    <div class="create-vm-grid">
-      <div class="form-group"><label>EMAIL</label><input id="uu-email" type="email" placeholder="john@example.com"/></div>
-      <div class="form-group">
-        <label>PASSWORD <span id="uu-pw-hint" style="color:var(--muted);font-size:10px">(required for pam/pve)</span></label>
-        <input id="uu-pw" type="password" placeholder="required for pam/pve realms"/>
-      </div>
+    <div class="form-group"><label>EMAIL</label><input id="uu-email" type="email" placeholder="john@example.com"/></div>
+    <div id="uu-pw-section" class="form-group">
+      <label>PASSWORD <span id="uu-pw-hint" style="color:var(--red);font-size:10px">(required for pve realm)</span></label>
+      <input id="uu-pw" type="password"/>
     </div>
+    <div id="uu-realm-info" style="display:none;padding:9px 12px;background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius);font-size:12px;color:var(--muted);margin-top:4px"></div>
     <div class="create-vm-grid">
       <div class="form-group"><label>GROUPS (comma-separated)</label><input id="uu-groups" placeholder="admins,devs"/></div>
       <div class="form-group"><label>EXPIRES (blank = never)</label><input id="uu-expire" type="date"/></div>
@@ -5082,6 +5081,8 @@ function openCreateUserModal() {
     </label>
     <div id="uu-err" style="display:none;margin-top:10px;padding:8px 12px;background:rgba(248,81,73,.1);border:1px solid var(--red);border-radius:var(--radius);font-size:12px;color:var(--red)"></div>`;
 
+  // Set initial realm-dependent UI state
+  setTimeout(uuRealmHint, 0);
   // Use override pattern so errors show inline
   modalCallback = null;
   const btn = document.getElementById('modal-confirm-btn');
@@ -5094,9 +5095,9 @@ function openCreateUserModal() {
     if(errEl) errEl.style.display = 'none';
     if(!name)  return showErr('Enter a username');
     if(!realm) return showErr('Select a realm');
-    // Password required for local realms
-    const pw = document.getElementById('uu-pw')?.value || '';
-    if((realm==='pam'||realm==='pve') && !pw) return showErr(`Password is required for the ${realm} realm`);
+    // Password required ONLY for pve realm (pam uses Linux system accounts, others are external)
+    const pw = (realm==='pve') ? (document.getElementById('uu-pw')?.value||'') : '';
+    if(realm==='pve' && !pw) return showErr('Password is required for the pve realm');
 
     const userid = `${name}@${realm}`;
     const g = id => { const el=document.getElementById(id); if(!el)return null; return el.type==='checkbox'?el.checked:(el.value.trim()||null); };
@@ -5132,11 +5133,35 @@ function openCreateUserModal() {
 }
 
 function uuRealmHint() {
-  const realm = document.getElementById('uu-realm')?.value||'';
-  const hint  = document.getElementById('uu-pw-hint');
-  const needsPw = realm==='pam'||realm==='pve';
-  if(hint) hint.textContent = needsPw?'(required)':'(not used for this realm)';
-  if(hint) hint.style.color = needsPw?'var(--red)':'var(--muted)';
+  const realm    = document.getElementById('uu-realm')?.value||'';
+  const pwSec    = document.getElementById('uu-pw-section');
+  const pwHint   = document.getElementById('uu-pw-hint');
+  const infoBox  = document.getElementById('uu-realm-info');
+  const pwInput  = document.getElementById('uu-pw');
+
+  if(realm==='pve') {
+    if(pwSec)   pwSec.style.display='';
+    if(pwHint){ pwHint.textContent='(required)'; pwHint.style.color='var(--red)'; }
+    if(infoBox) infoBox.style.display='none';
+  } else if(realm==='pam') {
+    if(pwSec)   pwSec.style.display='none';
+    if(pwInput) pwInput.value='';
+    if(infoBox){
+      infoBox.style.display='';
+      infoBox.innerHTML=`<strong style="color:var(--yellow)">⚠ PAM realm — Linux system user required</strong><br>
+        The Linux user must already exist on the host before you can log in.<br>
+        Create it first: <code style="background:var(--bg2);padding:1px 5px;border-radius:3px">useradd -m ${document.getElementById('uu-name')?.value||'username'} && passwd ${document.getElementById('uu-name')?.value||'username'}</code><br>
+        Proxmox does <em>not</em> set the Linux password — set it on the host directly.`;
+    }
+  } else {
+    // LDAP / AD / OpenID
+    if(pwSec)   pwSec.style.display='none';
+    if(pwInput) pwInput.value='';
+    if(infoBox){
+      infoBox.style.display='';
+      infoBox.innerHTML=`<strong style="color:var(--blue)">ℹ ${realm} realm</strong> — externally authenticated. Password is managed by your directory service, not Proxmox.`;
+    }
+  }
 }
 
 async function openEditUserModal(userid, connId) {
