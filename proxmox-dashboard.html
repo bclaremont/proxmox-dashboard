@@ -2617,14 +2617,21 @@ function toast(msg,type='info'){
 
 
 async function loadStorageBackground() {
-  // Silently load storage for overview stat card
   try {
     const all = [];
     await Promise.all(PVE.nodes.map(async n => {
       const d = await pveGet(`/api2/json/nodes/${n.node}/storage`).catch(()=>({data:[]}));
       (d.data||[]).forEach(s => all.push({...s, node: n.node}));
     }));
-    PVE.storage = all;
+    // Same deduplication as loadStorage — avoid duplicate entries per node
+    const byName = {};
+    all.forEach(s => (byName[s.storage]||(byName[s.storage]=[])).push(s));
+    const deduped = [];
+    Object.values(byName).forEach(entries => {
+      const active = entries.filter(e => e.active===1||e.active===true||e.active==='1');
+      deduped.push(...(active.length ? active : [entries[0]]));
+    });
+    PVE.storage = deduped;
   } catch(e) {}
 }
 
@@ -2647,9 +2654,22 @@ async function loadStorage() {
         all.push({...s, ...st.data, node: n.node});
       }));
     }));
-    if (!conn) PVE.storage = all;
-    else (conn.storage = all);
-    renderStorage(all);
+
+    // Deduplicate: Proxmox returns every storage definition from every node,
+    // marking non-local ones as active:false. For each storage name keep only
+    // the active entries. If a storage is active on multiple nodes (shared/NFS)
+    // keep all of them. Only fall back to inactive if nothing is active anywhere.
+    const byName = {};
+    all.forEach(s => (byName[s.storage]||(byName[s.storage]=[])).push(s));
+    const deduped = [];
+    Object.values(byName).forEach(entries => {
+      const active = entries.filter(e => e.active===1||e.active===true||e.active==='1');
+      deduped.push(...(active.length ? active : [entries[0]]));
+    });
+
+    if (!conn) PVE.storage = deduped;
+    else conn.storage = deduped;
+    renderStorage(deduped);
   } catch(e) {
     toast('Storage load failed: '+e.message, 'error');
   }
