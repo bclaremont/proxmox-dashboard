@@ -842,7 +842,10 @@
       <div class="section-header">
         <span class="section-title">Ceph Cluster Status</span>
         <div style="display:flex;gap:6px">
-          <select class="conn-sel" id="ceph-conn" style="width:140px;padding:5px 8px;font-size:13px" onchange="loadCeph()"><option value="">Primary</option></select>
+          <select id="ceph-conn" style="width:160px;padding:5px 8px;font-size:13px" onchange="loadCeph()">
+            <option value="_all">All Clusters</option>
+            <option value="">Primary</option>
+          </select>
           <button class="btn small" onclick="loadCeph()">Refresh</button>
         </div>
       </div>
@@ -2858,140 +2861,183 @@ function checkAlerts() {
 // GET /api2/json/nodes/{node}/ceph/osd
 // GET /api2/json/nodes/{node}/ceph/pools
 async function loadCeph() {
-  const conn = getViewConn('ceph-conn');
-  const get = conn ? (p=>connGet(conn,p)) : pveGet;
-  const nodes = conn ? (conn.nodes||[]) : PVE.nodes;
-  const el = document.getElementById('ceph-content');
+  const el  = document.getElementById('ceph-content');
   el.innerHTML = '<div class="empty"><span class="loading"></span> Loading Ceph status…</div>';
-  const node = nodes[0] && nodes[0].node;
-  if (!node) { el.innerHTML = '<div class="empty">No nodes available.</div>'; return; }
-  try {
-    const [statusRes, osdRes, poolRes] = await Promise.all([
-      get(`/api2/json/nodes/${node}/ceph/status`).catch(() => null),
-      get(`/api2/json/nodes/${node}/ceph/osd`).catch(() => null),
-      get(`/api2/json/nodes/${node}/ceph/pools`).catch(() => null)
-    ]);
 
-    if (!statusRes) {
-      el.innerHTML = '<div class="empty">Ceph is not configured on this cluster, or this node does not have the Ceph package installed.</div>';
+  // Keep selector in sync with current connections
+  const sel = document.getElementById('ceph-conn');
+  if (sel) {
+    const cur = sel.value;
+    sel.innerHTML = '<option value="_all">All Clusters</option><option value="">Primary</option>' +
+      extraConns.map(c=>`<option value="${c.id}"${c.id===cur?' selected':''}>${escHtml(c.name||c.host)}</option>`).join('');
+    if (cur) sel.value = cur;
+  }
+
+  const selValue = sel ? sel.value : '_all';
+
+  // ── ALL CLUSTERS mode ────────────────────────────────────
+  if (selValue === '_all') {
+    const connDefs = [
+      { id:'', name:'Primary', get:pveGet, node:PVE.nodes[0]&&PVE.nodes[0].node },
+      ...extraConns.map(c=>({ id:c.id, name:c.name||c.host, get:p=>connGet(c,p), node:(c.nodes||[])[0]&&(c.nodes||[])[0].node }))
+    ];
+    const results = await Promise.all(connDefs.map(async cd => {
+      if (!cd.node) return {...cd, configured:false};
+      try {
+        const [sRes,oRes,pRes] = await Promise.all([
+          cd.get(`/api2/json/nodes/${cd.node}/ceph/status`).catch(()=>null),
+          cd.get(`/api2/json/nodes/${cd.node}/ceph/osd`).catch(()=>null),
+          cd.get(`/api2/json/nodes/${cd.node}/ceph/pools`).catch(()=>null),
+        ]);
+        if (!sRes) return {...cd, configured:false};
+        return {...cd, configured:true, s:sRes.data||{}, osds:((oRes?.data?.nodes)||[]).filter(o=>o.type==='osd'), pools:pRes?.data||[]};
+      } catch(e) { return {...cd, configured:false, error:e.message}; }
+    }));
+
+    const ok = results.filter(r=>r.configured);
+    if (!ok.length) {
+      el.innerHTML = '<div class="empty">Ceph is not configured on any connected cluster.</div>';
       document.getElementById('ceph-badge').style.display = 'none';
       return;
     }
-
-    const s = statusRes.data || {};
-    const health = (s.health && s.health.status) || 'UNKNOWN';
-    const isOk = health === 'HEALTH_OK';
-    const isWarn = health === 'HEALTH_WARN';
-    const healthCls = isOk ? 'ceph-ok' : isWarn ? 'ceph-warn' : 'ceph-err';
-
-    // Badge on sidebar
-    document.getElementById('ceph-badge').style.display = isOk ? 'none' : '';
-
-    const pg = s.pgmap || {};
-    const mon = (s.monmap && s.monmap.mons) || [];
-    const osdTree = (osdRes && osdRes.data && osdRes.data.nodes) || [];
-    const osdList = osdTree.filter(o => o.type === 'osd');
-    const osdUp = osdList.filter(o => o.status === 'up').length;
-    const osdIn = osdList.filter(o => o.reweight > 0).length;
-    const pools = (poolRes && poolRes.data) || [];
-
-    el.innerHTML = `
-      <div class="stats-grid">
-        <div class="stat-card">
-          <div class="label">Health</div>
-          <div class="value ${healthCls}" style="font-size:18px">${health}</div>
-        </div>
-        <div class="stat-card">
-          <div class="label">OSDs</div>
-          <div class="value" style="color:var(--teal)">${osdUp}/${osdList.length}</div>
-          <div class="sub">${osdIn} in cluster</div>
-        </div>
-        <div class="stat-card">
-          <div class="label">Monitors</div>
-          <div class="value" style="color:var(--blue)">${mon.length}</div>
-          <div class="sub">quorum members</div>
-        </div>
-        <div class="stat-card">
-          <div class="label">Placement Groups</div>
-          <div class="value" style="color:var(--green)">${pg.num_pgs || '—'}</div>
-          <div class="sub">${pg.num_pg_active || 0} active</div>
-        </div>
-        <div class="stat-card">
-          <div class="label">Data Used</div>
-          <div class="value" style="font-size:18px;color:var(--accent)">${fmtBytes(pg.bytes_used || 0)}</div>
-        </div>
-        <div class="stat-card">
-          <div class="label">Available</div>
-          <div class="value" style="font-size:18px;color:var(--green)">${fmtBytes(pg.bytes_avail || 0)}</div>
-        </div>
-      </div>
-
-      ${s.health && s.health.checks && Object.keys(s.health.checks).length ? `
-        <div class="section-header" style="margin-top:8px"><span class="section-title">Health Checks</span></div>
-        <div class="table-wrap">
-          <table><thead><tr><th>Check</th><th>Severity</th><th>Summary</th></tr></thead>
-          <tbody>${Object.entries(s.health.checks).map(([key, val]) => `
-            <tr>
-              <td><strong>${escHtml(key)}</strong></td>
-              <td><span class="badge ${val.severity === 'HEALTH_OK' ? 'running' : val.severity === 'HEALTH_WARN' ? 'paused' : 'stopped'}">
-                <span class="badge-dot"></span>${escHtml(val.severity || '')}</span></td>
-              <td style="font-size:12px">${escHtml(val.summary && val.summary.message || '')}</td>
-            </tr>`).join('')}
-          </tbody></table>
-        </div>` : ''}
-
-      ${osdList.length ? `
-        <div class="section-header" style="margin-top:8px"><span class="section-title">OSDs (${osdList.length})</span></div>
-        <div class="table-wrap scroll">
-          <table><thead><tr><th>Name</th><th>Status</th><th>Host</th><th>Device Class</th><th>Weight</th></tr></thead>
-          <tbody>${osdList.map(o => `
-            <tr>
-              <td><strong>${escHtml(o.name || String(o.id))}</strong></td>
-              <td>${statusBadge(o.status === 'up' ? 'running' : 'stopped')}</td>
-              <td style="color:var(--muted)">${escHtml(o.host || '—')}</td>
-              <td style="color:var(--muted)">${escHtml(o.device_class || '—')}</td>
-              <td style="color:var(--muted)">${o.reweight != null ? o.reweight.toFixed(2) : '—'}</td>
-            </tr>`).join('')}
-          </tbody></table>
-        </div>` : ''}
-
-      ${pools.length ? `
-        <div class="section-header" style="margin-top:8px"><span class="section-title">Pools (${pools.length})</span></div>
-        <div class="table-wrap">
-          <table><thead><tr><th>Pool</th><th>PGs</th><th>Size</th><th>Min Size</th><th>Used</th><th>% Used</th></tr></thead>
-          <tbody>${pools.map(p => {
-            const pct = p.bytes_used && p.percent_used ? p.percent_used.toFixed(1) : '—';
-            return `<tr>
-              <td><strong>${escHtml(p.pool_name || String(p.pool))}</strong></td>
-              <td style="color:var(--muted)">${p.pg_num || '—'}</td>
-              <td style="color:var(--muted)">${p.size || '—'}</td>
-              <td style="color:var(--muted)">${p.min_size || '—'}</td>
-              <td>${fmtBytes(p.bytes_used || 0)}</td>
-              <td>
-                <div class="gauge-wrap">
-                  <span style="min-width:36px;font-size:12px">${pct}%</span>
-                  <div class="gauge-bar"><div class="gauge-fill ${gaugeClass(parseFloat(pct) || 0)}" style="width:${Math.min(parseFloat(pct) || 0, 100)}%"></div></div>
-                </div>
-              </td>
-            </tr>`;
-          }).join('')}
-          </tbody></table>
-        </div>` : ''}
-
-      <div class="section-header" style="margin-top:8px"><span class="section-title">Monitors</span></div>
-      <div class="table-wrap">
-        <table><thead><tr><th>Name</th><th>Address</th></tr></thead>
-        <tbody>${mon.length ? mon.map(m => `
-          <tr>
-            <td><strong>${escHtml(m.name || '—')}</strong></td>
-            <td style="font-family:monospace;font-size:12px;color:var(--muted)">${escHtml(m.addr || '—')}</td>
-          </tr>`).join('') : '<tr><td colspan="2" class="empty">No monitor data</td></tr>'}
-        </tbody></table>
+    const worstHealth = ok.some(r=>(r.s.health?.status||'').includes('ERR')) ? 'HEALTH_ERR'
+      : ok.some(r=>(r.s.health?.status||'').includes('WARN')) ? 'HEALTH_WARN' : 'HEALTH_OK';
+    document.getElementById('ceph-badge').style.display = worstHealth==='HEALTH_OK' ? 'none' : '';
+    const totOSDs  = ok.reduce((a,r)=>a+r.osds.length,0);
+    const totOSDup = ok.reduce((a,r)=>a+r.osds.filter(o=>o.status==='up').length,0);
+    const totPools = ok.reduce((a,r)=>a+r.pools.length,0);
+    const totUsed  = ok.reduce((a,r)=>a+(r.s.pgmap?.bytes_used||0),0);
+    const totAvail = ok.reduce((a,r)=>a+(r.s.pgmap?.bytes_avail||0),0);
+    const hCls     = worstHealth==='HEALTH_OK'?'ceph-ok':worstHealth==='HEALTH_WARN'?'ceph-warn':'ceph-err';
+    let html = `
+      <div class="stats-grid" style="margin-bottom:16px">
+        <div class="stat-card"><div class="label">Clusters with Ceph</div><div class="value" style="color:var(--blue)">${ok.length}</div><div class="sub">of ${results.length} connected</div></div>
+        <div class="stat-card"><div class="label">Overall Health</div><div class="value ${hCls}" style="font-size:16px">${worstHealth.replace('HEALTH_','')}</div></div>
+        <div class="stat-card"><div class="label">Total OSDs</div><div class="value" style="color:var(--teal)">${totOSDup}/${totOSDs}</div><div class="sub">up / total</div></div>
+        <div class="stat-card"><div class="label">Total Pools</div><div class="value" style="color:var(--purple)">${totPools}</div></div>
+        <div class="stat-card"><div class="label">Total Used</div><div class="value" style="font-size:18px;color:var(--accent)">${fmtBytes(totUsed)}</div></div>
+        <div class="stat-card"><div class="label">Total Available</div><div class="value" style="font-size:18px;color:var(--green)">${fmtBytes(totAvail)}</div></div>
       </div>`;
+    ok.forEach(r => {
+      const h   = r.s.health?.status || 'UNKNOWN';
+      const hc  = h==='HEALTH_OK'?'ceph-ok':h==='HEALTH_WARN'?'ceph-warn':'ceph-err';
+      const bc  = h==='HEALTH_OK'?'var(--green)':h==='HEALTH_WARN'?'var(--yellow)':'var(--red)';
+      const pg  = r.s.pgmap || {};
+      const up  = r.osds.filter(o=>o.status==='up').length;
+      html += `
+        <div style="border:1px solid var(--border);border-top:3px solid ${bc};border-radius:var(--radius);margin-bottom:14px;overflow:hidden">
+          <div style="padding:12px 16px;background:var(--bg3);display:flex;align-items:center;gap:14px;flex-wrap:wrap">
+            <strong style="font-size:15px">${escHtml(r.name)}</strong>
+            <span class="${hc}" style="font-weight:700;font-size:13px">${h}</span>
+            <div style="flex:1;display:flex;gap:16px;flex-wrap:wrap;font-size:12px;color:var(--muted)">
+              <span>OSDs: <strong style="color:var(--teal)">${up}/${r.osds.length}</strong></span>
+              <span>Pools: <strong>${r.pools.length}</strong></span>
+              <span>PGs: <strong>${pg.num_pgs||'—'}</strong></span>
+              <span>Used: <strong style="color:var(--accent)">${fmtBytes(pg.bytes_used||0)}</strong></span>
+              <span>Free: <strong style="color:var(--green)">${fmtBytes(pg.bytes_avail||0)}</strong></span>
+            </div>
+            <button class="btn small" onclick="document.getElementById('ceph-conn').value='${r.id}';loadCeph()">Detail →</button>
+          </div>
+          ${r.s.health?.checks&&Object.keys(r.s.health.checks).length?`
+            <div style="padding:7px 16px;font-size:12px;color:var(--muted);border-top:1px solid var(--border)">
+              ${Object.entries(r.s.health.checks).map(([k,v])=>`
+                <span style="display:inline-flex;align-items:center;gap:4px;margin-right:14px">
+                  <span class="badge ${v.severity==='HEALTH_WARN'?'paused':'stopped'}" style="font-size:9px"><span class="badge-dot"></span>${v.severity?.replace('HEALTH_','')}</span>
+                  ${escHtml(v.summary?.message||k)}
+                </span>`).join('')}
+            </div>`:''}
+        </div>`;
+    });
+    const noeph = results.filter(r=>!r.configured);
+    if (noeph.length) html += `<div style="font-size:12px;color:var(--muted);margin-top:4px">No Ceph: ${noeph.map(r=>escHtml(r.name)).join(', ')}</div>`;
+    el.innerHTML = html;
+    return;
+  }
 
+  // ── SINGLE CLUSTER mode ──────────────────────────────────
+  const conn  = selValue ? resolveConn(selValue) : null;
+  const get   = conn ? (p=>connGet(conn,p)) : pveGet;
+  const nodes = conn ? (conn.nodes||[]) : PVE.nodes;
+  const node  = nodes[0] && nodes[0].node;
+  if (!node) { el.innerHTML = '<div class="empty">No nodes available.</div>'; return; }
+  try {
+    const [statusRes, osdRes, poolRes] = await Promise.all([
+      get(`/api2/json/nodes/${node}/ceph/status`).catch(()=>null),
+      get(`/api2/json/nodes/${node}/ceph/osd`).catch(()=>null),
+      get(`/api2/json/nodes/${node}/ceph/pools`).catch(()=>null)
+    ]);
+    if (!statusRes) {
+      el.innerHTML = '<div class="empty">Ceph is not configured on this cluster.</div>';
+      document.getElementById('ceph-badge').style.display = 'none';
+      return;
+    }
+    const s     = statusRes.data || {};
+    const osds  = ((osdRes?.data?.nodes)||[]).filter(o=>o.type==='osd');
+    const pools = poolRes?.data || [];
+    document.getElementById('ceph-badge').style.display = (s.health?.status==='HEALTH_OK') ? 'none' : '';
+    el.innerHTML = _cephDetailHtml(s, osds, pools);
   } catch(e) {
     el.innerHTML = `<div class="empty">Failed to load Ceph: ${e.message}</div>`;
   }
+}
+
+// Renders full single-cluster Ceph detail HTML
+function _cephDetailHtml(s, osds, pools) {
+  const health  = s.health?.status || 'UNKNOWN';
+  const hCls    = health==='HEALTH_OK'?'ceph-ok':health==='HEALTH_WARN'?'ceph-warn':'ceph-err';
+  const pg      = s.pgmap || {};
+  const mon     = s.monmap?.mons || [];
+  const osdUp   = osds.filter(o=>o.status==='up').length;
+  const osdIn   = osds.filter(o=>o.reweight>0).length;
+  return `
+    <div class="stats-grid">
+      <div class="stat-card"><div class="label">Health</div><div class="value ${hCls}" style="font-size:18px">${health}</div></div>
+      <div class="stat-card"><div class="label">OSDs</div><div class="value" style="color:var(--teal)">${osdUp}/${osds.length}</div><div class="sub">${osdIn} in cluster</div></div>
+      <div class="stat-card"><div class="label">Monitors</div><div class="value" style="color:var(--blue)">${mon.length}</div><div class="sub">quorum members</div></div>
+      <div class="stat-card"><div class="label">Placement Groups</div><div class="value" style="color:var(--green)">${pg.num_pgs||'—'}</div><div class="sub">${pg.num_pg_active||0} active</div></div>
+      <div class="stat-card"><div class="label">Data Used</div><div class="value" style="font-size:18px;color:var(--accent)">${fmtBytes(pg.bytes_used||0)}</div></div>
+      <div class="stat-card"><div class="label">Available</div><div class="value" style="font-size:18px;color:var(--green)">${fmtBytes(pg.bytes_avail||0)}</div></div>
+    </div>
+    ${s.health?.checks&&Object.keys(s.health.checks).length?`
+      <div class="section-header" style="margin-top:8px"><span class="section-title">Health Checks</span></div>
+      <div class="table-wrap"><table><thead><tr><th>Check</th><th>Severity</th><th>Summary</th></tr></thead>
+      <tbody>${Object.entries(s.health.checks).map(([k,v])=>`<tr>
+        <td><strong>${escHtml(k)}</strong></td>
+        <td><span class="badge ${v.severity==='HEALTH_WARN'?'paused':'stopped'}"><span class="badge-dot"></span>${escHtml(v.severity||'')}</span></td>
+        <td style="font-size:12px">${escHtml(v.summary?.message||'')}</td>
+      </tr>`).join('')}</tbody></table></div>`:''}
+    ${osds.length?`
+      <div class="section-header" style="margin-top:8px"><span class="section-title">OSDs (${osds.length})</span></div>
+      <div class="table-wrap scroll"><table><thead><tr><th>Name</th><th>Status</th><th>Host</th><th>Device Class</th><th>Weight</th></tr></thead>
+      <tbody>${osds.map(o=>`<tr>
+        <td><strong>${escHtml(o.name||String(o.id))}</strong></td>
+        <td>${statusBadge(o.status==='up'?'running':'stopped')}</td>
+        <td style="color:var(--muted)">${escHtml(o.host||'—')}</td>
+        <td style="color:var(--muted)">${escHtml(o.device_class||'—')}</td>
+        <td style="color:var(--muted)">${o.reweight!=null?o.reweight.toFixed(2):'—'}</td>
+      </tr>`).join('')}</tbody></table></div>`:''}
+    ${pools.length?`
+      <div class="section-header" style="margin-top:8px"><span class="section-title">Pools (${pools.length})</span></div>
+      <div class="table-wrap"><table><thead><tr><th>Pool</th><th>PGs</th><th>Size</th><th>Min Size</th><th>Used</th><th>% Used</th></tr></thead>
+      <tbody>${pools.map(p=>{
+        const pct=p.percent_used?p.percent_used.toFixed(1):'—';
+        return `<tr>
+          <td><strong>${escHtml(p.pool_name||String(p.pool))}</strong></td>
+          <td style="color:var(--muted)">${p.pg_num||'—'}</td>
+          <td style="color:var(--muted)">${p.size||'—'}</td>
+          <td style="color:var(--muted)">${p.min_size||'—'}</td>
+          <td>${fmtBytes(p.bytes_used||0)}</td>
+          <td><div class="gauge-wrap"><span style="min-width:36px;font-size:12px">${pct}%</span>
+            <div class="gauge-bar"><div class="gauge-fill ${gaugeClass(parseFloat(pct)||0)}" style="width:${Math.min(parseFloat(pct)||0,100)}%"></div></div>
+          </div></td>
+        </tr>`;}).join('')}</tbody></table></div>`:''}
+    ${mon.length?`
+      <div class="section-header" style="margin-top:8px"><span class="section-title">Monitors (${mon.length})</span></div>
+      <div class="table-wrap"><table><thead><tr><th>Name</th><th>Address</th></tr></thead>
+      <tbody>${mon.map(m=>`<tr>
+        <td><strong>${escHtml(m.name||'—')}</strong></td>
+        <td style="font-family:monospace;font-size:12px;color:var(--muted)">${escHtml(m.addr||'—')}</td>
+      </tr>`).join('')}</tbody></table></div>`:''}`;
 }
 
 // ── HIGH AVAILABILITY ─────────────────────────────────────
