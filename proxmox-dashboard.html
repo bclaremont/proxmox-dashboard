@@ -522,6 +522,10 @@
         <span class="sidebar-label-inner"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="4" rx="1"/><rect x="2" y="10" width="20" height="4" rx="1"/><rect x="2" y="17" width="20" height="4" rx="1"/></svg>Infrastructure</span>
         <span class="sidebar-chevron">▾</span>
       </div>
+      <div class="nav-item" data-view="drs" onclick="switchView('drs')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="16 12 12 8 8 12"/><line x1="12" y1="16" x2="12" y2="8"/></svg>
+        DRS
+      </div>
       <div class="nav-item" data-view="datacenter" onclick="switchView('datacenter')">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
         Datacenter
@@ -901,6 +905,20 @@
         </div>
       </div>
       <div id="sdn-content"><div class="empty">Loading…</div></div>
+    </div>
+
+    <!-- DRS — DYNAMIC RESOURCE SCHEDULING -->
+    <div id="view-drs" style="display:none">
+      <div class="section-header">
+        <span class="section-title">DRS — Dynamic Resource Scheduling</span>
+        <div style="display:flex;gap:6px;align-items:center">
+          <button class="btn small" onclick="openDRSSettingsModal()">⚙ Settings</button>
+          <button class="btn small warning" id="drs-dryrun-btn" onclick="toggleDRSDryRun()" title="Toggle dry-run mode">Dry Run: ON</button>
+          <button class="btn small primary" onclick="runDRSAnalysis()">▶ Analyse</button>
+          <button class="btn small success" id="drs-run-all-btn" onclick="runDRSAll()" style="display:none">⚡ Run All</button>
+        </div>
+      </div>
+      <div id="drs-content"><div class="empty">Click <strong>▶ Analyse</strong> to calculate cluster balance and get migration recommendations.</div></div>
     </div>
 
     <!-- DATACENTER MANAGEMENT -->
@@ -2373,7 +2391,7 @@ async function migrateVM(node, vmid, type, targetNode, online=false, withLocal=f
 
 function switchView(view) {
   expandSidebarSection(view); // auto-expand collapsed section if needed
-  const views=['connect','connections','worldmap','savedview','overview','vms','containers','nodes','tasks','syslog','storage','network','heatmap','isolib','sdn','datacenter','pools','ceph','ha','firewall','backups','users','certs','audit','clustergraphs','tfa','subscriptions','updates','pbs'];
+  const views=['connect','connections','worldmap','savedview','overview','vms','containers','nodes','tasks','syslog','storage','network','heatmap','isolib','sdn','drs','datacenter','pools','ceph','ha','firewall','backups','users','certs','audit','clustergraphs','tfa','subscriptions','updates','pbs'];
   views.forEach(v=>{
     const el=document.getElementById('view-'+v);
     if(el) el.style.display=v===view?'':'none';
@@ -9383,6 +9401,389 @@ function acToggleAuth() {
   const m = document.getElementById('ac-authtype').value;
   document.getElementById('ac-pw-group').style.display  = m==='password'?'':'none';
   document.getElementById('ac-tok-group').style.display = m==='token'?'':'none';
+}
+
+// ── DRS — DYNAMIC RESOURCE SCHEDULING ────────────────────
+// Analyses cluster resource imbalance across nodes and recommends
+// (or automatically executes) VM/CT migrations to restore balance.
+// Inspired by ProxLB and VMware DRS.
+
+let drsState = {
+  recommendations: [],
+  nodeScores:      [],
+  analysed:        false,
+};
+
+// ── Settings ──────────────────────────────────────────────
+function getDRSSettings() {
+  const defaults = {
+    cpuWeight:     60,    // % weight for CPU in balance score
+    memWeight:     40,    // % weight for RAM
+    diskWeight:    0,     // % weight for node disk (rootfs)
+    threshold:     10,    // imbalance % needed to trigger suggestion
+    minImprovement:5,     // min % improvement required to recommend
+    maxMigrations: 5,     // max recommendations per run
+    excludedVMs:   [],    // VMIDs excluded from DRS
+    dryRun:        true,  // default safe: preview only
+  };
+  try { return {...defaults,...JSON.parse(localStorage.getItem('pve-drs-settings')||'{}')}; }
+  catch(e) { return defaults; }
+}
+function saveDRSSettings(s) { localStorage.setItem('pve-drs-settings',JSON.stringify(s)); }
+
+function toggleDRSDryRun() {
+  const s=getDRSSettings(); s.dryRun=!s.dryRun; saveDRSSettings(s);
+  const btn=document.getElementById('drs-dryrun-btn');
+  if(btn){ btn.textContent=`Dry Run: ${s.dryRun?'ON':'OFF'}`;
+    btn.className=`btn small ${s.dryRun?'warning':'danger'}`; }
+}
+
+// ── Core Algorithm ────────────────────────────────────────
+
+function _drsScore(n, s) {
+  const cfg=getDRSSettings();
+  const total=cfg.cpuWeight+cfg.memWeight+cfg.diskWeight||100;
+  const cpu=n.cpu*100; const mem=n.mem; const disk=n.disk;
+  return (cpu*cfg.cpuWeight + mem*cfg.memWeight + disk*cfg.diskWeight)/total;
+}
+
+function _drsNodeInfo(nodeStatuses, vms) {
+  return nodeStatuses.map(n=>{
+    const s=n.statusData||{};
+    const cpu  = s.cpu?s.cpu*100:0;
+    const mem  = s.memory&&s.memory.total?(s.memory.used/s.memory.total)*100:0;
+    const disk = s.rootfs&&s.rootfs.total?(s.rootfs.used/s.rootfs.total)*100:0;
+    const freeMemMiB = s.memory?(s.memory.total-s.memory.used)/1048576:0;
+    const cfg=getDRSSettings();
+    const total=cfg.cpuWeight+cfg.memWeight+cfg.diskWeight||100;
+    const score=(cpu*cfg.cpuWeight+mem*cfg.memWeight+disk*cfg.diskWeight)/total;
+    return {
+      node:n.node, score, cpu, mem, disk, freeMemMiB,
+      totalMemMiB: s.memory?s.memory.total/1048576:0,
+      cpuCount: (s.cpuinfo&&s.cpuinfo.cpus)||4,
+      connId: n.connId||'',
+      vms: vms.filter(v=>v.node===n.node&&v.status==='running'),
+    };
+  });
+}
+
+function _stddev(arr) {
+  if(!arr.length) return 0;
+  const mean=arr.reduce((a,x)=>a+x,0)/arr.length;
+  return Math.sqrt(arr.map(x=>(x-mean)**2).reduce((a,x)=>a+x,0)/arr.length);
+}
+
+function _findMigrations(nodeInfos) {
+  const cfg    = getDRSSettings();
+  const scores = nodeInfos.map(n=>n.score);
+  const mean   = scores.reduce((a,x)=>a+x,0)/scores.length;
+  const thresh = cfg.threshold;
+  const excluded = new Set(cfg.excludedVMs.map(Number));
+
+  const over  = nodeInfos.filter(n=>n.score > mean+thresh).sort((a,b)=>b.score-a.score);
+  const under = nodeInfos.filter(n=>n.score < mean-thresh).sort((a,b)=>a.score-b.score);
+
+  const recs=[]; const moved=new Set();
+
+  for(const src of over) {
+    // Sort VMs on overloaded node by resource impact (largest first)
+    const candidates=[...src.vms].sort((a,b)=>{
+      const aScore=(a.cpu||0)*100+(a.mem&&a.maxmem?(a.mem/a.maxmem)*100:0);
+      const bScore=(b.cpu||0)*100+(b.mem&&b.maxmem?(b.mem/b.maxmem)*100:0);
+      return bScore-aScore;
+    });
+
+    for(const vm of candidates) {
+      if(moved.has(vm.vmid)) continue;
+      if(excluded.has(+vm.vmid)) continue;
+
+      const vmMemMiB = vm.maxmem?vm.maxmem/1048576:512;
+      const vmCpuPct = (vm.cpu||0)*100;
+
+      // Find best destination
+      let best=null, bestScore=Infinity;
+      for(const dst of under) {
+        if(dst.node===src.node) continue;
+        if(dst.freeMemMiB < vmMemMiB*1.1) continue; // need 10% headroom
+
+        // Simulate scores after migration
+        const srcAfter = src.score - vmCpuPct*0.6*0.01*(cfg.cpuWeight/(cfg.cpuWeight+cfg.memWeight||100));
+        const dstAfter = dst.score + vmCpuPct*0.6*0.01*(cfg.cpuWeight/(cfg.cpuWeight+cfg.memWeight||100));
+        const newImbalance = _stddev([
+          ...nodeInfos.filter(n=>n.node!==src.node&&n.node!==dst.node).map(n=>n.score),
+          srcAfter, dstAfter
+        ]);
+        if(newImbalance < bestScore) { bestScore=newImbalance; best=dst; }
+      }
+
+      if(!best) continue;
+      const improvement=src.score-mean; // how far over the mean src is
+      if(improvement < cfg.minImprovement) continue;
+
+      // Build reason string
+      const reasons=[];
+      if(src.cpu > mean+thresh*0.6) reasons.push(`CPU ${src.cpu.toFixed(0)}%`);
+      if(src.mem > mean+thresh*0.6) reasons.push(`RAM ${src.mem.toFixed(0)}%`);
+      if(!reasons.length) reasons.push(`score ${src.score.toFixed(0)}%`);
+
+      recs.push({
+        vmid:vm.vmid, name:vm.name||String(vm.vmid), type:vm.type,
+        fromNode:src.node, toNode:best.node, connId:vm.connId||'',
+        reason:reasons.join(', '),
+        improvement:improvement.toFixed(1),
+        vmMemMiB:vmMemMiB.toFixed(0),
+      });
+      moved.add(vm.vmid);
+      if(recs.length >= cfg.maxMigrations) break;
+    }
+    if(recs.length >= cfg.maxMigrations) break;
+  }
+  return recs;
+}
+
+// ── UI Render ─────────────────────────────────────────────
+
+function runDRSAnalysis() {
+  const el=document.getElementById('drs-content');
+  el.innerHTML='<div class="empty"><span class="loading"></span> Analysing cluster balance…</div>';
+
+  const nodeStatuses=allNodes();
+  const vms=allVMs().concat(allCTs());
+  if(!nodeStatuses.length) { el.innerHTML='<div class="empty">No node data — connect to a cluster first.</div>'; return; }
+
+  const nodeInfos=_drsNodeInfo(nodeStatuses,vms);
+  const scores=nodeInfos.map(n=>n.score);
+  const mean=scores.reduce((a,x)=>a+x,0)/scores.length;
+  const sd=_stddev(scores);
+  const imbalanceScore=Math.max(0,100-sd*4); // 0=chaos, 100=perfect
+  const recs=_findMigrations(nodeInfos);
+
+  drsState.recommendations=recs;
+  drsState.nodeScores=nodeInfos;
+  drsState.analysed=true;
+
+  const cfg=getDRSSettings();
+  const statusColor=imbalanceScore>85?'var(--green)':imbalanceScore>60?'var(--yellow)':'var(--red)';
+  const statusLabel=imbalanceScore>85?'Balanced':imbalanceScore>60?'Moderate imbalance':'High imbalance — action recommended';
+
+  // Update Run All button
+  const runAllBtn=document.getElementById('drs-run-all-btn');
+  if(runAllBtn) runAllBtn.style.display=recs.length?'':'none';
+
+  el.innerHTML=`
+    <!-- Balance summary -->
+    <div style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);padding:16px 20px;margin-bottom:16px;display:flex;align-items:center;gap:20px;flex-wrap:wrap">
+      <div>
+        <div style="font-size:11px;text-transform:uppercase;letter-spacing:1px;color:var(--muted);margin-bottom:4px">Cluster Balance Score</div>
+        <div style="font-size:38px;font-weight:700;color:${statusColor};line-height:1">${imbalanceScore.toFixed(0)}<span style="font-size:18px">/100</span></div>
+      </div>
+      <div style="flex:1">
+        <div class="gauge-bar" style="height:14px;border-radius:7px;margin-bottom:6px">
+          <div class="gauge-fill ${imbalanceScore>85?'low':imbalanceScore>60?'mid':'high'}" style="width:${imbalanceScore}%;height:100%;border-radius:7px"></div>
+        </div>
+        <div style="color:${statusColor};font-weight:600">${statusLabel}</div>
+        <div style="font-size:12px;color:var(--muted);margin-top:2px">
+          Mean node load: ${mean.toFixed(1)}% &nbsp;·&nbsp; Std deviation: ${sd.toFixed(1)}% &nbsp;·&nbsp;
+          Weights: CPU ${cfg.cpuWeight}% / RAM ${cfg.memWeight}% / Disk ${cfg.diskWeight}%
+        </div>
+      </div>
+      ${cfg.dryRun?`<div style="background:rgba(210,153,34,.1);border:1px solid rgba(210,153,34,.3);border-radius:var(--radius);padding:8px 12px;font-size:12px;color:var(--yellow)">🔒 Dry Run Mode — no migrations will be executed</div>`:'<div style="background:rgba(248,81,73,.1);border:1px solid rgba(248,81,73,.3);border-radius:var(--radius);padding:8px 12px;font-size:12px;color:var(--red)">⚡ Live Mode — migrations will execute</div>'}
+    </div>
+
+    <!-- Node utilisation grid -->
+    <div class="section-header" style="margin-bottom:10px"><span class="section-title">Node Utilisation</span></div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:10px;margin-bottom:20px">
+      ${nodeInfos.map(n=>{
+        const over=n.score>mean+cfg.threshold;
+        const under=n.score<mean-cfg.threshold;
+        const border=over?'var(--red)':under?'var(--blue)':'var(--green)';
+        const label=over?'OVER':under?'UNDER':'OK';
+        const labelCol=over?'var(--red)':under?'var(--blue)':'var(--green)';
+        return `<div style="background:var(--bg2);border:1px solid var(--border);border-top:3px solid ${border};border-radius:var(--radius);padding:12px">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+            <strong style="font-size:13px">${escHtml(n.node)}</strong>
+            <span style="font-size:10px;font-weight:700;color:${labelCol}">${label}</span>
+          </div>
+          <div style="font-size:11px;color:var(--muted);margin-bottom:2px">CPU ${n.cpu.toFixed(1)}%</div>
+          <div class="gauge-bar" style="margin-bottom:6px"><div class="gauge-fill ${gaugeClass(n.cpu)}" style="width:${Math.min(n.cpu,100)}%"></div></div>
+          <div style="font-size:11px;color:var(--muted);margin-bottom:2px">RAM ${n.mem.toFixed(1)}%</div>
+          <div class="gauge-bar" style="margin-bottom:6px"><div class="gauge-fill ${gaugeClass(n.mem)}" style="width:${Math.min(n.mem,100)}%"></div></div>
+          <div style="font-size:11px;color:var(--muted);margin-top:4px">
+            Score: <strong style="color:${over?'var(--red)':under?'var(--blue)':'var(--text)'}">${n.score.toFixed(1)}%</strong>
+            &nbsp;·&nbsp; ${n.vms.length} VM${n.vms.length!==1?'s':''} running
+          </div>
+        </div>`;}).join('')}
+    </div>
+
+    <!-- Recommendations -->
+    <div class="section-header" style="margin-bottom:10px">
+      <span class="section-title">Migration Recommendations (${recs.length})</span>
+      ${recs.length?`<button class="btn small success" onclick="runDRSAll()">⚡ Execute All ${cfg.dryRun?'(Dry Run)':''}</button>`:''}
+    </div>
+    ${recs.length?`
+    <div class="table-wrap" style="margin-bottom:16px"><table>
+      <thead><tr><th>VM / CT</th><th>From Node</th><th>To Node</th><th>Reason</th><th>Memory</th><th>Improvement</th><th>Actions</th></tr></thead>
+      <tbody id="drs-recs-body">${recs.map((r,i)=>`<tr id="drs-rec-${i}">
+        <td>
+          <span class="type-chip ${r.type==='vm'?'vm':'ct'}">${r.type.toUpperCase()}</span>
+          <strong style="margin-left:6px">${escHtml(r.name)}</strong>
+          <span style="font-size:11px;color:var(--muted);margin-left:4px">${r.vmid}</span>
+        </td>
+        <td style="color:var(--red)">${escHtml(r.fromNode)}</td>
+        <td style="color:var(--green)">→ ${escHtml(r.toNode)}</td>
+        <td style="font-size:12px;color:var(--muted)">${escHtml(r.reason)}</td>
+        <td style="font-size:12px;color:var(--muted)">${r.vmMemMiB} MiB</td>
+        <td><span style="color:var(--green);font-weight:600">−${r.improvement}%</span></td>
+        <td onclick="event.stopPropagation()"><div class="actions-row">
+          <button class="btn small success" onclick="executeDRSMigration(${i})">
+            ${cfg.dryRun?'🔍 Preview':'⚡ Execute'}
+          </button>
+          <button class="btn small warning" onclick="skipDRSRecommendation(${i})" title="Skip this recommendation">✕ Skip</button>
+        </div></td>
+      </tr>`).join('')}</tbody>
+    </table></div>`
+    :`<div style="background:rgba(63,185,80,.08);border:1px solid rgba(63,185,80,.25);border-radius:var(--radius);padding:14px 18px;font-size:13px;color:var(--green);margin-bottom:16px">
+      ✓ Cluster is well-balanced — no migrations recommended (threshold: ±${cfg.threshold}%)
+    </div>`}
+
+    <!-- All VMs on each node (for context) -->
+    <div class="section-header" style="margin-bottom:8px"><span class="section-title">VM Distribution by Node</span></div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:10px">
+      ${nodeInfos.map(n=>`
+        <div style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);padding:12px">
+          <div style="font-weight:700;margin-bottom:8px;font-size:13px">${escHtml(n.node)} — ${n.vms.length} VMs running</div>
+          ${n.vms.length?n.vms.map(v=>{
+            const cpuPct=v.cpu?(v.cpu*100).toFixed(0):0;
+            const memPct=v.mem&&v.maxmem?((v.mem/v.maxmem)*100).toFixed(0):0;
+            const isRec=recs.some(r=>r.vmid===v.vmid&&r.fromNode===n.node);
+            return `<div style="padding:5px 0;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px">
+              <span class="type-chip ${v.type==='vm'?'vm':'ct'}" style="font-size:9px">${v.type.toUpperCase()}</span>
+              <span style="flex:1;font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap${isRec?';color:var(--yellow)':''}">${escHtml(v.name||String(v.vmid))}</span>
+              <span style="font-size:10px;color:var(--muted)">${cpuPct}% CPU</span>
+              <span style="font-size:10px;color:var(--muted)">${memPct}% RAM</span>
+              ${isRec?'<span style="font-size:9px;color:var(--yellow)">→ move</span>':''}
+            </div>`;}).join(''):'<div style="font-size:12px;color:var(--muted)">No running VMs</div>'}
+        </div>`).join('')}
+    </div>`;
+}
+
+async function executeDRSMigration(idx) {
+  const rec = drsState.recommendations[idx];
+  if(!rec) return;
+  const cfg=getDRSSettings();
+  if(cfg.dryRun) {
+    toast(`DRY RUN: Would migrate ${rec.type.toUpperCase()} ${rec.vmid} (${rec.name}) from ${rec.fromNode} → ${rec.toNode}`, 'info');
+    return;
+  }
+  const row=document.getElementById(`drs-rec-${idx}`);
+  if(row) row.style.opacity='0.4';
+  try {
+    const conn=resolveConn(rec.connId);
+    const ep=rec.type==='vm'?'qemu':'lxc';
+    const params={target:rec.toNode};
+    if(rec.type==='vm'){params.online=1;params['with-local-disks']=1;}
+    let res;
+    if(conn)res=await connPost(conn,`/api2/json/nodes/${rec.fromNode}/${ep}/${rec.vmid}/migrate`,params);
+    else res=await pvePost(`/api2/json/nodes/${rec.fromNode}/${ep}/${rec.vmid}/migrate`,params);
+    const upid=res&&res.data;
+    if(upid&&typeof upid==='string') tmRegister(upid,rec.fromNode,`DRS: ${rec.type.toUpperCase()} ${rec.vmid} → ${rec.toNode}`);
+    toast(`Migration started: ${rec.name} → ${rec.toNode}`,'success');
+    skipDRSRecommendation(idx);
+  } catch(e) {
+    if(row) row.style.opacity='1';
+    toast(`Migration failed: ${e.message}`,'error');
+  }
+}
+
+function skipDRSRecommendation(idx) {
+  const row=document.getElementById(`drs-rec-${idx}`);
+  if(row) row.style.display='none';
+}
+
+async function runDRSAll() {
+  const cfg=getDRSSettings();
+  const recs=drsState.recommendations;
+  if(!recs.length) return toast('No recommendations to execute','info');
+  if(cfg.dryRun) {
+    toast(`DRY RUN: Would execute ${recs.length} migration(s): ${recs.map(r=>`${r.name} → ${r.toNode}`).join(', ')}`, 'info');
+    return;
+  }
+  if(!confirm(`Execute ${recs.length} migration(s)? This will move VMs between nodes.`)) return;
+  for(let i=0;i<recs.length;i++) {
+    await executeDRSMigration(i);
+    await new Promise(r=>setTimeout(r,500));
+  }
+}
+
+// ── DRS Settings Modal ────────────────────────────────────
+function openDRSSettingsModal() {
+  const cfg=getDRSSettings();
+  document.getElementById('modal-title').textContent='DRS Settings';
+  document.getElementById('modal-body').innerHTML=`
+    <div class="section-title" style="font-size:11px;margin-bottom:10px">Balance Weights (must sum to 100)</div>
+    <div class="create-vm-grid">
+      <div class="form-group"><label>CPU WEIGHT (%)</label>
+        <input id="ds-cpu" type="number" value="${cfg.cpuWeight}" min="0" max="100" oninput="drsWeightUpdate()"/>
+      </div>
+      <div class="form-group"><label>MEMORY WEIGHT (%)</label>
+        <input id="ds-mem" type="number" value="${cfg.memWeight}" min="0" max="100" oninput="drsWeightUpdate()"/>
+      </div>
+    </div>
+    <div class="create-vm-grid">
+      <div class="form-group"><label>DISK WEIGHT (node rootfs, %)</label>
+        <input id="ds-disk" type="number" value="${cfg.diskWeight}" min="0" max="100" oninput="drsWeightUpdate()"/>
+      </div>
+      <div class="form-group"><label style="display:flex;align-items:center;gap:4px">Total <span id="ds-total" style="color:${cfg.cpuWeight+cfg.memWeight+cfg.diskWeight===100?'var(--green)':'var(--red)'}">= ${cfg.cpuWeight+cfg.memWeight+cfg.diskWeight}</span></label>
+        <div style="font-size:11px;color:var(--muted);margin-top:4px">Must equal 100. DRS uses these weights to calculate each node's load score.</div>
+      </div>
+    </div>
+
+    <div class="section-title" style="font-size:11px;margin:14px 0 10px">Thresholds</div>
+    <div class="create-vm-grid">
+      <div class="form-group"><label>IMBALANCE THRESHOLD (% above/below mean)</label>
+        <input id="ds-thresh" type="number" value="${cfg.threshold}" min="1" max="50"/>
+        <div style="font-size:11px;color:var(--muted);margin-top:3px">Nodes further than this from the mean trigger recommendations. Lower = more aggressive.</div>
+      </div>
+      <div class="form-group"><label>MIN IMPROVEMENT (% needed to recommend)</label>
+        <input id="ds-minimprove" type="number" value="${cfg.minImprovement}" min="1" max="30"/>
+      </div>
+    </div>
+    <div class="form-group"><label>MAX MIGRATIONS PER RUN</label>
+      <input id="ds-maxmig" type="number" value="${cfg.maxMigrations}" min="1" max="20" style="width:100px"/>
+    </div>
+
+    <div class="section-title" style="font-size:11px;margin:14px 0 10px">Exclusions</div>
+    <div class="form-group"><label>EXCLUDED VM/CT IDs (comma-separated)</label>
+      <input id="ds-excl" value="${cfg.excludedVMs.join(',')}" placeholder="100,101,205"/>
+      <div style="font-size:11px;color:var(--muted);margin-top:3px">These VMs/CTs will never be suggested for migration by DRS.</div>
+    </div>`;
+
+  modalCallback=()=>{
+    const cpu=parseInt(document.getElementById('ds-cpu')?.value||'60');
+    const mem=parseInt(document.getElementById('ds-mem')?.value||'40');
+    const disk=parseInt(document.getElementById('ds-disk')?.value||'0');
+    if(cpu+mem+disk!==100) return toast('Weights must sum to 100','error');
+    const excl=(document.getElementById('ds-excl')?.value||'').split(',').map(x=>parseInt(x.trim())).filter(Boolean);
+    saveDRSSettings({
+      cpuWeight:cpu, memWeight:mem, diskWeight:disk,
+      threshold:parseInt(document.getElementById('ds-thresh')?.value||'10'),
+      minImprovement:parseInt(document.getElementById('ds-minimprove')?.value||'5'),
+      maxMigrations:parseInt(document.getElementById('ds-maxmig')?.value||'5'),
+      excludedVMs:excl,
+      dryRun:getDRSSettings().dryRun,
+    });
+    toast('DRS settings saved','success');
+    // Update dry-run button text
+    const btn=document.getElementById('drs-dryrun-btn');
+    if(btn){ const s=getDRSSettings(); btn.textContent=`Dry Run: ${s.dryRun?'ON':'OFF'}`; btn.className=`btn small ${s.dryRun?'warning':'danger'}`; }
+  };
+  document.getElementById('modal-bg').classList.add('open');
+}
+
+function drsWeightUpdate() {
+  const t=(parseInt(document.getElementById('ds-cpu')?.value||0))+(parseInt(document.getElementById('ds-mem')?.value||0))+(parseInt(document.getElementById('ds-disk')?.value||0));
+  const el=document.getElementById('ds-total');
+  if(el){el.textContent=`= ${t}`;el.style.color=t===100?'var(--green)':'var(--red)';}
 }
 
 // ── DATACENTER MANAGEMENT ────────────────────────────────
