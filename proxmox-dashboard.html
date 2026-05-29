@@ -473,6 +473,10 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
         Cluster Graphs
       </div>
+      <div class="nav-item" data-view="sso" onclick="switchView('sso')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/></svg>
+        SSO &amp; Auth Realms
+      </div>
       <div class="nav-item" data-view="subscriptions" onclick="switchView('subscriptions')">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
         Subscriptions
@@ -553,6 +557,19 @@
         </div>
       </div>
       <div id="sv-content"></div>
+    </div>
+
+    <!-- SSO & AUTH REALMS -->
+    <div id="view-sso" style="display:none">
+      <div class="section-header">
+        <span class="section-title">SSO &amp; Authentication Realms</span>
+        <div style="display:flex;gap:6px">
+          <select class="conn-sel" id="sso-conn" style="width:140px;padding:5px 8px;font-size:13px" onchange="loadSSO()"><option value="">Primary</option></select>
+          <button class="btn small primary" onclick="openCreateRealmModal()">+ Add Realm</button>
+          <button class="btn small" onclick="loadSSO()">Refresh</button>
+        </div>
+      </div>
+      <div id="sso-content"><div class="empty">Loading…</div></div>
     </div>
 
     <!-- SUBSCRIPTIONS -->
@@ -1877,7 +1894,7 @@ async function migrateVM(node, vmid, type, targetNode, online=false, withLocal=f
 // ── RENDERING ─────────────────────────────────────────────
 
 function switchView(view) {
-  const views=['connect','connections','savedview','overview','vms','containers','nodes','tasks','syslog','storage','network','heatmap','isolib','sdn','pools','ceph','ha','firewall','backups','users','certs','audit','clustergraphs','subscriptions','updates','pbs'];
+  const views=['connect','connections','savedview','overview','vms','containers','nodes','tasks','syslog','storage','network','heatmap','isolib','sdn','pools','ceph','ha','firewall','backups','users','certs','audit','clustergraphs','sso','subscriptions','updates','pbs'];
   views.forEach(v=>{
     const el=document.getElementById('view-'+v);
     if(el) el.style.display=v===view?'':'none';
@@ -1923,6 +1940,7 @@ function switchView(view) {
   if(view==='sdn') loadSDN();
   if(view==='connections') renderConnections();
   if(view==='subscriptions') loadSubscriptions();
+  if(view==='sso') loadSSO();
   if(view==='savedview') renderSavedView();
   if(view==='pools') loadPools();
   if(view!=='connect') renderCurrentView();
@@ -6657,6 +6675,336 @@ function confirmDeletePool(poolid, connId) {
       if (activePool && activePool.poolid===poolid) activePool=null;
       toast(`Pool "${poolid}" deleted`, 'success');
       setTimeout(loadPools, 800);
+    } catch(e) { toast('Delete failed: '+e.message, 'error'); }
+  };
+  document.getElementById('modal-bg').classList.add('open');
+}
+
+// ── SSO & AUTH REALMS ─────────────────────────────────────
+// GET    /api2/json/access/domains           — list realms
+// POST   /api2/json/access/domains           — create realm
+// GET    /api2/json/access/domains/{realm}   — realm details
+// PUT    /api2/json/access/domains/{realm}   — update realm
+// DELETE /api2/json/access/domains/{realm}   — delete realm
+// POST   /api2/json/access/domains/{realm}/sync — sync LDAP/AD users
+// Official: https://pve.proxmox.com/pve-docs/api-viewer/#/access/domains
+
+const REALM_BUILTIN = ['pam','pve'];
+
+const REALM_TYPE_LABELS = {
+  pam:'PAM', pve:'Proxmox VE', ldap:'LDAP', ad:'Active Directory', openid:'OpenID Connect'
+};
+const REALM_TYPE_COLORS = {
+  pam:'var(--muted)', pve:'var(--accent)', ldap:'var(--blue)', ad:'var(--teal)', openid:'var(--purple)'
+};
+
+async function loadSSO() {
+  const conn = getViewConn('sso-conn');
+  const get = conn ? (p=>connGet(conn,p)) : pveGet;
+  const el = document.getElementById('sso-content');
+  el.innerHTML = '<div class="empty"><span class="loading"></span> Loading authentication realms…</div>';
+  try {
+    const d = await get('/api2/json/access/domains');
+    const realms = d.data || [];
+    renderSSO(realms, conn);
+  } catch(e) {
+    el.innerHTML = `<div class="empty">Failed to load realms: ${escHtml(e.message)}</div>`;
+  }
+}
+
+function renderSSO(realms, conn) {
+  const el = document.getElementById('sso-content');
+  const connId = conn ? (extraConns.find(c=>c===conn)||{}).id || '' : '';
+
+  const byType = {};
+  realms.forEach(r => { const t=r.type||'other'; (byType[t]||(byType[t]=[])).push(r); });
+
+  const ldapCount   = (byType.ldap||[]).length;
+  const adCount     = (byType.ad||[]).length;
+  const openidCount = (byType.openid||[]).length;
+  const customCount = ldapCount + adCount + openidCount;
+
+  let html = `
+    <div class="stats-grid" style="margin-bottom:16px">
+      <div class="stat-card accent-blue"><div class="label">Total Realms</div><div class="value">${realms.length}</div><div class="sub">${customCount} custom</div></div>
+      <div class="stat-card accent-blue"><div class="label">LDAP</div><div class="value">${ldapCount}</div></div>
+      <div class="stat-card accent-teal"><div class="label">Active Directory</div><div class="value">${adCount}</div></div>
+      <div class="stat-card accent-purple"><div class="label">OpenID Connect</div><div class="value">${openidCount}</div></div>
+    </div>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Realm ID</th><th>Type</th><th>Server / URL</th><th>Default</th><th>Comment</th><th>Actions</th></tr></thead>
+      <tbody>`;
+
+  realms.forEach(r => {
+    const isBuiltin = REALM_BUILTIN.includes(r.realm);
+    const typeLabel = REALM_TYPE_LABELS[r.type] || r.type || '—';
+    const typeColor = REALM_TYPE_COLORS[r.type] || 'var(--muted)';
+
+    // Server / URL field varies by type
+    let serverStr = '—';
+    if (r.type==='ldap'||r.type==='ad') {
+      serverStr = r.server1 || '—';
+      if (r.port) serverStr += ':'+r.port;
+      if (r.secure) serverStr += ' (SSL)';
+    } else if (r.type==='openid') {
+      serverStr = r['issuer-url'] || '—';
+    }
+
+    const defaultBadge = r.default
+      ? '<span class="badge ok" style="font-size:10px"><span class="badge-dot"></span>default</span>'
+      : '<span style="font-size:11px;color:var(--muted)">—</span>';
+
+    html += `<tr>
+      <td><strong>${escHtml(r.realm)}</strong></td>
+      <td><span style="color:${typeColor};font-size:12px;font-weight:600">${typeLabel}</span>
+          ${isBuiltin?'<span style="font-size:10px;color:var(--muted);margin-left:5px">built-in</span>':''}</td>
+      <td style="font-family:monospace;font-size:12px;color:var(--muted)">${escHtml(serverStr)}</td>
+      <td>${defaultBadge}</td>
+      <td style="font-size:12px;color:var(--muted)">${escHtml(r.comment||'—')}</td>
+      <td onclick="event.stopPropagation()">
+        <div class="actions-row">
+          ${!isBuiltin ? `<button class="btn small" onclick="openEditRealmModal(${JSON.stringify(r).replace(/"/g,'&quot;')},'${connId}')">✎ Edit</button>` : ''}
+          ${(r.type==='ldap'||r.type==='ad') ? `<button class="btn small success" onclick="openSyncRealmModal('${escHtml(r.realm)}','${connId}')">↻ Sync</button>` : ''}
+          ${!isBuiltin ? `<button class="btn small danger" onclick="confirmDeleteRealm('${escHtml(r.realm)}','${connId}')">Delete</button>` : ''}
+          ${isBuiltin ? '<span style="font-size:11px;color:var(--muted)">read-only</span>' : ''}
+        </div>
+      </td>
+    </tr>`;
+  });
+
+  if (!realms.length) html += '<tr><td colspan="6" class="empty">No realms found</td></tr>';
+
+  html += `</tbody></table></div>
+    <div style="margin-top:14px;padding:10px 14px;background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius);font-size:12px;color:var(--muted)">
+      <strong style="color:var(--text)">pam</strong> — Linux system accounts &nbsp;·&nbsp;
+      <strong style="color:var(--text)">pve</strong> — Proxmox internal accounts &nbsp;·&nbsp;
+      <strong style="color:var(--text)">ldap/ad</strong> — directory sync &nbsp;·&nbsp;
+      <strong style="color:var(--text)">openid</strong> — SSO via OAuth2/OIDC provider (Google, Azure, Keycloak, etc.)
+    </div>`;
+
+  el.innerHTML = html;
+}
+
+function _realmTypeFields(type, r) {
+  r = r || {};
+  if (type==='ldap') return `
+    <div class="create-vm-grid">
+      <div class="form-group"><label>SERVER 1</label><input id="rl-server1" value="${escHtml(r.server1||'')}" placeholder="ldap.example.com"/></div>
+      <div class="form-group"><label>SERVER 2 (optional)</label><input id="rl-server2" value="${escHtml(r.server2||'')}" placeholder="ldap2.example.com"/></div>
+    </div>
+    <div class="create-vm-grid">
+      <div class="form-group"><label>PORT</label><input id="rl-port" type="number" value="${r.port||389}" placeholder="389"/></div>
+      <div class="form-group" style="display:flex;align-items:center;padding-top:22px">
+        <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer">
+          <input type="checkbox" id="rl-secure"${r.secure?' checked':''} style="width:auto;height:auto;padding:0;margin:0"> Use SSL/TLS (LDAPS)
+        </label>
+      </div>
+    </div>
+    <div class="form-group"><label>BASE DN</label><input id="rl-base-dn" value="${escHtml(r.base_dn||r['base-dn']||'')}" placeholder="dc=example,dc=com"/></div>
+    <div class="form-group"><label>USER ATTRIBUTE</label><input id="rl-user-attr" value="${escHtml(r.user_attr||r['user-attr']||'uid')}" placeholder="uid"/></div>
+    <div class="create-vm-grid">
+      <div class="form-group"><label>BIND DN (optional)</label><input id="rl-bind-dn" value="${escHtml(r.bind_dn||r['bind-dn']||'')}" placeholder="cn=reader,dc=example,dc=com"/></div>
+      <div class="form-group"><label>BIND PASSWORD</label><input id="rl-bind-pw" type="password" placeholder="leave blank to keep current"/></div>
+    </div>
+    <div class="form-group"><label>FILTER (optional)</label><input id="rl-filter" value="${escHtml(r.filter||'')}" placeholder="e.g. (objectClass=posixAccount)"/></div>`;
+
+  if (type==='ad') return `
+    <div class="create-vm-grid">
+      <div class="form-group"><label>DOMAIN (Windows domain)</label><input id="rl-domain" value="${escHtml(r.domain||'')}" placeholder="CORP.EXAMPLE.COM"/></div>
+      <div class="form-group"><label>SERVER 1</label><input id="rl-server1" value="${escHtml(r.server1||'')}" placeholder="dc.example.com"/></div>
+    </div>
+    <div class="create-vm-grid">
+      <div class="form-group"><label>PORT</label><input id="rl-port" type="number" value="${r.port||389}" placeholder="389"/></div>
+      <div class="form-group" style="display:flex;align-items:center;padding-top:22px">
+        <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer">
+          <input type="checkbox" id="rl-secure"${r.secure?' checked':''} style="width:auto;height:auto;padding:0;margin:0"> Use SSL/TLS
+        </label>
+      </div>
+    </div>
+    <div class="create-vm-grid">
+      <div class="form-group"><label>SERVER 2 (optional)</label><input id="rl-server2" value="${escHtml(r.server2||'')}" placeholder="dc2.example.com"/></div>
+    </div>`;
+
+  if (type==='openid') return `
+    <div class="form-group"><label>ISSUER URL</label><input id="rl-issuer" value="${escHtml(r['issuer-url']||'')}" placeholder="https://accounts.google.com"/></div>
+    <div class="create-vm-grid">
+      <div class="form-group"><label>CLIENT ID</label><input id="rl-client-id" value="${escHtml(r['client-id']||'')}" placeholder="your-client-id"/></div>
+      <div class="form-group"><label>CLIENT SECRET</label><input id="rl-client-key" type="password" placeholder="leave blank to keep current"/></div>
+    </div>
+    <div class="create-vm-grid">
+      <div class="form-group"><label>USERNAME CLAIM</label>
+        <select id="rl-username-claim">
+          <option value="sub"${(r['username-claim']||'sub')==='sub'?' selected':''}>sub — subject (default)</option>
+          <option value="email"${r['username-claim']==='email'?' selected':''}>email</option>
+          <option value="username"${r['username-claim']==='username'?' selected':''}>username</option>
+          <option value="name"${r['username-claim']==='name'?' selected':''}>name</option>
+        </select>
+      </div>
+      <div class="form-group"><label>SCOPES (space-separated)</label>
+        <input id="rl-scopes" value="${escHtml(r.scopes||'email profile')}" placeholder="email profile"/>
+      </div>
+    </div>
+    <div style="background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius);padding:9px 12px;font-size:11px;color:var(--muted);margin-top:4px">
+      Redirect URI to configure in your provider:
+      <code style="color:var(--text)">${PVE.host.replace(':8080',':8006')}/api2/json/access/openid/auth-url</code>
+    </div>`;
+
+  return '';
+}
+
+function _gatherRealmParams(type, existingRealm) {
+  const g = id => { const el=document.getElementById(id); if(!el) return ''; return el.type==='checkbox'?el.checked:el.value; };
+  const params = {};
+  if (type==='ldap') {
+    const s1=g('rl-server1'); if(s1) params.server1=s1;
+    const s2=g('rl-server2'); if(s2) params.server2=s2;
+    const port=g('rl-port'); if(port) params.port=parseInt(port);
+    params.secure=g('rl-secure')?1:0;
+    const bd=g('rl-base-dn'); if(bd) params.base_dn=bd;
+    const ua=g('rl-user-attr')||'uid'; params.user_attr=ua;
+    const bdn=g('rl-bind-dn'); if(bdn) params.bind_dn=bdn;
+    const bpw=g('rl-bind-pw'); if(bpw) params.password=bpw;
+    const flt=g('rl-filter'); if(flt) params.filter=flt;
+  } else if (type==='ad') {
+    const dom=g('rl-domain'); if(dom) params.domain=dom;
+    const s1=g('rl-server1'); if(s1) params.server1=s1;
+    const s2=g('rl-server2'); if(s2) params.server2=s2;
+    const port=g('rl-port'); if(port) params.port=parseInt(port);
+    params.secure=g('rl-secure')?1:0;
+  } else if (type==='openid') {
+    const iss=g('rl-issuer'); if(iss) params['issuer-url']=iss;
+    const cid=g('rl-client-id'); if(cid) params['client-id']=cid;
+    const ckey=g('rl-client-key'); if(ckey) params['client-key']=ckey;
+    params['username-claim']=g('rl-username-claim')||'sub';
+    const sc=g('rl-scopes'); if(sc) params.scopes=sc;
+  }
+  return params;
+}
+
+function openCreateRealmModal() {
+  document.getElementById('modal-title').textContent = 'Add Authentication Realm';
+  document.getElementById('modal-body').innerHTML = `
+    <div class="create-vm-grid">
+      <div class="form-group"><label>REALM ID</label>
+        <input id="rl-realm" placeholder="e.g. corp-ldap, google-sso"/>
+      </div>
+      <div class="form-group"><label>TYPE</label>
+        <select id="rl-type" onchange="realmTypeChanged()">
+          <option value="ldap">LDAP</option>
+          <option value="ad">Active Directory</option>
+          <option value="openid">OpenID Connect (SSO)</option>
+        </select>
+      </div>
+    </div>
+    <div class="form-group"><label>COMMENT (optional)</label>
+      <input id="rl-comment" placeholder="Description"/>
+    </div>
+    <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;margin-bottom:14px">
+      <input type="checkbox" id="rl-default" style="width:auto;height:auto;padding:0;margin:0"> Set as default login realm
+    </label>
+    <div id="rl-type-fields">${_realmTypeFields('ldap')}</div>`;
+  modalCallback = async () => {
+    const realm  = document.getElementById('rl-realm').value.trim();
+    const type   = document.getElementById('rl-type').value;
+    const comment= document.getElementById('rl-comment').value.trim();
+    const isDefault = document.getElementById('rl-default').checked;
+    if (!realm) return toast('Enter a realm ID', 'error');
+    const conn = getViewConn('sso-conn');
+    const post = conn ? (p,d)=>connPost(conn,p,d) : pvePost;
+    const params = { realm, type, ...(_gatherRealmParams(type)) };
+    if (comment) params.comment = comment;
+    if (isDefault) params.default = 1;
+    try {
+      await post('/api2/json/access/domains', params);
+      toast(`Realm "${realm}" created`, 'success');
+      setTimeout(loadSSO, 800);
+    } catch(e) { toast('Create realm failed: '+e.message, 'error'); }
+  };
+  document.getElementById('modal-bg').classList.add('open');
+}
+
+function realmTypeChanged() {
+  const type = (document.getElementById('rl-type')||{}).value;
+  const el = document.getElementById('rl-type-fields');
+  if (el) el.innerHTML = _realmTypeFields(type);
+}
+
+function openEditRealmModal(r, connId) {
+  document.getElementById('modal-title').textContent = `Edit Realm — ${r.realm}`;
+  document.getElementById('modal-body').innerHTML = `
+    <div class="form-group"><label>COMMENT</label>
+      <input id="rl-comment" value="${escHtml(r.comment||'')}" placeholder="Description"/>
+    </div>
+    <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;margin-bottom:14px">
+      <input type="checkbox" id="rl-default"${r.default?' checked':''} style="width:auto;height:auto;padding:0;margin:0"> Default login realm
+    </label>
+    <div id="rl-type-fields">${_realmTypeFields(r.type, r)}</div>`;
+  modalCallback = async () => {
+    const conn = resolveConn(connId);
+    const put = conn
+      ? async (path,data) => { const h=connHeaders(conn,{'Content-Type':'application/x-www-form-urlencoded'}); const body=Object.entries(data).map(([k,v])=>`${encodeURIComponent(k)}=${encodeURIComponent(v)}`).join('&'); const res=await fetch(conn.host+path,{method:'PUT',headers:h,body}); if(!res.ok){const t=await res.text();throw new Error(`HTTP ${res.status}: ${t}`);}return res.json(); }
+      : pvePut;
+    const params = { ..._gatherRealmParams(r.type, r) };
+    const comment = document.getElementById('rl-comment').value.trim();
+    if (comment!==undefined) params.comment = comment;
+    if (document.getElementById('rl-default').checked) params.default = 1;
+    try {
+      await put(`/api2/json/access/domains/${r.realm}`, params);
+      toast(`Realm "${r.realm}" updated`, 'success');
+      setTimeout(loadSSO, 800);
+    } catch(e) { toast('Update failed: '+e.message, 'error'); }
+  };
+  document.getElementById('modal-bg').classList.add('open');
+}
+
+function openSyncRealmModal(realm, connId) {
+  document.getElementById('modal-title').textContent = `Sync Realm — ${realm}`;
+  document.getElementById('modal-body').innerHTML = `
+    <p style="color:var(--muted);font-size:13px;margin-bottom:14px">Sync users and groups from the LDAP/AD directory into Proxmox.</p>
+    <div style="display:flex;flex-direction:column;gap:10px">
+      <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer">
+        <input type="checkbox" id="sync-enable-new" checked style="width:auto;height:auto;padding:0;margin:0"> Enable newly synced users (allow them to log in)
+      </label>
+      <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer">
+        <input type="checkbox" id="sync-full" style="width:auto;height:auto;padding:0;margin:0"> Full sync — also update existing users' details
+      </label>
+      <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer">
+        <input type="checkbox" id="sync-purge" style="width:auto;height:auto;padding:0;margin:0"> Purge — remove users no longer in directory
+        <span style="color:var(--red);font-size:11px">(use with care)</span>
+      </label>
+      <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer">
+        <input type="checkbox" id="sync-dryrun" style="width:auto;height:auto;padding:0;margin:0"> Dry run — preview only, make no changes
+      </label>
+    </div>`;
+  modalCallback = async () => {
+    const conn = resolveConn(connId);
+    const post = conn ? (p,d)=>connPost(conn,p,d) : pvePost;
+    const params = {};
+    if (document.getElementById('sync-enable-new').checked) params['enable-new'] = 1;
+    if (document.getElementById('sync-full').checked)       params.full           = 1;
+    if (document.getElementById('sync-purge').checked)      params.purge          = 1;
+    if (document.getElementById('sync-dryrun').checked)     params['dry-run']     = 1;
+    try {
+      await post(`/api2/json/access/domains/${realm}/sync`, params);
+      toast(`Sync started for realm "${realm}"`, 'success');
+      setTimeout(loadSSO, 1500);
+    } catch(e) { toast('Sync failed: '+e.message, 'error'); }
+  };
+  document.getElementById('modal-bg').classList.add('open');
+}
+
+function confirmDeleteRealm(realm, connId) {
+  document.getElementById('modal-title').textContent = `Delete Realm "${realm}"`;
+  document.getElementById('modal-body').innerHTML = `
+    <p style="color:var(--muted)">Delete authentication realm <strong style="color:var(--red)">${escHtml(realm)}</strong>?</p>
+    <p style="color:var(--red);font-size:12px;margin-top:8px">⚠ Users in this realm will no longer be able to log in. Their user accounts remain in Proxmox but become orphaned.</p>`;
+  modalCallback = async () => {
+    const conn = resolveConn(connId);
+    try {
+      if (conn) await connDelete(conn, `/api2/json/access/domains/${realm}`);
+      else      await pveDelete(`/api2/json/access/domains/${realm}`);
+      toast(`Realm "${realm}" deleted`, 'success');
+      setTimeout(loadSSO, 800);
     } catch(e) { toast('Delete failed: '+e.message, 'error'); }
   };
   document.getElementById('modal-bg').classList.add('open');
