@@ -953,6 +953,8 @@
           <select id="fw-scope" style="width:180px;padding:5px 8px;font-size:13px" onchange="loadFirewall()">
             <option value="_cluster">Cluster-wide</option>
           </select>
+          <button class="btn small primary" onclick="openAddFWRuleModal()">+ Add Rule</button>
+          <button class="btn small" onclick="openFWOptionsModal()">⚙ Options</button>
           <button class="btn small" onclick="loadFirewall()">Refresh</button>
         </div>
       </div>
@@ -4590,89 +4592,96 @@ function confirmDeleteHAGroup(group, connId) {
 // GET /api2/json/cluster/firewall/rules       - cluster rules
 // GET /api2/json/nodes/{node}/firewall/rules  - node rules
 // Official: https://pve.proxmox.com/pve-docs/api-viewer/#/cluster/firewall/rules
+// Store current firewall context for use by action buttons
+let fwCtx = { path:'', optPath:'', connId:'', rules:[], opts:{} };
+
 async function loadFirewall() {
   const conn = getViewConn('fw-conn');
-  const get = conn ? (p=>connGet(conn,p)) : pveGet;
-  const nodes = conn ? (conn.nodes||[]) : PVE.nodes;
+  const get  = conn ? (p=>connGet(conn,p)) : pveGet;
+  const nodes= conn ? (conn.nodes||[]) : PVE.nodes;
+  fwCtx.connId = conn ? (extraConns.find(c=>c===conn)||{}).id||'' : '';
   // Repopulate scope selector
   const scopeSel = document.getElementById('fw-scope');
   if (scopeSel) scopeSel.innerHTML = '<option value="_cluster">Cluster-wide</option>' +
     nodes.map(n=>`<option value="node:${n.node}">${n.node} (node)</option>`).join('');
-  const el = document.getElementById('fw-content');
+  const el    = document.getElementById('fw-content');
   el.innerHTML = '<div class="empty"><span class="loading"></span> Loading firewall rules…</div>';
   const scope = scopeSel ? scopeSel.value : '_cluster';
   try {
     let path, title;
     if (scope === '_cluster') {
-      path = '/api2/json/cluster/firewall/rules';
+      path  = '/api2/json/cluster/firewall/rules';
       title = 'Cluster-wide Firewall Rules';
     } else {
       const node = scope.replace('node:', '');
-      path = `/api2/json/nodes/${node}/firewall/rules`;
+      path  = `/api2/json/nodes/${node}/firewall/rules`;
       title = `Node "${node}" Firewall Rules`;
     }
+    fwCtx.path    = path;
+    fwCtx.optPath = path.replace('/rules', '/options');
 
     const [rulesRes, optionsRes] = await Promise.all([
-      get(path).catch(() => ({ data: [] })),
-      get(path.replace('/rules', '/options')).catch(() => ({ data: {} }))
+      get(path).catch(()=>({data:[]})),
+      get(fwCtx.optPath).catch(()=>({data:{}}))
     ]);
 
-    const rules = rulesRes.data || [];
-    const opts = optionsRes.data || {};
+    fwCtx.rules = (rulesRes.data||[]).sort((a,b)=>(a.pos??99)-(b.pos??99));
+    fwCtx.opts  = optionsRes.data || {};
+    const { rules, opts } = fwCtx;
     const fwEnabled = opts.enable;
+    const cid = fwCtx.connId;
 
     el.innerHTML = `
-      <div class="stats-grid">
+      <div class="stats-grid" style="margin-bottom:16px">
         <div class="stat-card">
-          <div class="label">Firewall Status</div>
-          <div class="value" style="color:${fwEnabled ? 'var(--green)' : 'var(--muted)'};font-size:18px">
-            ${fwEnabled ? '🛡 Enabled' : '○ Disabled'}
+          <div class="label">Firewall</div>
+          <div class="value" style="color:${fwEnabled?'var(--green)':'var(--muted)'};font-size:18px">${fwEnabled?'🛡 Enabled':'○ Disabled'}</div>
+          <div class="sub"><button class="btn small ${fwEnabled?'warning':'success'}" style="margin-top:6px" onclick="toggleFirewall(${!fwEnabled?1:0},'${cid}')">${fwEnabled?'Disable':'Enable'}</button></div>
+        </div>
+        <div class="stat-card accent-blue"><div class="label">Total Rules</div><div class="value">${rules.length}</div></div>
+        <div class="stat-card accent-green"><div class="label">ACCEPT</div><div class="value">${rules.filter(r=>r.action==='ACCEPT').length}</div></div>
+        <div class="stat-card accent-red" style="--accent-color:var(--red)"><div class="label">DROP / REJECT</div><div class="value" style="color:var(--red)">${rules.filter(r=>r.action!=='ACCEPT').length}</div></div>
+        <div class="stat-card"><div class="label">Default Policy</div>
+          <div style="font-size:12px;margin-top:6px">
+            In: <strong style="color:${opts.policy_in==='ACCEPT'?'var(--green)':'var(--red)'}">${opts.policy_in||'DROP'}</strong>
+            &nbsp;Out: <strong style="color:${opts.policy_out==='ACCEPT'?'var(--green)':'var(--red)'}">${opts.policy_out||'ACCEPT'}</strong>
           </div>
-        </div>
-        <div class="stat-card">
-          <div class="label">Total Rules</div>
-          <div class="value" style="color:var(--blue)">${rules.length}</div>
-        </div>
-        <div class="stat-card">
-          <div class="label">ACCEPT Rules</div>
-          <div class="value" style="color:var(--green)">${rules.filter(r => r.action === 'ACCEPT').length}</div>
-        </div>
-        <div class="stat-card">
-          <div class="label">DROP / REJECT</div>
-          <div class="value" style="color:var(--red)">${rules.filter(r => r.action !== 'ACCEPT').length}</div>
         </div>
       </div>
 
-      <div class="section-header"><span class="section-title">${escHtml(title)} (${rules.length})</span></div>
+      <div class="section-header">
+        <span class="section-title">${escHtml(title)} (${rules.length})</span>
+      </div>
       ${rules.length ? `
         <div class="table-wrap">
           <table>
-            <thead><tr><th>#</th><th>Type</th><th>Action</th><th>Source</th><th>Dest</th><th>Proto</th><th>Port</th><th>Enabled</th><th>Comment</th></tr></thead>
-            <tbody>${rules.map(r => `
-              <tr class="${r.action === 'ACCEPT' ? 'fw-allow' : 'fw-deny'} ${!r.enable ? 'fw-disabled' : ''}">
-                <td style="color:var(--muted);font-size:12px">${r.pos != null ? r.pos : '—'}</td>
-                <td><span style="font-size:11px;color:var(--muted)">${escHtml(r.type || '—')}</span></td>
-                <td><strong style="color:${r.action === 'ACCEPT' ? 'var(--green)' : 'var(--red)'}">${escHtml(r.action || '—')}</strong></td>
-                <td style="font-family:monospace;font-size:12px">${escHtml(r.source || 'any')}</td>
-                <td style="font-family:monospace;font-size:12px">${escHtml(r.dest || 'any')}</td>
-                <td style="color:var(--muted)">${escHtml(r.proto || 'any')}</td>
-                <td style="color:var(--muted)">${escHtml(r.dport || r.sport || 'any')}</td>
-                <td>${r.enable ? '<span class="badge running" style="font-size:10px"><span class="badge-dot"></span>on</span>' : '<span class="badge stopped" style="font-size:10px"><span class="badge-dot"></span>off</span>'}</td>
-                <td style="font-size:11px;color:var(--muted)">${escHtml(r.comment || '')}</td>
-              </tr>`).join('')}
+            <thead><tr><th>#</th><th>Dir</th><th>Action</th><th>Macro</th><th>Source</th><th>Dest</th><th>Proto / Port</th><th>On</th><th>Comment</th><th>Actions</th></tr></thead>
+            <tbody>${rules.map((r,i) => {
+              const isAccept = r.action==='ACCEPT';
+              const portStr  = [r.proto&&r.proto!=='any'?r.proto:'',r.dport||r.sport||''].filter(Boolean).join(':') || 'any';
+              return `<tr class="${isAccept?'fw-allow':'fw-deny'} ${!r.enable?'fw-disabled':''}">
+                <td style="color:var(--muted);font-size:12px">${r.pos??i}</td>
+                <td><span style="font-size:11px;font-weight:600;color:${r.type==='in'?'var(--blue)':r.type==='out'?'var(--yellow)':'var(--muted)'}">${escHtml(r.type||'—')}</span></td>
+                <td><strong style="color:${isAccept?'var(--green)':'var(--red)'}">${escHtml(r.action||'—')}</strong></td>
+                <td style="font-size:12px;color:var(--purple)">${escHtml(r.macro||'—')}</td>
+                <td style="font-family:monospace;font-size:12px">${escHtml(r.source||'any')}</td>
+                <td style="font-family:monospace;font-size:12px">${escHtml(r.dest||'any')}</td>
+                <td style="font-size:12px;color:var(--muted)">${escHtml(portStr)}</td>
+                <td>${r.enable?'<span class="badge running" style="font-size:10px"><span class="badge-dot"></span>on</span>':'<span class="badge stopped" style="font-size:10px"><span class="badge-dot"></span>off</span>'}</td>
+                <td style="font-size:11px;color:var(--muted);max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escHtml(r.comment||'')}">${escHtml(r.comment||'')}</td>
+                <td onclick="event.stopPropagation()" style="white-space:nowrap">
+                  <div class="actions-row">
+                    <button class="btn small" onclick="moveFWRule(${r.pos??i},-1,'${cid}')" ${i===0?'disabled':''} title="Move up">▲</button>
+                    <button class="btn small" onclick="moveFWRule(${r.pos??i},1,'${cid}')" ${i===rules.length-1?'disabled':''} title="Move down">▼</button>
+                    <button class="btn small" onclick="openEditFWRuleModal(${r.pos??i},'${cid}')">✎</button>
+                    <button class="btn small ${r.enable?'warning':'success'}" onclick="toggleFWRule(${r.pos??i},${r.enable?0:1},'${cid}')">${r.enable?'Off':'On'}</button>
+                    <button class="btn small danger" onclick="confirmDeleteFWRule(${r.pos??i},'${cid}')">✕</button>
+                  </div>
+                </td>
+              </tr>`;}).join('')}
             </tbody>
           </table>
-        </div>` : '<div class="empty">No firewall rules defined for this scope.</div>'}
-
-      ${opts.policy_in || opts.policy_out ? `
-        <div class="section-header" style="margin-top:8px"><span class="section-title">Default Policy</span></div>
-        <div class="table-wrap">
-          <table><thead><tr><th>Direction</th><th>Policy</th></tr></thead>
-          <tbody>
-            <tr><td>Inbound (INPUT)</td><td><strong style="color:${opts.policy_in === 'ACCEPT' ? 'var(--green)' : 'var(--red)'}">${opts.policy_in || '—'}</strong></td></tr>
-            <tr><td>Outbound (OUTPUT)</td><td><strong style="color:${opts.policy_out === 'ACCEPT' ? 'var(--green)' : 'var(--red)'}">${opts.policy_out || '—'}</strong></td></tr>
-          </tbody>
-        </table></div>` : ''}`;
+        </div>` : `<div class="empty" style="margin-bottom:14px">No rules defined. Click <strong>+ Add Rule</strong> to create one.</div>`}`;
 
   } catch(e) {
     el.innerHTML = `<div class="empty">Failed to load firewall: ${e.message}</div>`;
@@ -5588,6 +5597,257 @@ async function wizSubmitCT() {
     toast('Create CT failed: '+e.message, 'error');
     btn.disabled = false; btn.textContent = '✓ Create CT';
   }
+}
+
+// ── FIREWALL MANAGEMENT ──────────────────────────────────
+// POST/PUT/DELETE /cluster/firewall/rules or /nodes/{n}/firewall/rules
+// PUT             /cluster/firewall/options  — enable/disable, policy
+// Official: https://pve.proxmox.com/pve-docs/api-viewer/#/cluster/firewall
+
+const FW_MACROS = [
+  '','SSH','HTTP','HTTPS','DNS','FTP','NFS','SMB','SMTP','SMTPS',
+  'POP3','POP3S','IMAP','IMAPS','NTP','LDAP','LDAPS',
+  'MySQL','PostgreSQL','Redis','MongoDB',
+  'RDP','VNC','SPICE','Ping','IPsec','OpenVPN',
+];
+
+const FW_PROTOS = ['','tcp','udp','icmp','tcp+udp','igmp','esp','ah','gre'];
+
+function _fwGet(connId) {
+  const conn = resolveConn(connId);
+  return conn ? (p=>connGet(conn,p)) : pveGet;
+}
+async function _fwPut(connId, path, data={}) {
+  const conn = resolveConn(connId);
+  if (conn) {
+    const h=connHeaders(conn,{'Content-Type':'application/x-www-form-urlencoded'});
+    const body=Object.entries(data).map(([k,v])=>`${encodeURIComponent(k)}=${encodeURIComponent(v)}`).join('&');
+    const r=await fetch(conn.host+path,{method:'PUT',headers:h,body});
+    if(!r.ok){const t=await r.text();throw new Error(`HTTP ${r.status}: ${t}`);}
+    return r.json();
+  }
+  return pvePut(path, data);
+}
+async function _fwPost(connId, path, data={}) {
+  const conn = resolveConn(connId);
+  if (conn) return connPost(conn, path, data);
+  return pvePost(path, data);
+}
+async function _fwDelete(connId, path) {
+  const conn = resolveConn(connId);
+  if (conn) return connDelete(conn, path);
+  return pveDelete(path);
+}
+
+function _fwRuleForm(r={}) {
+  const v = (k,fb='') => escHtml(String(r[k]!=null?r[k]:fb));
+  const macroOpts = FW_MACROS.map(m=>`<option value="${m}"${(r.macro||'')===(m)?' selected':''}>${m||'— none —'}</option>`).join('');
+  const protoOpts = FW_PROTOS.map(p=>`<option value="${p}"${(r.proto||'')===(p)?' selected':''}>${p||'any'}</option>`).join('');
+  return `
+    <div class="create-vm-grid">
+      <div class="form-group"><label>DIRECTION</label>
+        <select id="fwr-type">
+          <option value="in"${(r.type||'in')==='in'?' selected':''}>in — inbound</option>
+          <option value="out"${r.type==='out'?' selected':''}>out — outbound</option>
+          <option value="forward"${r.type==='forward'?' selected':''}>forward</option>
+        </select>
+      </div>
+      <div class="form-group"><label>ACTION</label>
+        <select id="fwr-action">
+          <option value="ACCEPT"${(r.action||'ACCEPT')==='ACCEPT'?' selected':''}>ACCEPT</option>
+          <option value="DROP"${r.action==='DROP'?' selected':''}>DROP</option>
+          <option value="REJECT"${r.action==='REJECT'?' selected':''}>REJECT</option>
+        </select>
+      </div>
+    </div>
+    <div class="form-group"><label>MACRO (optional — predefined service shortcut)</label>
+      <select id="fwr-macro">${macroOpts}</select>
+    </div>
+    <div class="create-vm-grid">
+      <div class="form-group"><label>SOURCE (IP/CIDR/alias, blank = any)</label>
+        <input id="fwr-source" value="${v('source')}" placeholder="192.168.1.0/24 or blank"/>
+      </div>
+      <div class="form-group"><label>DESTINATION (IP/CIDR/alias, blank = any)</label>
+        <input id="fwr-dest" value="${v('dest')}" placeholder="10.0.0.1 or blank"/>
+      </div>
+    </div>
+    <div class="create-vm-grid">
+      <div class="form-group"><label>PROTOCOL</label>
+        <select id="fwr-proto">${protoOpts}</select>
+      </div>
+      <div class="form-group"><label>DEST PORT (e.g. 22, 80:443)</label>
+        <input id="fwr-dport" value="${v('dport')}" placeholder="22 or 80:443"/>
+      </div>
+    </div>
+    <div class="create-vm-grid">
+      <div class="form-group"><label>INTERFACE (optional)</label>
+        <input id="fwr-iface" value="${v('iface')}" placeholder="net0, eth0…"/>
+      </div>
+      <div class="form-group"><label>LOG LEVEL</label>
+        <select id="fwr-log">
+          ${['nolog','debug','info','warning','err','crit'].map(l=>`<option value="${l}"${(r.log||'nolog')===l?' selected':''}>${l}</option>`).join('')}
+        </select>
+      </div>
+    </div>
+    <div class="form-group"><label>COMMENT</label>
+      <input id="fwr-comment" value="${v('comment')}" placeholder="description"/>
+    </div>
+    <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;margin-top:8px">
+      <input type="checkbox" id="fwr-enable"${r.enable!==0?' checked':''} style="width:auto;height:auto;padding:0;margin:0"> Enabled
+    </label>`;
+}
+
+function _gatherFWRuleParams() {
+  const g = id => { const el=document.getElementById(id); if(!el) return null; return el.type==='checkbox'?el.checked:(el.value.trim()||null); };
+  const params = {
+    type:   g('fwr-type')   || 'in',
+    action: g('fwr-action') || 'ACCEPT',
+    enable: g('fwr-enable') ? 1 : 0,
+  };
+  const macro = g('fwr-macro'); if (macro) params.macro = macro;
+  const src   = g('fwr-source'); if (src) params.source = src;
+  const dst   = g('fwr-dest');   if (dst) params.dest   = dst;
+  const proto = g('fwr-proto');  if (proto) params.proto = proto;
+  const dport = g('fwr-dport');  if (dport) params.dport = dport;
+  const iface = g('fwr-iface');  if (iface) params.iface = iface;
+  const log   = g('fwr-log');    if (log && log!=='nolog') params.log = log;
+  const cmt   = g('fwr-comment');if (cmt) params.comment = cmt;
+  return params;
+}
+
+function openAddFWRuleModal() {
+  document.getElementById('modal-title').textContent = 'Add Firewall Rule';
+  document.getElementById('modal-body').innerHTML = _fwRuleForm();
+  modalCallback = null;
+  const btn = document.getElementById('modal-confirm-btn');
+  btn.textContent = 'Add Rule'; btn.disabled = false;
+  btn.onclick = async () => {
+    const params = _gatherFWRuleParams();
+    btn.disabled=true; btn.textContent='Adding…';
+    try {
+      await _fwPost(fwCtx.connId, fwCtx.path, params);
+      document.getElementById('modal-bg').classList.remove('open');
+      btn.onclick=confirmModal; btn.textContent='Confirm'; btn.disabled=false;
+      toast('Rule added', 'success');
+      setTimeout(loadFirewall, 800);
+    } catch(e) {
+      btn.disabled=false; btn.textContent='Add Rule';
+      toast('Add failed: '+e.message,'error');
+    }
+  };
+  document.getElementById('modal-bg').classList.add('open');
+}
+
+async function openEditFWRuleModal(pos, connId) {
+  document.getElementById('modal-title').textContent = `Edit Rule #${pos}`;
+  document.getElementById('modal-body').innerHTML = '<div class="empty"><span class="loading"></span> Loading…</div>';
+  modalCallback = null;
+  document.getElementById('modal-bg').classList.add('open');
+  const get = _fwGet(connId);
+  let r = {};
+  try {
+    const d = await get(`${fwCtx.path}/${pos}`);
+    r = d.data || {};
+  } catch(e) { toast('Load failed: '+e.message,'error'); document.getElementById('modal-bg').classList.remove('open'); return; }
+
+  document.getElementById('modal-body').innerHTML = _fwRuleForm(r);
+  const btn = document.getElementById('modal-confirm-btn');
+  btn.textContent = 'Save Rule'; btn.disabled = false;
+  btn.onclick = async () => {
+    const params = _gatherFWRuleParams();
+    btn.disabled=true; btn.textContent='Saving…';
+    try {
+      await _fwPut(connId, `${fwCtx.path}/${pos}`, params);
+      document.getElementById('modal-bg').classList.remove('open');
+      btn.onclick=confirmModal; btn.textContent='Confirm'; btn.disabled=false;
+      toast(`Rule #${pos} updated`, 'success');
+      setTimeout(loadFirewall, 800);
+    } catch(e) {
+      btn.disabled=false; btn.textContent='Save Rule';
+      toast('Save failed: '+e.message,'error');
+    }
+  };
+}
+
+function confirmDeleteFWRule(pos, connId) {
+  document.getElementById('modal-title').textContent = `Delete Rule #${pos}`;
+  document.getElementById('modal-body').innerHTML = `
+    <p style="color:var(--muted)">Delete firewall rule at position <strong style="color:var(--red)">#${pos}</strong>?</p>
+    <p style="color:var(--yellow);font-size:12px;margin-top:8px">⚠ Subsequent rules will shift up to fill the gap.</p>`;
+  modalCallback = async () => {
+    try {
+      await _fwDelete(connId, `${fwCtx.path}/${pos}`);
+      toast(`Rule #${pos} deleted`, 'success');
+      setTimeout(loadFirewall, 800);
+    } catch(e) { toast('Delete failed: '+e.message,'error'); }
+  };
+  document.getElementById('modal-bg').classList.add('open');
+}
+
+async function toggleFWRule(pos, enable, connId) {
+  try {
+    await _fwPut(connId, `${fwCtx.path}/${pos}`, {enable});
+    toast(`Rule #${pos} ${enable?'enabled':'disabled'}`, 'success');
+    setTimeout(loadFirewall, 600);
+  } catch(e) { toast('Toggle failed: '+e.message,'error'); }
+}
+
+async function moveFWRule(pos, direction, connId) {
+  const newPos = pos + direction;
+  if (newPos < 0) return;
+  try {
+    await _fwPut(connId, `${fwCtx.path}/${pos}`, {moveto: newPos});
+    setTimeout(loadFirewall, 600);
+  } catch(e) { toast('Move failed: '+e.message,'error'); }
+}
+
+async function toggleFirewall(enable, connId) {
+  try {
+    await _fwPut(connId, fwCtx.optPath, {enable});
+    toast(`Firewall ${enable?'enabled':'disabled'}`, 'success');
+    setTimeout(loadFirewall, 800);
+  } catch(e) { toast('Failed: '+e.message,'error'); }
+}
+
+function openFWOptionsModal() {
+  const opts = fwCtx.opts;
+  document.getElementById('modal-title').textContent = 'Firewall Options';
+  document.getElementById('modal-body').innerHTML = `
+    <div class="create-vm-grid" style="margin-bottom:10px">
+      <div class="form-group"><label>DEFAULT INBOUND POLICY</label>
+        <select id="fwo-pin">
+          <option value="DROP"${(opts.policy_in||'DROP')==='DROP'?' selected':''}>DROP — block by default (secure)</option>
+          <option value="ACCEPT"${opts.policy_in==='ACCEPT'?' selected':''}>ACCEPT — allow by default</option>
+          <option value="REJECT"${opts.policy_in==='REJECT'?' selected':''}>REJECT — block and notify</option>
+        </select>
+      </div>
+      <div class="form-group"><label>DEFAULT OUTBOUND POLICY</label>
+        <select id="fwo-pout">
+          <option value="ACCEPT"${(opts.policy_out||'ACCEPT')==='ACCEPT'?' selected':''}>ACCEPT — allow by default</option>
+          <option value="DROP"${opts.policy_out==='DROP'?' selected':''}>DROP — block by default</option>
+          <option value="REJECT"${opts.policy_out==='REJECT'?' selected':''}>REJECT — block and notify</option>
+        </select>
+      </div>
+    </div>
+    <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;margin-bottom:10px">
+      <input type="checkbox" id="fwo-enable"${opts.enable?' checked':''} style="width:auto;height:auto;padding:0;margin:0"> Firewall enabled
+    </label>
+    <div style="background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius);padding:9px 12px;font-size:12px;color:var(--muted)">
+      Default policy applies to traffic not matched by any rule. DROP is recommended for inbound.
+    </div>`;
+  modalCallback = async () => {
+    const params = {
+      enable:     document.getElementById('fwo-enable')?.checked ? 1 : 0,
+      policy_in:  document.getElementById('fwo-pin')?.value || 'DROP',
+      policy_out: document.getElementById('fwo-pout')?.value || 'ACCEPT',
+    };
+    try {
+      await _fwPut(fwCtx.connId, fwCtx.optPath, params);
+      toast('Firewall options saved', 'success');
+      setTimeout(loadFirewall, 800);
+    } catch(e) { toast('Save failed: '+e.message,'error'); }
+  };
+  document.getElementById('modal-bg').classList.add('open');
 }
 
 // ── VM / CT FIREWALL TAB ──────────────────────────────────
