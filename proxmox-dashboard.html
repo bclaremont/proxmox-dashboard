@@ -5092,7 +5092,11 @@ function openCreateUserModal() {
     const errEl  = document.getElementById('uu-err');
     const showErr = msg => { if(errEl){errEl.textContent=msg;errEl.style.display='';} };
     if(errEl) errEl.style.display = 'none';
-    if(!name) return showErr('Enter a username');
+    if(!name)  return showErr('Enter a username');
+    if(!realm) return showErr('Select a realm');
+    // Password required for local realms
+    const pw = document.getElementById('uu-pw')?.value || '';
+    if((realm==='pam'||realm==='pve') && !pw) return showErr(`Password is required for the ${realm} realm`);
 
     const userid = `${name}@${realm}`;
     const g = id => { const el=document.getElementById(id); if(!el)return null; return el.type==='checkbox'?el.checked:(el.value.trim()||null); };
@@ -5100,7 +5104,7 @@ function openCreateUserModal() {
     const fn=g('uu-fn'); if(fn) params.firstname=fn;
     const ln=g('uu-ln'); if(ln) params.lastname=ln;
     const em=g('uu-email'); if(em) params.email=em;
-    const pw=g('uu-pw'); if(pw) params.password=pw;
+    if(pw) params.password=pw;
     const gr=g('uu-groups'); if(gr) params.groups=gr;
     const cm=g('uu-comment'); if(cm) params.comment=cm;
     const ex=g('uu-expire');
@@ -5175,19 +5179,36 @@ async function openEditUserModal(userid, connId) {
   };
 }
 
-function openChangePasswordModal(userid,connId){
-  document.getElementById('modal-title').textContent=`Change Password — ${userid}`;
-  document.getElementById('modal-body').innerHTML=`
-    <div class="form-group"><label>NEW PASSWORD</label><input id="cpw-pw" type="password"/></div>
-    <div class="form-group"><label>CONFIRM PASSWORD</label><input id="cpw-pw2" type="password"/></div>`;
-  modalCallback=async()=>{
-    const pw1=document.getElementById('cpw-pw')?.value||'';
-    const pw2=document.getElementById('cpw-pw2')?.value||'';
-    if(!pw1)return toast('Enter a password','error');
-    if(pw1!==pw2)return toast('Passwords do not match','error');
-    const conn=resolveConn(connId);
-    try{if(conn)await connPost(conn,'/api2/json/access/password',{userid,password:pw1});else await pvePost('/api2/json/access/password',{userid,password:pw1});
-    toast(`Password changed for "${userid}"`,'success');}catch(e){toast('Failed: '+e.message,'error');}
+function openChangePasswordModal(userid, connId) {
+  document.getElementById('modal-title').textContent = `Change Password — ${userid}`;
+  document.getElementById('modal-body').innerHTML = `
+    <div class="form-group"><label>NEW PASSWORD</label><input id="cpw-pw" type="password" autofocus/></div>
+    <div class="form-group"><label>CONFIRM PASSWORD</label><input id="cpw-pw2" type="password"/></div>
+    <div id="cpw-err" style="display:none;margin-top:10px;padding:8px 12px;background:rgba(248,81,73,.1);border:1px solid var(--red);border-radius:var(--radius);font-size:12px;color:var(--red)"></div>`;
+  modalCallback = null;
+  const btn = document.getElementById('modal-confirm-btn');
+  btn.textContent = 'Change Password'; btn.disabled = false;
+  btn.onclick = async () => {
+    const pw1 = document.getElementById('cpw-pw')?.value || '';
+    const pw2 = document.getElementById('cpw-pw2')?.value || '';
+    const errEl = document.getElementById('cpw-err');
+    const showErr = msg => { if(errEl){errEl.textContent=msg;errEl.style.display='';} };
+    if(errEl) errEl.style.display = 'none';
+    if(!pw1)       return showErr('Enter a new password');
+    if(pw1 !== pw2) return showErr('Passwords do not match');
+    if(pw1.length < 5) return showErr('Password must be at least 5 characters');
+    btn.disabled=true; btn.textContent='Changing…';
+    const conn = resolveConn(connId);
+    try {
+      if(conn) await connPost(conn, '/api2/json/access/password', {userid, password:pw1});
+      else     await pvePost('/api2/json/access/password', {userid, password:pw1});
+      document.getElementById('modal-bg').classList.remove('open');
+      btn.onclick=confirmModal; btn.textContent='Confirm'; btn.disabled=false;
+      toast(`Password changed for "${userid}"`, 'success');
+    } catch(e) {
+      btn.disabled=false; btn.textContent='Change Password';
+      showErr('Failed: ' + e.message);
+    }
   };
   document.getElementById('modal-bg').classList.add('open');
 }
