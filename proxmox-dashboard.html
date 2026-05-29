@@ -1105,24 +1105,35 @@
   <div id="detail-body">
     <div class="dtabs" id="detail-tabs" style="flex-wrap:wrap">
       <div class="dtab active" data-tab="overview" onclick="switchDetailTab('overview')">Overview</div>
+      <!-- VM-only tabs -->
       <div class="dtab" data-tab="hardware" onclick="switchDetailTab('hardware')">Hardware</div>
       <div class="dtab" data-tab="options" onclick="switchDetailTab('options')">Options</div>
-      <div class="dtab" data-tab="config" onclick="switchDetailTab('config')">Config</div>
-      <div class="dtab" data-tab="graphs" onclick="switchDetailTab('graphs')">Graphs</div>
       <div class="dtab" data-tab="snapshots" onclick="switchDetailTab('snapshots')">Snapshots</div>
       <div class="dtab" data-tab="backup" onclick="switchDetailTab('backup')">Backup</div>
-      <div class="dtab" data-tab="tasks" onclick="switchDetailTab('tasks')">Tasks</div>
       <div class="dtab" data-tab="vmfw" onclick="switchDetailTab('vmfw')">Firewall</div>
+      <!-- Shared tabs -->
+      <div class="dtab" data-tab="config" onclick="switchDetailTab('config')">Config</div>
+      <div class="dtab" data-tab="graphs" onclick="switchDetailTab('graphs')">Graphs</div>
+      <div class="dtab" data-tab="tasks" onclick="switchDetailTab('tasks')">Tasks</div>
+      <!-- Node-only tabs -->
+      <div class="dtab" data-tab="dns" onclick="switchDetailTab('dns')">DNS</div>
+      <div class="dtab" data-tab="hosts" onclick="switchDetailTab('hosts')">Hosts</div>
+      <div class="dtab" data-tab="disks" onclick="switchDetailTab('disks')">Disks</div>
+      <div class="dtab" data-tab="services" onclick="switchDetailTab('services')">Services</div>
     </div>
     <div class="dtab-content active" id="dtab-overview"></div>
     <div class="dtab-content" id="dtab-hardware"></div>
     <div class="dtab-content" id="dtab-options"></div>
-    <div class="dtab-content" id="dtab-config"></div>
-    <div class="dtab-content" id="dtab-graphs"></div>
     <div class="dtab-content" id="dtab-snapshots"></div>
     <div class="dtab-content" id="dtab-backup"></div>
-    <div class="dtab-content" id="dtab-tasks"></div>
     <div class="dtab-content" id="dtab-vmfw"></div>
+    <div class="dtab-content" id="dtab-config"></div>
+    <div class="dtab-content" id="dtab-graphs"></div>
+    <div class="dtab-content" id="dtab-tasks"></div>
+    <div class="dtab-content" id="dtab-dns"></div>
+    <div class="dtab-content" id="dtab-hosts"></div>
+    <div class="dtab-content" id="dtab-disks"></div>
+    <div class="dtab-content" id="dtab-services"></div>
   </div>
 </div>
 
@@ -1799,7 +1810,10 @@ async function loadCurrentStatus(node, type, vmid, get=pveGet) {
 }
 
 async function loadVMTasks(node, vmid, get=pveGet) {
-  const d = await get(`/api2/json/nodes/${node}/tasks?vmid=${vmid}&limit=50`).catch(()=>({data:[]}));
+  const url = vmid
+    ? `/api2/json/nodes/${node}/tasks?vmid=${vmid}&limit=50`
+    : `/api2/json/nodes/${node}/tasks?limit=100`;
+  const d = await get(url).catch(()=>({data:[]}));
   return d.data||[];
 }
 
@@ -1832,6 +1846,11 @@ async function openDetail(item) {
     ? `<button class="btn small" onclick="openConsole('${item.node}','${item.vmid}','${item.type}')">⌨ Console</button>` : '';
   document.getElementById('detail-actions').innerHTML += `<button class="btn small" onclick="openCloneModal('${item.node}','${item.vmid}','${item.type}','${(item.name||'').replace(/['"]/g,'')}','${cid}')">⎘ Clone</button>`;
   if (!running) document.getElementById('detail-actions').innerHTML += `<button class="btn small warning" onclick="convertToTemplate('${item.node}','${item.vmid}','${item.type}')" title="Convert to template (irreversible)">⬡ Template</button>`;
+  // Hide node-only tabs when viewing a VM/CT
+  document.querySelectorAll('.dtab').forEach(t=>{
+    const nodeOnly=['dns','hosts','disks','services'];
+    if(nodeOnly.includes(t.dataset.tab)) t.style.display='none';
+  });
   switchDetailTab('overview');
   loadDetailOverview(item);
 }
@@ -1846,11 +1865,14 @@ async function openNodeDetail(nodeData) {
   document.getElementById('detail-type-chip').className = 'type-chip vm';
   const online = nodeData.status==='online'||(nodeData.statusData&&Object.keys(nodeData.statusData).length>0);
   document.getElementById('detail-status').innerHTML = statusBadge(online?'online':'offline');
-  document.getElementById('detail-actions').innerHTML = '';
-  // Hide VM-only tabs when viewing a node
+  document.getElementById('detail-actions').innerHTML = `
+    <button class="btn small" onclick="openConsole('${nodeData.node}','','node')">⌨ Shell</button>`;
+  // Show node-only tabs, hide VM-only tabs
   document.querySelectorAll('.dtab').forEach(t=>{
-    const vmOnly=['tasks','snapshots','vmfw','hardware','options','backup'];
-    if(vmOnly.includes(t.dataset.tab)) t.style.display='none';
+    const vmOnly  =['snapshots','vmfw','hardware','options','backup'];
+    const nodeOnly=['dns','hosts','disks','services'];
+    if(vmOnly.includes(t.dataset.tab))   t.style.display='none';
+    if(nodeOnly.includes(t.dataset.tab)) t.style.display='';
   });
   switchDetailTab('overview');
   loadNodeDetailOverview(nodeData);
@@ -1899,6 +1921,16 @@ function switchDetailTab(tab) {
     loadDetailOptions(currentDetail);
   } else if (tab==='backup' && !currentDetail._isNode) {
     loadDetailBackup(currentDetail);
+  } else if (tab==='tasks' && currentDetail._isNode) {
+    loadNodeTasks(currentDetail);
+  } else if (tab==='dns' && currentDetail._isNode) {
+    loadNodeDNS(currentDetail);
+  } else if (tab==='hosts' && currentDetail._isNode) {
+    loadNodeHosts(currentDetail);
+  } else if (tab==='disks' && currentDetail._isNode) {
+    loadNodeDisks(currentDetail);
+  } else if (tab==='services' && currentDetail._isNode) {
+    loadNodeServices(currentDetail);
   }
 }
 
@@ -6505,6 +6537,280 @@ function openFWOptionsModal() {
     } catch(e) { toast('Save failed: '+e.message,'error'); }
   };
   document.getElementById('modal-bg').classList.add('open');
+}
+
+// ── NODE TASK HISTORY ─────────────────────────────────────
+async function loadNodeTasks(nodeData) {
+  const el = document.getElementById('dtab-tasks');
+  el.innerHTML = '<div class="empty"><span class="loading"></span> Loading tasks…</div>';
+  try {
+    const tasks = await loadVMTasks(nodeData.node, null, detailGet);
+    const actionMap={qmstart:'Start VM',qmstop:'Stop VM',qmshutdown:'Shutdown VM',qmreboot:'Reboot VM',qmmigrate:'Migrate VM',qmclone:'Clone VM',qmcreate:'Create VM',qmdestroy:'Delete VM',qmsnapshot:'Snapshot',vzdump:'Backup',vzrestore:'Restore',vzcreate:'Create CT',vzstart:'Start CT',vzstop:'Stop CT',srvreload:'Reload Service',srvrestart:'Restart Service',aptupdate:'APT Update'};
+    el.innerHTML = tasks.length
+      ? `<div class="table-wrap"><table>
+          <thead><tr><th>Started</th><th>User</th><th>Action</th><th>Target</th><th>Status</th><th>Duration</th></tr></thead>
+          <tbody>${tasks.map(t=>{
+            const st=t.status||'running',isOk=st==='OK',isRun=!t.status||st==='running';
+            const dur=t.endtime&&t.starttime?fmtUptime(t.endtime-t.starttime):'—';
+            return `<tr>
+              <td style="font-size:12px;color:var(--muted)">${t.starttime?new Date(t.starttime*1000).toLocaleString():'—'}</td>
+              <td style="font-size:12px;color:var(--accent)">${escHtml(t.user||'—')}</td>
+              <td style="font-size:12px">${escHtml(actionMap[t.type]||t.type||'—')}</td>
+              <td style="font-size:12px;color:var(--muted)">${escHtml(t.id||t.vmid||'—')}</td>
+              <td>${isOk?'<span class="badge ok" style="font-size:10px"><span class="badge-dot"></span>OK</span>':isRun?'<span class="badge warning" style="font-size:10px"><span class="badge-dot"></span>running</span>':`<span class="badge stopped" style="font-size:10px" title="${escHtml(st)}"><span class="badge-dot"></span>error</span>`}</td>
+              <td style="font-size:12px;color:var(--muted)">${dur}</td>
+            </tr>`;}).join('')}
+          </tbody></table></div>`
+      : '<div class="empty">No recent tasks on this node</div>';
+  } catch(e) {
+    el.innerHTML = `<div class="empty">Failed: ${e.message}</div>`;
+  }
+}
+
+// ── NODE DNS ───────────────────────────────────────────────
+// GET /nodes/{n}/dns   PUT /nodes/{n}/dns
+async function loadNodeDNS(nodeData) {
+  const el = document.getElementById('dtab-dns');
+  el.innerHTML = '<div class="empty"><span class="loading"></span></div>';
+  const node = nodeData.node;
+  try {
+    const [dnsRes, timeRes] = await Promise.all([
+      detailGet(`/api2/json/nodes/${node}/dns`).catch(()=>({data:{}})),
+      detailGet(`/api2/json/nodes/${node}/time`).catch(()=>({data:{}})),
+    ]);
+    const dns  = dnsRes.data  || {};
+    const time = timeRes.data || {};
+    el.innerHTML = `
+      <div class="section-title" style="font-size:11px;margin-bottom:10px">DNS Settings</div>
+      <form onsubmit="event.preventDefault();saveNodeDNS()">
+        <div class="form-group"><label>SEARCH DOMAIN</label>
+          <input id="ndns-search" value="${escHtml(dns.search||'')}" placeholder="example.com"/>
+        </div>
+        <div class="create-vm-grid">
+          <div class="form-group"><label>PRIMARY DNS</label>
+            <input id="ndns-1" value="${escHtml(dns.dns1||'')}" placeholder="1.1.1.1"/>
+          </div>
+          <div class="form-group"><label>SECONDARY DNS (optional)</label>
+            <input id="ndns-2" value="${escHtml(dns.dns2||'')}" placeholder="8.8.8.8"/>
+          </div>
+        </div>
+        <div class="form-group"><label>TERTIARY DNS (optional)</label>
+          <input id="ndns-3" value="${escHtml(dns.dns3||'')}" placeholder="optional third resolver"/>
+        </div>
+        <button type="submit" class="btn primary" style="margin-top:4px">💾 Save DNS</button>
+      </form>
+
+      <div class="section-title" style="font-size:11px;margin:18px 0 10px">System Time</div>
+      <div style="background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius);padding:10px 14px;font-size:13px">
+        <div style="margin-bottom:6px">Local time: <strong>${escHtml(time.localtime||'—')}</strong></div>
+        <div style="margin-bottom:10px">UTC time: <strong>${escHtml(time.time||'—')}</strong></div>
+        <div class="form-group" style="margin-bottom:8px"><label>TIMEZONE</label>
+          <input id="ntime-tz" value="${escHtml(time.timezone||'')}" placeholder="Europe/London"/>
+        </div>
+        <button class="btn small primary" onclick="saveNodeTimezone('${node}')">💾 Save Timezone</button>
+      </div>`;
+  } catch(e) {
+    el.innerHTML = `<div class="empty">Failed: ${e.message}</div>`;
+  }
+}
+
+async function saveNodeDNS() {
+  const item=currentDetail; if(!item) return;
+  const params={search:document.getElementById('ndns-search')?.value?.trim()||''};
+  const d1=document.getElementById('ndns-1')?.value?.trim(); if(d1)params.dns1=d1;
+  const d2=document.getElementById('ndns-2')?.value?.trim(); if(d2)params.dns2=d2;
+  const d3=document.getElementById('ndns-3')?.value?.trim(); if(d3)params.dns3=d3;
+  try{await detailPut(`/api2/json/nodes/${item.node}/dns`,params);toast('DNS saved','success');}
+  catch(e){toast('Save failed: '+e.message,'error');}
+}
+
+async function saveNodeTimezone(node) {
+  const tz=(document.getElementById('ntime-tz')?.value||'').trim();
+  if(!tz)return toast('Enter a timezone','error');
+  try{await detailPut(`/api2/json/nodes/${node}/time`,{timezone:tz});toast('Timezone saved','success');}
+  catch(e){toast('Save failed: '+e.message,'error');}
+}
+
+// ── NODE HOSTS FILE ────────────────────────────────────────
+// GET /nodes/{n}/hosts   POST /nodes/{n}/hosts
+async function loadNodeHosts(nodeData) {
+  const el = document.getElementById('dtab-hosts');
+  el.innerHTML = '<div class="empty"><span class="loading"></span></div>';
+  const node = nodeData.node;
+  try {
+    const d = await detailGet(`/api2/json/nodes/${node}/hosts`);
+    const hostsData = d.data || {};
+    el.innerHTML = `
+      <div style="font-size:12px;color:var(--muted);margin-bottom:8px">
+        Editing <code>/etc/hosts</code> on <strong>${escHtml(node)}</strong>
+      </div>
+      <textarea id="nhosts-data" rows="14" style="width:100%;background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius);color:var(--text);padding:10px;font-family:monospace;font-size:12px;resize:vertical;line-height:1.7">${escHtml(hostsData.data||'')}</textarea>
+      <input type="hidden" id="nhosts-digest" value="${escHtml(hostsData.digest||'')}"/>
+      <button class="btn primary" style="margin-top:10px" onclick="saveNodeHosts()">💾 Save Hosts File</button>`;
+  } catch(e) {
+    el.innerHTML = `<div class="empty">Failed: ${e.message}</div>`;
+  }
+}
+
+async function saveNodeHosts() {
+  const item=currentDetail; if(!item) return;
+  const data=document.getElementById('nhosts-data')?.value||'';
+  const digest=document.getElementById('nhosts-digest')?.value;
+  const params={data};if(digest)params.digest=digest;
+  try{await detailPost(`/api2/json/nodes/${item.node}/hosts`,params);toast('Hosts file saved','success');}
+  catch(e){toast('Save failed: '+e.message,'error');}
+}
+
+// ── NODE DISKS ─────────────────────────────────────────────
+// GET /nodes/{n}/disks/list   GET /nodes/{n}/disks/smart
+// GET /nodes/{n}/disks/zfs
+async function loadNodeDisks(nodeData) {
+  const el = document.getElementById('dtab-disks');
+  el.innerHTML = '<div class="empty"><span class="loading"></span> Loading disks…</div>';
+  const node = nodeData.node;
+  try {
+    const [disksRes, zfsRes] = await Promise.all([
+      detailGet(`/api2/json/nodes/${node}/disks/list`).catch(()=>({data:[]})),
+      detailGet(`/api2/json/nodes/${node}/disks/zfs`).catch(()=>({data:[]})),
+    ]);
+    const disks  = disksRes.data || [];
+    const zpools = zfsRes.data   || [];
+    const totalSize = disks.reduce((a,d)=>a+(d.size||0),0);
+
+    el.innerHTML = `
+      <div class="stats-grid" style="margin-bottom:14px">
+        <div class="stat-card accent-blue"><div class="label">Physical Disks</div><div class="value">${disks.length}</div></div>
+        <div class="stat-card accent-orange"><div class="label">Total Capacity</div><div class="value" style="font-size:20px">${fmtBytes(totalSize)}</div></div>
+        <div class="stat-card accent-${disks.some(d=>d.health&&d.health!=='PASSED')?'red':'green'}"><div class="label">Health</div><div class="value" style="color:${disks.some(d=>d.health&&d.health!=='PASSED')?'var(--red)':'var(--green)'}">
+          ${disks.every(d=>!d.health||d.health==='PASSED')?'✓ All OK':'⚠ Check disks'}
+        </div></div>
+        <div class="stat-card accent-purple"><div class="label">ZFS Pools</div><div class="value">${zpools.length}</div></div>
+      </div>
+
+      <div class="section-header" style="margin-bottom:8px"><span class="section-title">Physical Disks (${disks.length})</span></div>
+      <div class="table-wrap" style="margin-bottom:18px"><table>
+        <thead><tr><th>Device</th><th>Model</th><th>Size</th><th>Type</th><th>Used As</th><th>Health</th><th>Serial</th><th>Actions</th></tr></thead>
+        <tbody>${disks.map(d=>`<tr>
+          <td><strong style="font-family:monospace;font-size:12px">${escHtml(d.devpath||'—')}</strong></td>
+          <td style="font-size:12px">${escHtml(d.model||'—')}</td>
+          <td style="font-size:12px">${fmtBytes(d.size||0)}</td>
+          <td><span class="type-chip vm">${escHtml(d.type||'—')}</span></td>
+          <td style="font-size:12px;color:var(--muted)">${escHtml(d.used||'—')}</td>
+          <td><span style="color:${!d.health?'var(--muted)':d.health==='PASSED'?'var(--green)':'var(--red)'}">
+            ${!d.health?'—':d.health==='PASSED'?'✓ PASSED':('✗ '+d.health)}</span></td>
+          <td style="font-family:monospace;font-size:11px;color:var(--muted)">${escHtml(d.serial||'—')}</td>
+          <td onclick="event.stopPropagation()">
+            <button class="btn small" onclick="openNodeSMARTModal('${escHtml(d.devpath||'')}','${node}')">S.M.A.R.T</button>
+          </td>
+        </tr>`).join('')||'<tr><td colspan="8" class="empty">No disks found</td></tr>'}
+        </tbody></table></div>
+
+      ${zpools.length?`
+        <div class="section-header" style="margin-bottom:8px"><span class="section-title">ZFS Pools (${zpools.length})</span></div>
+        <div class="table-wrap"><table>
+          <thead><tr><th>Pool</th><th>Size</th><th>Allocated</th><th>Free</th><th>Dedup</th><th>Health</th><th>Scan</th></tr></thead>
+          <tbody>${zpools.map(z=>`<tr>
+            <td><strong>${escHtml(z.name||'—')}</strong></td>
+            <td style="font-size:12px">${fmtBytes(z.size||0)}</td>
+            <td style="font-size:12px;color:var(--muted)">${fmtBytes(z.alloc||0)}</td>
+            <td style="font-size:12px;color:var(--green)">${fmtBytes(z.free||0)}</td>
+            <td style="font-size:12px;color:var(--muted)">${z.dedup||'—'}</td>
+            <td><span style="color:${z.health==='ONLINE'?'var(--green)':z.health==='DEGRADED'?'var(--yellow)':'var(--red)'}">${escHtml(z.health||'—')}</span></td>
+            <td style="font-size:11px;color:var(--muted)">${escHtml(z.scan||'—')}</td>
+          </tr>`).join('')}
+          </tbody></table></div>`:''}`;
+  } catch(e) {
+    el.innerHTML = `<div class="empty">Failed: ${e.message}</div>`;
+  }
+}
+
+async function openNodeSMARTModal(devpath, node) {
+  document.getElementById('modal-title').textContent = `S.M.A.R.T — ${devpath}`;
+  document.getElementById('modal-body').innerHTML = '<div class="empty"><span class="loading"></span> Reading SMART data…</div>';
+  document.getElementById('modal-bg').classList.add('open');
+  try {
+    const d = await detailGet(`/api2/json/nodes/${node}/disks/smart?disk=${encodeURIComponent(devpath)}`);
+    const smart = d.data || {};
+    const attrs = Array.isArray(smart.attributes) ? smart.attributes : [];
+    const health = smart.health || 'UNKNOWN';
+    document.getElementById('modal-body').innerHTML = `
+      <div style="display:flex;gap:16px;margin-bottom:12px;flex-wrap:wrap;font-size:13px">
+        <span>Type: <strong style="color:var(--text)">${escHtml(smart.type||'—')}</strong></span>
+        <span>Health: <strong style="color:${health==='PASSED'?'var(--green)':'var(--red)'}">${health==='PASSED'?'✓ PASSED':'✗ '+health}</strong></span>
+        ${smart.temperature?`<span>Temp: <strong style="color:${+smart.temperature>60?'var(--red)':+smart.temperature>45?'var(--yellow)':'var(--teal)'}">${smart.temperature}°C</strong></span>`:''}
+      </div>
+      ${attrs.length?`
+      <div style="max-height:450px;overflow-y:auto">
+        <table style="width:100%;border-collapse:collapse;font-size:11px">
+          <thead style="position:sticky;top:0;background:var(--bg3)"><tr>
+            <th style="padding:5px 8px;text-align:left;color:var(--muted)">ID</th>
+            <th style="padding:5px 8px;text-align:left">Attribute</th>
+            <th style="padding:5px 8px;text-align:right;color:var(--muted)">Value</th>
+            <th style="padding:5px 8px;text-align:right;color:var(--muted)">Worst</th>
+            <th style="padding:5px 8px;text-align:right;color:var(--muted)">Raw</th>
+            <th style="padding:5px 8px;text-align:center;color:var(--muted)">Status</th>
+          </tr></thead>
+          <tbody>${attrs.map(a=>`<tr style="border-bottom:1px solid var(--border)">
+            <td style="padding:4px 8px;color:var(--muted)">${escHtml(String(a.id||'—'))}</td>
+            <td style="padding:4px 8px">${escHtml(a.name||'—')}</td>
+            <td style="padding:4px 8px;text-align:right">${a.value??'—'}</td>
+            <td style="padding:4px 8px;text-align:right;color:var(--muted)">${a.worst??'—'}</td>
+            <td style="padding:4px 8px;text-align:right;color:var(--muted);font-family:monospace">${escHtml(String(a.raw??'—'))}</td>
+            <td style="padding:4px 8px;text-align:center"><span style="color:${a.fail&&a.fail!=='-'?'var(--red)':'var(--green)'}">${a.fail&&a.fail!=='-'?'✗ FAIL':'✓'}</span></td>
+          </tr>`).join('')}</tbody>
+        </table>
+      </div>`:'<div class="empty">No S.M.A.R.T attributes available for this device</div>'}`;
+  } catch(e) {
+    document.getElementById('modal-body').innerHTML = `<div class="empty">Failed: ${e.message}</div>`;
+  }
+}
+
+// ── NODE SERVICES ──────────────────────────────────────────
+// GET /nodes/{n}/services   POST /nodes/{n}/services/{svc}/{cmd}
+async function loadNodeServices(nodeData) {
+  const el = document.getElementById('dtab-services');
+  el.innerHTML = '<div class="empty"><span class="loading"></span> Loading services…</div>';
+  const node = nodeData.node;
+  try {
+    const d = await detailGet(`/api2/json/nodes/${node}/services`);
+    const all = (d.data||[]).sort((a,b)=>(a.name||'').localeCompare(b.name||''));
+    const running = all.filter(s=>s.state==='running').length;
+    el.innerHTML = `
+      <div class="stats-grid" style="margin-bottom:14px">
+        <div class="stat-card accent-green"><div class="label">Running</div><div class="value">${running}</div></div>
+        <div class="stat-card accent-${all.length-running?'red':'green'}"><div class="label">Stopped</div><div class="value" style="color:${all.length-running?'var(--red)':'var(--green)'}">${all.length-running}</div></div>
+        <div class="stat-card accent-blue"><div class="label">Total</div><div class="value">${all.length}</div></div>
+      </div>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Service</th><th>Description</th><th>State</th><th>Startup</th><th>Actions</th></tr></thead>
+        <tbody>${all.map(s=>`<tr>
+          <td><strong style="font-family:monospace;font-size:12px">${escHtml(s.name||s.service||'—')}</strong></td>
+          <td style="font-size:12px;color:var(--muted);max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escHtml(s.desc||'')}">${escHtml(s.desc||'—')}</td>
+          <td>${s.state==='running'
+            ?'<span class="badge running" style="font-size:10px"><span class="badge-dot"></span>running</span>'
+            :'<span class="badge stopped" style="font-size:10px"><span class="badge-dot"></span>stopped</span>'}</td>
+          <td style="font-size:11px;color:var(--muted)">${escHtml(s['unit-state']||s['active-state']||'—')}</td>
+          <td onclick="event.stopPropagation()"><div class="actions-row">
+            ${s.state!=='running'?`<button class="btn small success" onclick="nodeServiceAction('${escHtml(s.name||s.service||'')}','${node}','start')">▶ Start</button>`:''}
+            ${s.state==='running'?`<button class="btn small warning" onclick="nodeServiceAction('${escHtml(s.name||s.service||'')}','${node}','stop')">■ Stop</button>`:''}
+            ${s.state==='running'?`<button class="btn small" onclick="nodeServiceAction('${escHtml(s.name||s.service||'')}','${node}','restart')">↺ Restart</button>`:''}
+            <button class="btn small" onclick="nodeServiceAction('${escHtml(s.name||s.service||'')}','${node}','reload')">↻ Reload</button>
+          </div></td>
+        </tr>`).join('')}
+        </tbody></table></div>`;
+  } catch(e) {
+    el.innerHTML = `<div class="empty">Failed: ${e.message}</div>`;
+  }
+}
+
+async function nodeServiceAction(service, node, action) {
+  try {
+    const res = await detailPost(`/api2/json/nodes/${node}/services/${encodeURIComponent(service)}/${action}`, {});
+    const upid = res && res.data;
+    if(upid&&typeof upid==='string') tmRegister(upid, node, `${action} ${service}`);
+    toast(`${action} ${service} started`, 'success');
+    setTimeout(()=>{ if(currentDetail&&currentDetail._isNode&&currentDetail.node===node) loadNodeServices(currentDetail); }, 2000);
+  } catch(e) { toast(`${action} failed: `+e.message, 'error'); }
 }
 
 // ── VM HARDWARE TAB ───────────────────────────────────────
