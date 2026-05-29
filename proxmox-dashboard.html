@@ -401,10 +401,12 @@
 <body>
 
 <div id="topbar">
-  <div class="logo" title="Proxmox Command Center">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/><path d="M7 8h10M7 11h6"/></svg>
-    PCC
-    <span style="font-size:10px;font-weight:400;color:var(--muted);letter-spacing:.5px;margin-left:2px">Proxmox Command Center</span>
+  <div style="display:flex;flex-direction:column;justify-content:center;line-height:1.2">
+    <div class="logo" style="gap:8px">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/><path d="M7 8h10M7 11h6"/></svg>
+      PCC
+    </div>
+    <span style="font-size:11px;font-weight:500;color:var(--muted);letter-spacing:.3px;padding-left:34px;margin-top:-1px">Proxmox&#174; Command Center</span>
   </div>
   <div class="spacer"></div>
   <div id="search-wrap">
@@ -665,6 +667,11 @@
         <button class="btn primary" onclick="connect()" id="btn-connect" style="width:100%;justify-content:center;padding:11px;margin-top:8px">
           Connect to Proxmox VE
         </button>
+        <p style="font-size:10px;color:var(--muted);margin-top:14px;line-height:1.6;text-align:center">
+          PCC is an independent open-source project and is not affiliated with, endorsed by,
+          or sponsored by Proxmox Server Solutions GmbH.<br>
+          Proxmox&#174; and Proxmox VE&#174; are registered trademarks of Proxmox Server Solutions GmbH.
+        </p>
       </div>
     </div>
 
