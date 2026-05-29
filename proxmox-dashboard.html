@@ -313,6 +313,19 @@
     .tm-done{background:var(--green)!important;animation:none!important;}
     .tm-err{background:var(--red)!important;animation:none!important;}
     @media(max-width:700px){#app{grid-template-columns:1fr;}#sidebar{display:none;}#detail-panel{width:100%;}}
+    /* NOTIFICATION PANEL */
+    #notif-panel{position:fixed;top:62px;right:10px;width:390px;max-height:540px;background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);z-index:350;box-shadow:0 8px 30px rgba(0,0,0,.4);display:flex;flex-direction:column;overflow:hidden;}
+    .notif-hdr{padding:10px 14px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px;background:var(--bg3);}
+    .notif-hdr h4{font-size:13px;font-weight:700;flex:1;margin:0;}
+    #notif-list{overflow-y:auto;flex:1;}
+    .notif-item{padding:10px 14px;border-bottom:1px solid var(--border);display:flex;align-items:flex-start;gap:10px;}
+    .notif-item:hover{background:var(--bg3);}
+    .notif-item.unread{background:rgba(249,115,22,.04);}
+    .notif-icon{font-size:14px;flex-shrink:0;margin-top:1px;}
+    .notif-title{font-size:13px;font-weight:600;}
+    .notif-msg{font-size:12px;color:var(--muted);margin-top:2px;}
+    .notif-time{font-size:10px;color:var(--border);margin-top:4px;}
+    #notif-badge{position:absolute;top:-5px;right:-5px;background:var(--red);color:#fff;font-size:9px;min-width:16px;height:16px;border-radius:8px;padding:0 3px;display:flex;align-items:center;justify-content:center;font-weight:700;pointer-events:none;}
   </style>
 </head>
 <body>
@@ -328,6 +341,10 @@
     <div id="search-results"></div>
   </div>
   <button class="btn small" onclick="toggleTheme()" title="Toggle light/dark mode">◐</button>
+  <button class="btn small" id="notif-btn" onclick="toggleNotifPanel()" title="Notifications" style="position:relative">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:14px;height:14px"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+    <span id="notif-badge" style="display:none"></span>
+  </button>
   <span id="conn-status" class="pill offline">disconnected</span>
   <span id="topbar-uptime" style="display:none"></span>
   <span id="last-refresh">–</span>
@@ -924,6 +941,18 @@
   </div>
 </div>
 
+<!-- NOTIFICATION PANEL -->
+<div id="notif-panel" style="display:none">
+  <div class="notif-hdr">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:14px;height:14px;color:var(--accent);flex-shrink:0"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+    <h4>Notifications</h4>
+    <button class="btn small" onclick="openAlertSettingsModal()" title="Alert settings" style="padding:3px 8px;font-size:11px">⚙ Settings</button>
+    <button class="btn small" onclick="clearAllNotifs()" style="padding:3px 8px;font-size:11px">Clear all</button>
+    <button onclick="closeNotifPanel()" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:14px;padding:0 2px">✕</button>
+  </div>
+  <div id="notif-list"></div>
+</div>
+
 <!-- DOWNLOAD CT TEMPLATES MODAL -->
 <div id="dl-bg" onclick="closeDLModal(event)" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.75);z-index:660;align-items:center;justify-content:center;">
   <div style="background:var(--bg2);border:1px solid var(--border);border-radius:12px;width:780px;max-width:95vw;max-height:90vh;display:flex;flex-direction:column;overflow:hidden">
@@ -1020,6 +1049,8 @@ async function connect() {
     PVE.refreshInterval = setInterval(refreshAll, 30000);
     tmStart();
     renderSavedViewsSidebar();
+    loadStoredNotifs();
+    updateNotifBadge();
     switchView('overview');
   } catch(e) {
     toast('Failed to load nodes: '+e.message,'error');
@@ -1197,7 +1228,7 @@ async function refreshAll() {
       ...extraConns.map(c => refreshExtraConn(c))]);
     renderCurrentView();
     renderSidebarNodes();
-    checkAlerts();
+    checkAndFireAlerts();
     document.getElementById('last-refresh').textContent='Updated '+new Date().toLocaleTimeString();
   } catch(e) {
     toast('Refresh failed: '+e.message,'error');
@@ -5779,6 +5810,228 @@ function disconnectPBS() {
   document.getElementById('pbs-connect').style.display = '';
   document.getElementById('pbs-content').innerHTML = '<div class="empty">Disconnected.</div>';
   toast('Disconnected from Backup Server', 'info');
+}
+
+// ── NOTIFICATION & ALERT SYSTEM ──────────────────────────
+// Fires browser push notifications + maintains in-app notification panel.
+// Alert rules: CPU, memory, storage thresholds, VM state changes, task errors.
+// Persisted in localStorage so alerts survive page refresh.
+
+let notifications  = [];    // { id, type, severity, title, message, timestamp, read }
+let notifCooldowns = {};    // key → last-fired timestamp (in-memory de-duplication)
+let prevVMStates   = {};    // 'vmid@node' → last known status
+let notifPanelOpen = false;
+const NOTIF_COOLDOWN = 5 * 60 * 1000; // 5 min between repeat resource alerts
+const NOTIF_MAX      = 100;
+
+function getAlertThresholds() {
+  const defaults = { cpu:90, memory:90, storage:85, certDays:30, vmDown:true, taskError:true };
+  try { return { ...defaults, ...JSON.parse(localStorage.getItem('pve-alert-thresholds')||'{}') }; }
+  catch(e) { return defaults; }
+}
+function saveAlertThresholds(t) { localStorage.setItem('pve-alert-thresholds', JSON.stringify(t)); }
+
+function loadStoredNotifs() {
+  try {
+    notifications = JSON.parse(localStorage.getItem('pve-notifications')||'[]');
+    prevVMStates  = JSON.parse(localStorage.getItem('pve-vm-states')||'{}');
+  } catch(e) { notifications=[]; prevVMStates={}; }
+}
+
+function _persistNotifs() {
+  localStorage.setItem('pve-notifications', JSON.stringify(notifications.slice(0, NOTIF_MAX)));
+  localStorage.setItem('pve-vm-states', JSON.stringify(prevVMStates));
+}
+
+function addNotif(type, severity, title, message, dedupeKey) {
+  const now = Date.now();
+  if (dedupeKey) {
+    if (notifCooldowns[dedupeKey] && (now - notifCooldowns[dedupeKey]) < NOTIF_COOLDOWN) return;
+    notifCooldowns[dedupeKey] = now;
+  }
+  const n = { id:'n'+now+Math.random().toString(36).substr(2,4), type, severity, title, message, timestamp:now, read:false };
+  notifications.unshift(n);
+  if (notifications.length > NOTIF_MAX) notifications.length = NOTIF_MAX;
+  _persistNotifs();
+  updateNotifBadge();
+  if (notifPanelOpen) renderNotifList();
+  if (severity==='error'||severity==='warning') _fireBrowserNotif(title, message);
+}
+
+async function _fireBrowserNotif(title, body) {
+  if (!('Notification' in window)) return;
+  if (Notification.permission==='default') await Notification.requestPermission();
+  if (Notification.permission==='granted') {
+    try { new Notification('Proxmox Dashboard: '+title, { body }); } catch(e) {}
+  }
+}
+
+function updateNotifBadge() {
+  const unread = notifications.filter(n=>!n.read).length;
+  const badge = document.getElementById('notif-badge');
+  if (badge) { badge.textContent = unread>99?'99+':unread; badge.style.display = unread?'flex':'none'; }
+}
+
+function toggleNotifPanel() {
+  notifPanelOpen = !notifPanelOpen;
+  const panel = document.getElementById('notif-panel');
+  if (!panel) return;
+  panel.style.display = notifPanelOpen ? '' : 'none';
+  if (notifPanelOpen) {
+    notifications.forEach(n=>n.read=true);
+    _persistNotifs();
+    updateNotifBadge();
+    renderNotifList();
+  }
+}
+
+function closeNotifPanel() {
+  notifPanelOpen = false;
+  const p = document.getElementById('notif-panel');
+  if (p) p.style.display = 'none';
+}
+
+function renderNotifList() {
+  const list = document.getElementById('notif-list');
+  if (!list) return;
+  if (!notifications.length) {
+    list.innerHTML = '<div class="empty" style="padding:24px">No notifications yet</div>';
+    return;
+  }
+  const icons    = { error:'✗', warning:'⚠', info:'ℹ', success:'✓' };
+  const colors   = { error:'var(--red)', warning:'var(--yellow)', info:'var(--blue)', success:'var(--green)' };
+  list.innerHTML = notifications.slice(0,50).map(n => `
+    <div class="notif-item${n.read?'':' unread'}">
+      <div class="notif-icon" style="color:${colors[n.severity]||'var(--muted)'}">${icons[n.severity]||'•'}</div>
+      <div style="flex:1;min-width:0">
+        <div class="notif-title">${escHtml(n.title)}</div>
+        <div class="notif-msg">${escHtml(n.message)}</div>
+        <div class="notif-time">${new Date(n.timestamp).toLocaleString()}</div>
+      </div>
+      <button onclick="dismissNotif('${n.id}')" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:12px;flex-shrink:0;padding:0 2px">✕</button>
+    </div>`).join('') +
+    (notifications.length>50?`<div class="empty" style="font-size:11px;padding:8px">… and ${notifications.length-50} older notifications</div>`:'');
+}
+
+function dismissNotif(id) {
+  notifications = notifications.filter(n=>n.id!==id);
+  _persistNotifs(); updateNotifBadge(); renderNotifList();
+}
+
+function clearAllNotifs() {
+  notifications=[]; _persistNotifs(); updateNotifBadge(); renderNotifList();
+}
+
+// Close panel when clicking outside
+document.addEventListener('click', e => {
+  if (!notifPanelOpen) return;
+  const panel = document.getElementById('notif-panel');
+  const btn   = document.getElementById('notif-btn');
+  if (panel && !panel.contains(e.target) && btn && !btn.contains(e.target)) closeNotifPanel();
+});
+
+// ── ALERT RULE CHECKING ───────────────────────────────────
+// Called after every refreshAll — detects new alert conditions and fires
+// notifications only for changed/new states
+
+function checkAndFireAlerts() {
+  const t = getAlertThresholds();
+
+  // 1. Node CPU / Memory thresholds
+  allNodes().forEach(n => {
+    const s = n.statusData || {};
+    const cpu = s.cpu ? s.cpu * 100 : (n.cpu ? n.cpu * 100 : 0);
+    const mem = s.memory ? (s.memory.used / s.memory.total) * 100 : 0;
+    const label = n.connId ? `${getConnName(n.connId)}: ${n.node}` : n.node;
+    if (cpu > t.cpu) addNotif('cpu', cpu>95?'error':'warning', `High CPU — ${label}`, `CPU at ${cpu.toFixed(1)}% (threshold: ${t.cpu}%)`, `cpu-${n.connId||''}-${n.node}`);
+    if (mem > t.memory) addNotif('memory', mem>95?'error':'warning', `High memory — ${label}`, `Memory at ${mem.toFixed(1)}% (threshold: ${t.memory}%)`, `mem-${n.connId||''}-${n.node}`);
+  });
+
+  // 2. Storage thresholds (primary only — extra conns don't load storage)
+  PVE.storage.forEach(s => {
+    if (s.total && s.used) {
+      const pct = (s.used / s.total) * 100;
+      if (pct > t.storage) addNotif('storage', pct>95?'error':'warning', `Storage nearly full — ${s.storage}`, `${pct.toFixed(1)}% used on ${s.node} (threshold: ${t.storage}%)`, `stor-${s.node}-${s.storage}`);
+    }
+  });
+
+  // 3. VM/CT state changes (running → stopped)
+  if (t.vmDown) {
+    allVMs().concat(allCTs()).forEach(x => {
+      const key = `${x.connId||''}@${x.node}@${x.vmid}`;
+      const prev = prevVMStates[key];
+      if (prev === 'running' && x.status !== 'running') {
+        addNotif('vm_down', 'warning', `${x.type.toUpperCase()} ${x.vmid} stopped`, `${x.name||x.vmid} on ${x.node} changed from running → ${x.status}`, `vmdown-${key}-${Date.now()}`);
+      }
+      prevVMStates[key] = x.status;
+    });
+  }
+
+  // 4. New task errors (de-duplicated by upid)
+  if (t.taskError) {
+    const seenKey = 'task-seen-until';
+    const seenUntil = notifCooldowns[seenKey] || 0;
+    const newErrs = PVE.tasks.filter(tk =>
+      tk.endtime && tk.endtime * 1000 > seenUntil &&
+      tk.status && tk.status !== 'OK' && tk.status !== 'running' && tk.status !== ''
+    );
+    newErrs.forEach(tk => {
+      addNotif('task_error', 'error', `Task failed on ${tk.node}`, `${tk.type||'Task'} ${tk.id||tk.vmid||''}: ${tk.status}`, `task-${tk.upid}`);
+    });
+    if (!seenUntil) notifCooldowns[seenKey] = Date.now(); // baseline on first run
+    else if (newErrs.length) notifCooldowns[seenKey] = Date.now();
+  }
+
+  // 5. Update existing alert banner (compatibility)
+  checkAlerts();
+  // Persist VM state tracking
+  _persistNotifs();
+}
+
+function openAlertSettingsModal() {
+  const t = getAlertThresholds();
+  document.getElementById('modal-title').textContent = 'Alert Settings';
+  document.getElementById('modal-body').innerHTML = `
+    <div class="create-vm-grid">
+      <div class="form-group"><label>CPU THRESHOLD (%)</label><input id="at-cpu" type="number" value="${t.cpu}" min="50" max="100"/></div>
+      <div class="form-group"><label>MEMORY THRESHOLD (%)</label><input id="at-mem" type="number" value="${t.memory}" min="50" max="100"/></div>
+    </div>
+    <div class="create-vm-grid">
+      <div class="form-group"><label>STORAGE THRESHOLD (%)</label><input id="at-stor" type="number" value="${t.storage}" min="50" max="100"/></div>
+      <div class="form-group"><label>CERT EXPIRY WARNING (days)</label><input id="at-cert" type="number" value="${t.certDays||30}" min="7" max="365"/></div>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:10px;margin-top:10px">
+      <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer">
+        <input type="checkbox" id="at-vmdown"${t.vmDown?' checked':''} style="width:auto;height:auto;padding:0;margin:0">
+        Alert when a running VM/CT stops unexpectedly
+      </label>
+      <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer">
+        <input type="checkbox" id="at-taskerr"${t.taskError?' checked':''} style="width:auto;height:auto;padding:0;margin:0">
+        Alert on task failures
+      </label>
+    </div>
+    <div style="margin-top:14px;padding:9px 12px;background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius);font-size:12px;color:var(--muted);display:flex;align-items:center;justify-content:space-between">
+      <span>Browser push notifications (requires permission)</span>
+      <button class="btn small" onclick="requestNotifPermission()">Enable</button>
+    </div>`;
+  modalCallback = () => {
+    saveAlertThresholds({
+      cpu:       parseInt(document.getElementById('at-cpu').value)   || 90,
+      memory:    parseInt(document.getElementById('at-mem').value)   || 90,
+      storage:   parseInt(document.getElementById('at-stor').value)  || 85,
+      certDays:  parseInt(document.getElementById('at-cert').value)  || 30,
+      vmDown:    document.getElementById('at-vmdown').checked,
+      taskError: document.getElementById('at-taskerr').checked,
+    });
+    toast('Alert settings saved', 'success');
+  };
+  document.getElementById('modal-bg').classList.add('open');
+}
+
+async function requestNotifPermission() {
+  if (!('Notification' in window)) return toast('Browser notifications not supported in this browser', 'error');
+  const perm = await Notification.requestPermission();
+  toast(perm==='granted' ? '✓ Browser notifications enabled' : 'Browser notifications denied — check browser settings', perm==='granted'?'success':'error');
 }
 
 // ── CUSTOM SAVED VIEWS ───────────────────────────────────
