@@ -772,13 +772,15 @@
         <div style="display:flex;gap:6px;align-items:center">
           <select class="conn-sel" id="network-conn" style="width:140px;padding:5px 8px;font-size:13px" onchange="loadNetwork()"><option value="">Primary</option></select>
           <select id="network-node-select" style="width:160px;padding:5px 8px;font-size:13px" onchange="loadNetwork()"></select>
+          <button class="btn small warning" id="net-apply-btn" onclick="applyNetworkChanges()" style="display:none">⚡ Apply Changes</button>
+          <button class="btn small primary" onclick="openAddNetworkModal()">+ Add Interface</button>
           <button class="btn small" onclick="loadNetwork()">Refresh</button>
         </div>
       </div>
       <div class="stats-grid" id="network-summary"></div>
       <div class="table-wrap">
         <table>
-          <thead><tr><th>Interface</th><th>Type</th><th>State</th><th>IP Address</th><th>MAC Address</th><th>Bridge Ports</th><th>Autostart</th><th>Comments</th></tr></thead>
+          <thead><tr><th>Interface</th><th>Type</th><th>State</th><th>IP Address</th><th>MAC Address</th><th>Bridge Ports / Slaves</th><th>Autostart</th><th>Comments</th><th>Actions</th></tr></thead>
           <tbody id="network-body"></tbody>
         </table>
       </div>
@@ -3021,23 +3023,31 @@ async function toggleStorageDisable(storageName, connId, currentlyDisabled) {
 
 // ── NETWORK ───────────────────────────────────────────────
 
+let _netNode = ''; let _netConnId = '';
+
 async function loadNetwork() {
   const conn = getViewConn('network-conn');
-  const get = conn ? (p=>connGet(conn,p)) : pveGet;
-  const nodes = conn ? (conn.nodes||[]) : PVE.nodes;
+  const get  = conn ? (p=>connGet(conn,p)) : pveGet;
+  const nodes= conn ? (conn.nodes||[]) : PVE.nodes;
   const nSel = document.getElementById('network-node-select');
   if (nSel) nSel.innerHTML = nodes.map(n=>`<option value="${n.node}">${n.node}</option>`).join('');
   const node = (nSel&&nSel.value) || (nodes[0]&&nodes[0].node);
   if (!node) return;
-  document.getElementById('network-body').innerHTML='<tr><td colspan="8" class="empty"><span class="loading"></span> Loading…</td></tr>';
+  _netNode   = node;
+  _netConnId = conn ? (extraConns.find(c=>c===conn)||{}).id||'' : '';
+  document.getElementById('network-body').innerHTML='<tr><td colspan="9" class="empty"><span class="loading"></span> Loading…</td></tr>';
   document.getElementById('network-summary').innerHTML='';
   try {
     const d = await get(`/api2/json/nodes/${node}/network`);
     const ifaces = (d.data||[]).sort((a,b)=>(a.iface||'').localeCompare(b.iface||''));
     PVE.network = ifaces.map(i=>({...i,node}));
+    // Show Apply button if pending changes detected
+    const pending = !!(d.changes || ifaces.some(i=>i.pending));
+    const applyBtn = document.getElementById('net-apply-btn');
+    if (applyBtn) applyBtn.style.display = pending ? '' : 'none';
     renderNetwork();
   } catch(e) {
-    document.getElementById('network-body').innerHTML=`<tr><td colspan="8" class="empty">Failed: ${e.message}</td></tr>`;
+    document.getElementById('network-body').innerHTML=`<tr><td colspan="9" class="empty">Failed: ${e.message}</td></tr>`;
   }
 }
 
@@ -3057,7 +3067,7 @@ function renderNetwork() {
     <div class="stat-card accent-green"><div class="label">Ethernet</div><div class="value">${eths}</div><div class="sub">physical / veth</div></div>`;
 
   if (!ifaces.length) {
-    document.getElementById('network-body').innerHTML='<tr><td colspan="8" class="empty">No interfaces found</td></tr>';
+    document.getElementById('network-body').innerHTML='<tr><td colspan="9" class="empty">No interfaces found</td></tr>';
     return;
   }
 
@@ -3066,10 +3076,13 @@ function renderNetwork() {
     const ip6  = i.address6||'';
     const ipDisplay = [ip, ip6].filter(x=>x&&x!=='—').join('<br>') || '—';
     const mac  = i.macaddr||'—';
-    const ports= i['bridge-ports']||i.slaves||'—';
+    const ports= i['bridge-ports']||i.bridge_ports||i.slaves||'—';
     const auto = i.autostart?'<span class="badge ok" style="font-size:10px">Yes</span>':'<span style="color:var(--muted);font-size:12px">No</span>';
     const typeColor = i.type==='bridge'?'var(--blue)':i.type==='bond'?'var(--yellow)':i.type==='eth'?'var(--green)':'var(--muted)';
-    const comments = i.comments||i.comment||'';
+    const comments  = i.comments||i.comment||'';
+    const isPhysical= i.type==='eth'||i.type==='veth';
+    const node = i.node || _netNode;
+    const cid  = _netConnId;
     return `<tr>
       <td><strong>${escHtml(i.iface||'—')}</strong></td>
       <td><span style="color:${typeColor};font-size:12px;font-weight:600">${escHtml(i.type||'—')}</span></td>
@@ -3078,9 +3091,272 @@ function renderNetwork() {
       <td style="font-family:monospace;font-size:11px;color:var(--muted)">${escHtml(mac)}</td>
       <td style="font-size:12px;color:var(--muted)">${escHtml(String(ports))}</td>
       <td>${auto}</td>
-      <td style="font-size:12px;color:var(--muted)">${escHtml(comments)}</td>
+      <td style="font-size:12px;color:var(--muted);max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escHtml(comments)}</td>
+      <td onclick="event.stopPropagation()" style="white-space:nowrap">
+        <div class="actions-row">
+          <button class="btn small" onclick="openEditNetworkModal('${escHtml(i.iface)}','${node}','${cid}')">✎ Edit</button>
+          ${!isPhysical?`<button class="btn small danger" onclick="confirmDeleteNetwork('${escHtml(i.iface)}','${node}','${cid}')">Delete</button>`:''}
+        </div>
+      </td>
     </tr>`;
   }).join('');
+}
+
+// ── NETWORK MANAGEMENT ───────────────────────────────────
+// POST   /api2/json/nodes/{n}/network        — create interface
+// GET    /api2/json/nodes/{n}/network/{if}   — fetch config
+// PUT    /api2/json/nodes/{n}/network/{if}   — update interface
+// DELETE /api2/json/nodes/{n}/network/{if}   — delete (non-physical only)
+// PUT    /api2/json/nodes/{n}/network        — apply pending changes
+// Official: https://pve.proxmox.com/pve-docs/api-viewer/#/nodes/{node}/network
+// NOTE: changes are written to /etc/network/interfaces.new — not live
+// until Apply is clicked.
+
+function _netTypeFields(type, c={}) {
+  const v = (k,fb='') => escHtml(String(c[k]!=null?c[k]:fb));
+  const chk = k => c[k]?' checked':'';
+  // Shared IP/gateway fields
+  const ipFields = `
+    <div class="create-vm-grid">
+      <div class="form-group"><label>IPv4 ADDRESS / CIDR (optional)</label>
+        <input id="nf-cidr" value="${v('cidr',c.address?(c.address+(c.netmask?'/'+cidrFromMask(c.netmask):'')):'')}" placeholder="192.168.1.1/24 or blank for none"/>
+      </div>
+      <div class="form-group"><label>GATEWAY (optional)</label>
+        <input id="nf-gw" value="${v('gateway')}" placeholder="192.168.1.254"/>
+      </div>
+    </div>`;
+  const common = `
+    <div class="create-vm-grid">
+      <div class="form-group"><label>MTU (optional)</label><input id="nf-mtu" type="number" value="${v('mtu')}" placeholder="1500 or blank for default"/></div>
+      <div class="form-group"><label>COMMENT (optional)</label><input id="nf-comment" value="${v('comments',c.comment||'')}" placeholder="description"/></div>
+    </div>
+    <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;margin-top:8px">
+      <input type="checkbox" id="nf-autostart"${c.autostart?' checked':''} style="width:auto;height:auto;padding:0;margin:0"> Autostart at boot
+    </label>`;
+  if (type==='eth') return ipFields + common;
+  if (type==='bridge') return `
+    <div class="form-group"><label>BRIDGE PORTS — space-separated physical interfaces (e.g. nic0 nic1)</label>
+      <input id="nf-ports" value="${v('bridge_ports',c['bridge-ports']||'')}" placeholder="nic0 or blank for no ports"/>
+    </div>
+    ${ipFields}
+    <div style="display:flex;gap:16px;margin-top:8px;flex-wrap:wrap">
+      <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer">
+        <input type="checkbox" id="nf-stp"${(c.bridge_stp==='on'||c['bridge-stp']==='on')?' checked':''} style="width:auto;height:auto;padding:0;margin:0"> Spanning Tree Protocol (STP)
+      </label>
+      <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer">
+        <input type="checkbox" id="nf-vlanaware"${(c.bridge_vlan_aware||c['bridge-vlan-aware'])?' checked':''} style="width:auto;height:auto;padding:0;margin:0"> VLAN-aware bridge
+      </label>
+    </div>
+    <div class="form-group" style="margin-top:8px"><label>FORWARD DELAY (seconds, 0 = no delay)</label>
+      <input id="nf-fd" type="number" value="${v('bridge_fd',c['bridge-fd']||'0')}" min="0" max="30" style="width:120px"/>
+    </div>
+    ${common}`;
+  if (type==='bond') {
+    const slaves = c.slaves||c.bond_slaves||'';
+    return `
+    <div class="form-group"><label>SLAVE INTERFACES — space-separated (e.g. nic0 nic1)</label>
+      <input id="nf-slaves" value="${escHtml(String(slaves))}" placeholder="nic0 nic1"/>
+    </div>
+    <div class="create-vm-grid">
+      <div class="form-group"><label>BOND MODE</label>
+        <select id="nf-bondmode">
+          ${['balance-rr','active-backup','balance-xor','broadcast','802.3ad','balance-tlb','balance-alb'].map(m=>`<option value="${m}"${(c.bond_mode||c['bond-mode']||'balance-rr')===m?' selected':''}>${m}</option>`).join('')}
+        </select>
+      </div>
+      <div class="form-group"><label>HASH POLICY (802.3ad)</label>
+        <select id="nf-hashpol">
+          ${['layer2','layer2+3','layer3+4','encap2+3','encap3+4'].map(m=>`<option value="${m}"${(c.bond_xmit_hash_policy||c['bond-xmit-hash-policy']||'layer2')===m?' selected':''}>${m}</option>`).join('')}
+        </select>
+      </div>
+    </div>
+    ${ipFields}${common}`;
+  }
+  if (type==='vlan') {
+    const physIfaces = PVE.network.filter(i=>i.type==='eth'||i.type==='bridge'||i.type==='bond').map(i=>i.iface);
+    const rawDevice  = c['vlan-raw-device']||c.vlan_raw_device||'';
+    const vlanOpts   = physIfaces.map(i=>`<option value="${i}"${i===rawDevice?' selected':''}>${i}</option>`).join('');
+    return `
+    <div class="create-vm-grid">
+      <div class="form-group"><label>PARENT INTERFACE (required)</label>
+        <select id="nf-vlandev">${vlanOpts||'<option value="">— load Network view first —</option>'}</select>
+      </div>
+      <div class="form-group"><label>VLAN ID (1–4094, required)</label>
+        <input id="nf-vlanid" type="number" value="${v('vlan-id',c.vlan_id||'')}" min="1" max="4094" placeholder="100"/>
+      </div>
+    </div>
+    ${ipFields}${common}`;
+  }
+  return ipFields + common;
+}
+
+function _gatherNetParams(type) {
+  const g = id => { const el=document.getElementById(id); if(!el) return null; return el.type==='checkbox'?el.checked:(el.value.trim()||null); };
+  const p = {};
+  const cidr = g('nf-cidr');
+  if (cidr) {
+    const [addr, mask] = cidr.split('/');
+    if (addr) p.address = addr;
+    if (mask) p.netmask = mask;
+    p.method = 'static';
+  } else {
+    p.method = 'manual';
+  }
+  const gw = g('nf-gw'); if (gw) p.gateway = gw;
+  const mtu= g('nf-mtu'); if (mtu) p.mtu = parseInt(mtu);
+  const cmt= g('nf-comment'); if (cmt) p.comments = cmt;
+  p.autostart = g('nf-autostart') ? 1 : 0;
+  if (type==='bridge') {
+    const pts = g('nf-ports');       if (pts!=null) p['bridge-ports'] = pts;
+    p['bridge-stp'] = g('nf-stp') ? 'on' : 'off';
+    p['bridge-vlan-aware'] = g('nf-vlanaware') ? 1 : 0;
+    const fd = g('nf-fd');           if (fd!=null) p['bridge-fd'] = parseInt(fd)||0;
+  }
+  if (type==='bond') {
+    const sl = g('nf-slaves');       if (sl) p.slaves = sl;
+    const bm = g('nf-bondmode');     if (bm) p.bond_mode = bm;
+    const hp = g('nf-hashpol');      if (hp) p.bond_xmit_hash_policy = hp;
+  }
+  if (type==='vlan') {
+    const dev= g('nf-vlandev');      if (dev) p['vlan-raw-device'] = dev;
+    const vid= g('nf-vlanid');       if (vid) p['vlan-id'] = parseInt(vid);
+  }
+  return p;
+}
+
+function openAddNetworkModal() {
+  const node = _netNode;
+  if (!node) return toast('Select a node first', 'error');
+  document.getElementById('modal-title').textContent = `Add Network Interface — ${node}`;
+  document.getElementById('modal-body').innerHTML = `
+    <div class="create-vm-grid">
+      <div class="form-group"><label>INTERFACE NAME</label>
+        <input id="nf-iface" placeholder="vmbr1, bond0, eth0.100…"/>
+      </div>
+      <div class="form-group"><label>TYPE</label>
+        <select id="nf-type" onchange="netTypeChanged()">
+          <option value="bridge">Bridge (vmbr) — recommended for VMs</option>
+          <option value="bond">Bond — link aggregation / LACP</option>
+          <option value="vlan">VLAN — tagged interface</option>
+        </select>
+      </div>
+    </div>
+    <div id="nf-type-fields" style="margin-top:10px">${_netTypeFields('bridge')}</div>`;
+  modalCallback = null;
+  const btn = document.getElementById('modal-confirm-btn');
+  btn.textContent = 'Create Interface'; btn.disabled = false;
+  btn.onclick = async () => {
+    const iface = (document.getElementById('nf-iface')?.value||'').trim();
+    const type  = document.getElementById('nf-type')?.value;
+    if (!iface) return toast('Enter an interface name', 'error');
+    const params = { iface, type, ..._gatherNetParams(type) };
+    const conn = resolveConn(_netConnId);
+    btn.disabled=true; btn.textContent='Creating…';
+    try {
+      if (conn) await connPost(conn, `/api2/json/nodes/${node}/network`, params);
+      else      await pvePost(`/api2/json/nodes/${node}/network`, params);
+      document.getElementById('modal-bg').classList.remove('open');
+      btn.onclick=confirmModal; btn.textContent='Confirm'; btn.disabled=false;
+      toast(`Interface "${iface}" created — click Apply to activate`, 'success');
+      setTimeout(loadNetwork, 800);
+    } catch(e) {
+      btn.disabled=false; btn.textContent='Create Interface';
+      toast('Create failed: '+e.message, 'error');
+    }
+  };
+  document.getElementById('modal-bg').classList.add('open');
+}
+
+function netTypeChanged() {
+  const type = document.getElementById('nf-type')?.value;
+  const el   = document.getElementById('nf-type-fields');
+  if (el && type) el.innerHTML = _netTypeFields(type);
+}
+
+async function openEditNetworkModal(iface, node, connId) {
+  document.getElementById('modal-title').textContent = `Edit Interface — ${iface} (${node})`;
+  document.getElementById('modal-body').innerHTML = '<div class="empty"><span class="loading"></span> Loading config…</div>';
+  modalCallback = null;
+  document.getElementById('modal-bg').classList.add('open');
+  const conn = resolveConn(connId);
+  const get  = conn ? (p=>connGet(conn,p)) : pveGet;
+  let cfg = {};
+  try {
+    const d = await get(`/api2/json/nodes/${node}/network/${encodeURIComponent(iface)}`);
+    cfg = d.data || {};
+  } catch(e) {
+    toast('Failed to load config: '+e.message, 'error');
+    document.getElementById('modal-bg').classList.remove('open');
+    return;
+  }
+  const type = cfg.type || 'eth';
+  document.getElementById('modal-body').innerHTML = `
+    <div style="background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius);padding:8px 12px;font-size:12px;color:var(--muted);margin-bottom:12px">
+      Interface: <strong style="color:var(--text)">${iface}</strong> &nbsp;·&nbsp; Type: <strong style="color:var(--text)">${type}</strong> &nbsp;·&nbsp; Node: <strong style="color:var(--text)">${node}</strong>
+    </div>
+    <div id="nf-type-fields">${_netTypeFields(type, cfg)}</div>`;
+  const btn = document.getElementById('modal-confirm-btn');
+  btn.textContent = 'Save Changes'; btn.disabled = false;
+  btn.onclick = async () => {
+    const params = _gatherNetParams(type);
+    btn.disabled=true; btn.textContent='Saving…';
+    try {
+      if (conn) {
+        const h = connHeaders(conn,{'Content-Type':'application/x-www-form-urlencoded'});
+        const body = Object.entries(params).filter(([,v])=>v!=null).map(([k,v])=>`${encodeURIComponent(k)}=${encodeURIComponent(v)}`).join('&');
+        const r = await fetch(conn.host+`/api2/json/nodes/${node}/network/${encodeURIComponent(iface)}`,{method:'PUT',headers:h,body});
+        if(!r.ok){const t=await r.text();throw new Error(`HTTP ${r.status}: ${t}`);}
+      } else {
+        const fp = Object.fromEntries(Object.entries(params).filter(([,v])=>v!=null));
+        await pvePut(`/api2/json/nodes/${node}/network/${encodeURIComponent(iface)}`, fp);
+      }
+      document.getElementById('modal-bg').classList.remove('open');
+      btn.onclick=confirmModal; btn.textContent='Confirm'; btn.disabled=false;
+      toast(`Interface "${iface}" updated — click Apply to activate`, 'success');
+      setTimeout(loadNetwork, 800);
+    } catch(e) {
+      btn.disabled=false; btn.textContent='Save Changes';
+      toast('Save failed: '+e.message, 'error');
+    }
+  };
+}
+
+function confirmDeleteNetwork(iface, node, connId) {
+  document.getElementById('modal-title').textContent = `Delete Interface — ${iface}`;
+  document.getElementById('modal-body').innerHTML = `
+    <p style="color:var(--muted)">Delete interface <strong style="color:var(--red)">${escHtml(iface)}</strong> on <strong>${node}</strong>?</p>
+    <p style="color:var(--yellow);font-size:12px;margin-top:8px">⚠ Changes are pending until you click Apply. Remove VMs from this bridge before deleting.</p>`;
+  modalCallback = async () => {
+    const conn = resolveConn(connId);
+    try {
+      if (conn) await connDelete(conn, `/api2/json/nodes/${node}/network/${encodeURIComponent(iface)}`);
+      else      await pveDelete(`/api2/json/nodes/${node}/network/${encodeURIComponent(iface)}`);
+      toast(`"${iface}" deleted — click Apply to activate`, 'success');
+      setTimeout(loadNetwork, 800);
+    } catch(e) { toast('Delete failed: '+e.message, 'error'); }
+  };
+  document.getElementById('modal-bg').classList.add('open');
+}
+
+async function applyNetworkChanges() {
+  const node = _netNode;
+  const conn = resolveConn(_netConnId);
+  if (!node) return toast('No node selected', 'error');
+  try {
+    let upid;
+    if (conn) {
+      const h = connHeaders(conn,{'Content-Type':'application/x-www-form-urlencoded'});
+      const r = await fetch(conn.host+`/api2/json/nodes/${node}/network`,{method:'PUT',headers:h,body:''});
+      if(!r.ok){const t=await r.text();throw new Error(`HTTP ${r.status}: ${t}`);}
+      const d = await r.json(); upid = d&&d.data;
+    } else {
+      const d = await pvePut(`/api2/json/nodes/${node}/network`);
+      upid = d&&d.data;
+    }
+    if (upid&&typeof upid==='string') tmRegister(upid, node, `Apply network changes on ${node}`);
+    toast(`Network changes applied on ${node}`, 'success');
+    document.getElementById('net-apply-btn').style.display = 'none';
+    setTimeout(loadNetwork, 2000);
+  } catch(e) { toast('Apply failed: '+e.message, 'error'); }
 }
 
 function cidrFromMask(mask) {
