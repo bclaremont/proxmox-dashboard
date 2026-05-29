@@ -305,15 +305,17 @@
     /* ── SIDEBAR COLLAPSE ── */
     #sidebar{transition:width .2s;}
     .sidebar-collapsed{width:56px!important;}
-    .sidebar-collapsed .sidebar-section{padding:0 6px!important;}
-    .sidebar-collapsed .sidebar-section .nav-item{padding:9px 0!important;gap:0!important;justify-content:center!important;overflow:hidden!important;}
-    .sidebar-collapsed .sidebar-section .nav-item svg{flex-shrink:0!important;width:18px!important;height:18px!important;min-width:18px;}
+    .sidebar-collapsed .sidebar-section{padding:0 5px!important;}
     .sidebar-collapsed .sidebar-label{display:none!important;}
     .sidebar-collapsed #saved-views-nav{display:none!important;}
-    .sidebar-collapsed #sidebar-home-area{padding:6px 0!important;justify-content:center!important;}
-    .sidebar-collapsed #sidebar-home-area .nav-item{padding:8px 0!important;gap:0!important;justify-content:center!important;flex:none!important;overflow:hidden!important;width:36px!important;}
-    .sidebar-collapsed #sidebar-home-area .nav-item svg{flex-shrink:0;width:18px!important;height:18px!important;}
-    .sidebar-toggle-btn{background:none;border:none;color:var(--muted);cursor:pointer;padding:5px;border-radius:var(--radius);transition:all .15s;display:flex;align-items:center;justify-content:center;flex-shrink:0;}
+    /* font-size:0 hides all text nodes; SVG is unaffected */
+    .sidebar-collapsed .nav-item{font-size:0!important;padding:10px 0!important;gap:0!important;justify-content:center!important;position:relative;}
+    .sidebar-collapsed .nav-item svg{width:20px!important;height:20px!important;flex-shrink:0;}
+    .sidebar-collapsed .nav-item .nav-badge{font-size:9px!important;position:absolute;top:4px;right:4px;min-width:14px;height:14px;padding:0 3px;line-height:14px;}
+    /* Home area in collapsed mode */
+    .sidebar-collapsed #sidebar-home-area{padding:2px 5px 6px!important;justify-content:center!important;}
+    /* Toggle row */
+    .sidebar-toggle-btn{background:none;border:none;color:var(--muted);cursor:pointer;padding:6px;border-radius:var(--radius);transition:all .15s;display:flex;align-items:center;justify-content:center;flex-shrink:0;}
     .sidebar-toggle-btn:hover{color:var(--text);background:var(--bg3);}
     #sidebar-toggle-row{display:flex;justify-content:flex-end;padding:5px 8px;border-bottom:1px solid var(--border);}
     .sidebar-collapsed #sidebar-toggle-row{justify-content:center;}
