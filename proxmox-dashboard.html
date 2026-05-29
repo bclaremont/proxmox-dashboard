@@ -7036,43 +7036,67 @@ async function loadDetailBackup(item) {
 
 function openCreateBackupModal() {
   const item=currentDetail; if(!item) return;
-  const storOpts=(PVE.storage.filter(s=>s.node===item.node&&(s.content||'').includes('backup'))||[]).map(s=>`<option value="${s.storage}">${s.storage}</option>`).join('');
+  // Use connection-aware storage list to find backup-capable pools
+  const conn = resolveConn(item.connId);
+  const storList = conn ? (conn.storage||[]) : PVE.storage;
+  const backupStores = storList.filter(s=>s.node===item.node&&(s.content||'').includes('backup'));
+  const storOpts = backupStores.map(s=>`<option value="${s.storage}">${s.storage}${s.avail?' ('+fmtBytes(s.avail)+' free)':''}</option>`).join('');
+
   document.getElementById('modal-title').textContent=`Create Backup — ${item.type.toUpperCase()} ${item.vmid}`;
   document.getElementById('modal-body').innerHTML=`
     <div class="create-vm-grid">
-      <div class="form-group"><label>STORAGE</label><select id="cb-stor">${storOpts||'<option value="local">local</option>'}</select></div>
+      <div class="form-group"><label>STORAGE</label>
+        <select id="cb-stor">${storOpts||'<option value="local">local</option>'}</select>
+      </div>
       <div class="form-group"><label>MODE</label>
         <select id="cb-mode">
           <option value="snapshot">Snapshot — minimal downtime</option>
-          <option value="suspend">Suspend — pause VM during backup</option>
-          <option value="stop">Stop — safest, VM is stopped</option>
+          <option value="suspend">Suspend — pause during backup</option>
+          <option value="stop">Stop — safest, VM stopped briefly</option>
         </select>
       </div>
     </div>
-    <div class="create-vm-grid">
-      <div class="form-group"><label>COMPRESSION</label>
-        <select id="cb-compress">
-          <option value="zstd">zstd (fastest)</option>
-          <option value="lzo">lzo (fast)</option>
-          <option value="gzip">gzip (small)</option>
-          <option value="0">none</option>
-        </select>
-      </div>
-      <div class="form-group"><label>NOTES (optional)</label><input id="cb-notes" placeholder="manual backup"/></div>
-    </div>`;
-  modalCallback=async()=>{
-    const conn=resolveConn(item.connId);
-    const params={vmid:item.vmid,storage:document.getElementById('cb-stor')?.value,mode:document.getElementById('cb-mode')?.value,compress:document.getElementById('cb-compress')?.value};
-    const notes=document.getElementById('cb-notes')?.value?.trim();if(notes)params.notes=notes;
-    try{
+    <div class="form-group"><label>COMPRESSION</label>
+      <select id="cb-compress">
+        <option value="zstd">zstd (fastest + small)</option>
+        <option value="lzo">lzo (fast)</option>
+        <option value="gzip">gzip (smaller)</option>
+        <option value="">none (no compression)</option>
+      </select>
+    </div>
+    <div id="cb-err" style="display:none;margin-top:10px;padding:8px 12px;background:rgba(248,81,73,.1);border:1px solid var(--red);border-radius:var(--radius);font-size:12px;color:var(--red)"></div>`;
+
+  // Override confirm button for inline error display
+  modalCallback = null;
+  const btn = document.getElementById('modal-confirm-btn');
+  btn.textContent = '▶ Start Backup'; btn.disabled = false;
+  btn.onclick = async () => {
+    const storage  = document.getElementById('cb-stor')?.value;
+    const mode     = document.getElementById('cb-mode')?.value;
+    const compress = document.getElementById('cb-compress')?.value; // empty string = no compression
+    const errEl    = document.getElementById('cb-err');
+    if(errEl) errEl.style.display='none';
+    if(!storage) return (errEl&&(errEl.textContent='Select a storage pool',errEl.style.display=''));
+
+    const params = { vmid: item.vmid, storage, mode };
+    if(compress) params.compress = compress; // only pass if non-empty
+
+    btn.disabled=true; btn.textContent='Starting…';
+    try {
       let res;
-      if(conn)res=await connPost(conn,`/api2/json/nodes/${item.node}/vzdump`,params);
-      else res=await pvePost(`/api2/json/nodes/${item.node}/vzdump`,params);
+      if(conn) res=await connPost(conn,`/api2/json/nodes/${item.node}/vzdump`,params);
+      else     res=await pvePost(`/api2/json/nodes/${item.node}/vzdump`,params);
       const upid=res&&res.data;
-      if(upid&&typeof upid==='string')tmRegister(upid,item.node,`Backup ${item.type.toUpperCase()} ${item.vmid}`);
-      toast(`Backup started for ${item.type.toUpperCase()} ${item.vmid}`,'success');
-      setTimeout(()=>loadDetailBackup(item),3000);
-    }catch(e){toast('Backup failed: '+e.message,'error');}
+      document.getElementById('modal-bg').classList.remove('open');
+      btn.onclick=confirmModal; btn.textContent='Confirm'; btn.disabled=false;
+      if(upid&&typeof upid==='string') tmRegister(upid,item.node,`Backup ${item.type.toUpperCase()} ${item.vmid}`);
+      toast(`Backup started — watch Task Monitor`,'success');
+      setTimeout(()=>loadDetailBackup(item),5000);
+    } catch(e) {
+      btn.disabled=false; btn.textContent='▶ Start Backup';
+      if(errEl){errEl.textContent='Backup failed: '+e.message;errEl.style.display='';}
+      else toast('Backup failed: '+e.message,'error');
+    }
   };
   document.getElementById('modal-bg').classList.add('open');
 }
