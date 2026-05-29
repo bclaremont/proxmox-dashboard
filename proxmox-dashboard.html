@@ -452,6 +452,11 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
         Cluster Graphs
       </div>
+      <div class="nav-item" data-view="subscriptions" onclick="switchView('subscriptions')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+        Subscriptions
+        <span class="nav-badge warn" id="sub-badge" style="display:none">!</span>
+      </div>
       <div class="nav-item" data-view="updates" onclick="switchView('updates')">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
         Updates
@@ -461,6 +466,14 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
         Backup Server
       </div>
+    </div>
+
+    <div class="sidebar-section" id="saved-views-sidebar">
+      <div class="sidebar-label" style="display:flex;align-items:center;justify-content:space-between;padding-right:8px">
+        <span>Saved Views</span>
+        <button onclick="openCreateViewModal()" title="Create saved view" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:16px;line-height:1;padding:0 2px">+</button>
+      </div>
+      <div id="saved-views-nav"></div>
     </div>
 
     <div class="sidebar-section" id="node-list-sidebar">
@@ -506,6 +519,28 @@
           Connect to Proxmox VE
         </button>
       </div>
+    </div>
+
+    <!-- SAVED VIEW -->
+    <div id="view-savedview" style="display:none">
+      <div class="section-header">
+        <span class="section-title" id="sv-title">Saved View</span>
+        <div style="display:flex;gap:6px;align-items:center">
+          <div id="sv-chips" style="display:flex;gap:5px;flex-wrap:wrap"></div>
+          <button class="btn small" onclick="openCreateViewModal(activeSavedView)">✎ Edit</button>
+          <button class="btn small danger" onclick="deleteCurrentView()">Delete</button>
+        </div>
+      </div>
+      <div id="sv-content"></div>
+    </div>
+
+    <!-- SUBSCRIPTIONS -->
+    <div id="view-subscriptions" style="display:none">
+      <div class="section-header">
+        <span class="section-title">Subscription Management</span>
+        <button class="btn small" onclick="loadSubscriptions()">Refresh</button>
+      </div>
+      <div id="subscriptions-content"><div class="empty">Loading…</div></div>
     </div>
 
     <!-- CONNECTIONS -->
@@ -984,6 +1019,7 @@ async function connect() {
     await refreshAll();
     PVE.refreshInterval = setInterval(refreshAll, 30000);
     tmStart();
+    renderSavedViewsSidebar();
     switchView('overview');
   } catch(e) {
     toast('Failed to load nodes: '+e.message,'error');
@@ -1737,7 +1773,7 @@ async function migrateVM(node, vmid, type, targetNode, online=false, withLocal=f
 // ── RENDERING ─────────────────────────────────────────────
 
 function switchView(view) {
-  const views=['connect','connections','overview','vms','containers','nodes','tasks','syslog','storage','network','heatmap','isolib','sdn','ceph','ha','firewall','backups','users','certs','audit','clustergraphs','updates','pbs'];
+  const views=['connect','connections','savedview','overview','vms','containers','nodes','tasks','syslog','storage','network','heatmap','isolib','sdn','ceph','ha','firewall','backups','users','certs','audit','clustergraphs','subscriptions','updates','pbs'];
   views.forEach(v=>{
     const el=document.getElementById('view-'+v);
     if(el) el.style.display=v===view?'':'none';
@@ -1782,6 +1818,8 @@ function switchView(view) {
   if(view==='pbs') loadPBS();
   if(view==='sdn') loadSDN();
   if(view==='connections') renderConnections();
+  if(view==='subscriptions') loadSubscriptions();
+  if(view==='savedview') renderSavedView();
   if(view!=='connect') renderCurrentView();
 }
 
@@ -1794,6 +1832,7 @@ function renderCurrentView() {
   else if(currentView==='storage') renderStorage();
   else if(currentView==='network') renderNetwork();
   else if(currentView==='heatmap') renderHeatmap();
+  else if(currentView==='savedview') renderSavedView();
 }
 
 function renderOverview() {
@@ -5740,6 +5779,284 @@ function disconnectPBS() {
   document.getElementById('pbs-connect').style.display = '';
   document.getElementById('pbs-content').innerHTML = '<div class="empty">Disconnected.</div>';
   toast('Disconnected from Backup Server', 'info');
+}
+
+// ── CUSTOM SAVED VIEWS ───────────────────────────────────
+// Stored in localStorage — no API required.
+// Each view: { id, name, filters: { q, type, status, node, connId } }
+
+let activeSavedView = null;
+
+function getSavedViews() {
+  try { return JSON.parse(localStorage.getItem('pve-saved-views')||'[]'); } catch(e) { return []; }
+}
+function setSavedViews(views) {
+  localStorage.setItem('pve-saved-views', JSON.stringify(views));
+}
+
+function renderSavedViewsSidebar() {
+  const container = document.getElementById('saved-views-nav');
+  if (!container) return;
+  const views = getSavedViews();
+  container.innerHTML = views.map(v => `
+    <div class="nav-item${activeSavedView&&activeSavedView.id===v.id?' active':''}" onclick="activateSavedView(${JSON.stringify(v).replace(/"/g,'&quot;')})">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:15px;height:15px;flex-shrink:0"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+      ${escHtml(v.name)}
+    </div>`).join('') || '<div style="padding:6px 10px;font-size:12px;color:var(--muted)">No views yet</div>';
+}
+
+function activateSavedView(view) {
+  activeSavedView = view;
+  renderSavedViewsSidebar(); // update active state
+  switchView('savedview');
+}
+
+function renderSavedView() {
+  if (!activeSavedView) { switchView('overview'); return; }
+  const v = activeSavedView;
+  const titleEl = document.getElementById('sv-title');
+  const chipsEl = document.getElementById('sv-chips');
+  const contentEl = document.getElementById('sv-content');
+  if (titleEl) titleEl.textContent = v.name;
+
+  const f = v.filters || {};
+  let items = allVMs().concat(allCTs());
+  if (f.type)   items = items.filter(x => x.type === f.type);
+  if (f.status) items = items.filter(x => x.status === f.status);
+  if (f.node)   items = items.filter(x => x.node === f.node);
+  if (f.connId !== undefined && f.connId !== '') items = items.filter(x => (x.connId||'') === f.connId);
+  if (f.q) { const q=f.q.toLowerCase(); items=items.filter(x=>(x.name||'').toLowerCase().includes(q)||String(x.vmid).includes(q)); }
+
+  // Filter chips
+  const chips = [];
+  if (f.type)   chips.push(f.type==='vm'?'VMs only':'CTs only');
+  if (f.status) chips.push(f.status);
+  if (f.node)   chips.push(`node: ${f.node}`);
+  if (f.connId) chips.push(`host: ${getConnName(f.connId)}`);
+  if (f.q)      chips.push(`"${f.q}"`);
+  if (chipsEl) chipsEl.innerHTML = chips.map(c=>`<span style="background:var(--bg3);border:1px solid var(--border);border-radius:20px;padding:2px 10px;font-size:11px;color:var(--muted)">${escHtml(c)}</span>`).join('');
+
+  if (!contentEl) return;
+  contentEl.innerHTML = items.length
+    ? `<div class="table-wrap"><table>
+        <thead><tr><th>ID</th><th>Name</th><th>Type</th><th>Node</th><th>Status</th><th>CPU</th><th>Memory</th><th>Disk</th><th>Uptime</th><th>Actions</th></tr></thead>
+        <tbody>${items.map(x=>vmRow(x,true)).join('')}</tbody>
+      </table></div>`
+    : `<div class="empty">No VMs or containers match this view's filters.<br><span style="font-size:12px">Try adjusting the filters — click ✎ Edit above.</span></div>`;
+}
+
+function openCreateViewModal(existingView) {
+  const isEdit = !!existingView;
+  const v = existingView || { id:null, name:'', filters:{q:'',type:'',status:'',node:'',connId:''} };
+  const f = v.filters||{};
+
+  const nodeOpts = ['<option value="">All Nodes</option>',
+    ...PVE.nodeStatuses.map(n=>`<option value="${n.node}"${f.node===n.node?' selected':''}>${escHtml(n.node)}</option>`),
+    ...extraConns.flatMap(c=>(c.nodeStatuses||[]).map(n=>`<option value="${n.node}"${f.node===n.node?' selected':''}>${escHtml((c.name||c.host)+': '+n.node)}</option>`))
+  ].join('');
+
+  const connOpts = ['<option value="">All Clusters/Hosts</option>',
+    `<option value=""${f.connId===''||f.connId===undefined?' selected':''}>Primary only</option>`,
+    ...extraConns.map(c=>`<option value="${c.id}"${f.connId===c.id?' selected':''}>${escHtml(c.name||c.host)}</option>`)
+  ].join('');
+
+  document.getElementById('modal-title').textContent = isEdit ? `Edit View — ${v.name}` : 'Create Saved View';
+  document.getElementById('modal-body').innerHTML = `
+    <div class="form-group"><label>VIEW NAME</label>
+      <input id="sv-vname" value="${escHtml(v.name)}" placeholder="e.g. Production VMs, Stopped CTs…"/>
+    </div>
+    <div class="create-vm-grid">
+      <div class="form-group"><label>TYPE</label>
+        <select id="sv-vtype">
+          <option value=""${!f.type?' selected':''}>All (VMs &amp; CTs)</option>
+          <option value="vm"${f.type==='vm'?' selected':''}>VMs only</option>
+          <option value="ct"${f.type==='ct'?' selected':''}>Containers only</option>
+        </select>
+      </div>
+      <div class="form-group"><label>STATUS</label>
+        <select id="sv-vstatus">
+          <option value=""${!f.status?' selected':''}>Any status</option>
+          <option value="running"${f.status==='running'?' selected':''}>Running</option>
+          <option value="stopped"${f.status==='stopped'?' selected':''}>Stopped</option>
+        </select>
+      </div>
+    </div>
+    <div class="create-vm-grid">
+      <div class="form-group"><label>NODE</label><select id="sv-vnode">${nodeOpts}</select></div>
+      <div class="form-group"><label>CLUSTER / HOST</label><select id="sv-vconn">${connOpts}</select></div>
+    </div>
+    <div class="form-group"><label>NAME SEARCH (optional)</label>
+      <input id="sv-vq" value="${escHtml(f.q||'')}" placeholder="filter by VM/CT name or ID"/>
+    </div>`;
+
+  modalCallback = () => {
+    const name = document.getElementById('sv-vname').value.trim();
+    if (!name) return toast('Enter a view name', 'error');
+    const newView = {
+      id: v.id || ('sv-'+Date.now()),
+      name,
+      filters: {
+        type:   document.getElementById('sv-vtype').value,
+        status: document.getElementById('sv-vstatus').value,
+        node:   document.getElementById('sv-vnode').value,
+        connId: document.getElementById('sv-vconn').value,
+        q:      document.getElementById('sv-vq').value.trim(),
+      }
+    };
+    const views = getSavedViews();
+    const idx = views.findIndex(x=>x.id===newView.id);
+    if (idx>=0) views[idx]=newView; else views.push(newView);
+    setSavedViews(views);
+    renderSavedViewsSidebar();
+    toast(`View "${name}" ${isEdit?'updated':'saved'}`, 'success');
+    if (activeSavedView && activeSavedView.id===newView.id) { activeSavedView=newView; renderSavedView(); }
+  };
+  document.getElementById('modal-bg').classList.add('open');
+}
+
+function deleteCurrentView() {
+  if (!activeSavedView) return;
+  const name = activeSavedView.name;
+  setSavedViews(getSavedViews().filter(v=>v.id!==activeSavedView.id));
+  activeSavedView = null;
+  renderSavedViewsSidebar();
+  switchView('overview');
+  toast(`View "${name}" deleted`, 'info');
+}
+
+// ── SUBSCRIPTION MANAGEMENT ──────────────────────────────
+// GET    /api2/json/nodes/{node}/subscription  — status + key info
+// POST   /api2/json/nodes/{node}/subscription  — set key or force check
+// DELETE /api2/json/nodes/{node}/subscription  — remove key
+// Official: https://pve.proxmox.com/pve-docs/api-viewer/#/nodes/{node}/subscription
+
+let subData = [];
+
+async function loadSubscriptions() {
+  const el = document.getElementById('subscriptions-content');
+  el.innerHTML = '<div class="empty"><span class="loading"></span> Loading subscription status…</div>';
+  subData = [];
+
+  await Promise.all(PVE.nodes.map(async n => {
+    const d = await pveGet(`/api2/json/nodes/${n.node}/subscription`).catch(()=>({data:{}}));
+    subData.push({ node:n.node, connId:'', connName:'Primary', data:d.data||{} });
+  }));
+
+  await Promise.all(extraConns.map(async conn => {
+    await Promise.all((conn.nodes||[]).map(async n => {
+      const d = await connGet(conn, `/api2/json/nodes/${n.node}/subscription`).catch(()=>({data:{}}));
+      subData.push({ node:n.node, connId:conn.id, connName:conn.name||conn.host, data:d.data||{} });
+    }));
+  }));
+
+  renderSubscriptions();
+}
+
+function renderSubscriptions() {
+  const el = document.getElementById('subscriptions-content');
+  if (!subData.length) { el.innerHTML='<div class="empty">No subscription data — connect to a cluster first.</div>'; return; }
+
+  const levelNames  = { c:'Community', b:'Basic', s:'Standard', p:'Premium' };
+  const levelColors = { c:'var(--muted)', b:'var(--blue)', s:'var(--teal)', p:'var(--accent)' };
+  const multi = extraConns.length > 0;
+  const now = Date.now();
+
+  const active  = subData.filter(s=>s.data.status==='active').length;
+  const expired = subData.filter(s=>s.data.status==='expired'||s.data.status==='invalid').length;
+  const none    = subData.filter(s=>!s.data.status||s.data.status==='notfound').length;
+
+  // Update sidebar badge
+  const badge = document.getElementById('sub-badge');
+  if (badge) { badge.textContent='!'; badge.style.display=expired>0?'':'none'; }
+
+  let html = `
+    <div class="stats-grid" style="margin-bottom:16px">
+      <div class="stat-card"><div class="label">Total Nodes</div><div class="value" style="color:var(--blue)">${subData.length}</div></div>
+      <div class="stat-card accent-green"><div class="label">Active</div><div class="value">${active}</div></div>
+      <div class="stat-card accent-${expired>0?'red':'green'}"><div class="label">Expired / Invalid</div><div class="value" style="color:${expired>0?'var(--red)':'var(--green)'}">${expired}</div></div>
+      <div class="stat-card accent-${none>0?'yellow':'green'}"><div class="label">No Subscription</div><div class="value" style="color:${none>0?'var(--yellow)':'var(--green)'}">${none}</div></div>
+    </div>
+    <div class="table-wrap"><table>
+      <thead><tr>${multi?'<th>Cluster / Host</th>':''}<th>Node</th><th>Status</th><th>Level</th><th>Key</th><th>Registered</th><th>Next Due</th><th>Days Left</th><th>Actions</th></tr></thead>
+      <tbody>`;
+
+  subData.forEach(s => {
+    const d = s.data;
+    const status = d.status || 'notfound';
+    const daysLeft = d.nextduedate ? Math.floor((new Date(d.nextduedate).getTime() - now) / 86400000) : null;
+    const daysColor = daysLeft===null?'var(--muted)':daysLeft<30?'var(--red)':daysLeft<90?'var(--yellow)':'var(--green)';
+    const stBadge = status==='active'
+      ? `<span class="badge running" style="font-size:10px"><span class="badge-dot"></span>active</span>`
+      : status==='expired'
+      ? `<span class="badge stopped" style="font-size:10px"><span class="badge-dot"></span>expired</span>`
+      : status==='invalid'
+      ? `<span class="badge error" style="font-size:10px"><span class="badge-dot"></span>invalid</span>`
+      : `<span class="badge warning" style="font-size:10px"><span class="badge-dot"></span>none</span>`;
+    const level = d.level||'';
+    const key = d.key ? d.key.substring(0,20)+(d.key.length>20?'…':'') : '—';
+
+    html += `<tr>
+      ${multi?`<td style="font-size:12px;color:var(--muted)">${escHtml(s.connName)}</td>`:''}
+      <td><strong>${escHtml(s.node)}</strong></td>
+      <td>${stBadge}</td>
+      <td><span style="color:${levelColors[level]||'var(--muted)'};font-weight:600;font-size:12px">${escHtml(levelNames[level]||'—')}</span></td>
+      <td style="font-family:monospace;font-size:11px;color:var(--muted)" title="${escHtml(d.key||'')}">${escHtml(key)}</td>
+      <td style="font-size:11px;color:var(--muted)">${d.regdate||'—'}</td>
+      <td style="font-size:11px;color:var(--muted)">${d.nextduedate||'—'}</td>
+      <td style="color:${daysColor};font-size:12px;font-weight:600">${daysLeft!==null?daysLeft+'d':'—'}</td>
+      <td onclick="event.stopPropagation()">
+        <div class="actions-row">
+          <button class="btn small primary" onclick="openSetSubKeyModal('${escHtml(s.node)}','${s.connId}')">Set Key</button>
+          <button class="btn small" onclick="checkSubNow('${escHtml(s.node)}','${s.connId}')">↻ Check</button>
+        </div>
+      </td>
+    </tr>`;
+  });
+
+  html += `</tbody></table></div>`;
+
+  if (none > 0 || expired > 0) {
+    html += `<div style="margin-top:14px;padding:10px 14px;background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius);font-size:12px;color:var(--muted)">
+      Proxmox subscriptions enable enterprise apt repositories and commercial support. Community subscriptions are free.
+      <a href="https://www.proxmox.com/en/proxmox-virtual-environment/pricing" target="_blank" style="color:var(--blue);margin-left:6px">View pricing →</a>
+    </div>`;
+  }
+
+  el.innerHTML = html;
+}
+
+function openSetSubKeyModal(node, connId) {
+  const conn = resolveConn(connId);
+  document.getElementById('modal-title').textContent = `Set Subscription Key — ${node}`;
+  document.getElementById('modal-body').innerHTML = `
+    <div class="form-group">
+      <label>SUBSCRIPTION KEY</label>
+      <input id="sub-key-val" placeholder="pve1a-xxxxxxxxxxxxxxxx" style="font-family:monospace"/>
+    </div>
+    <p style="font-size:12px;color:var(--muted);margin-top:8px">
+      Community keys are free at <a href="https://www.proxmox.com/en/proxmox-virtual-environment/pricing" target="_blank" style="color:var(--blue)">proxmox.com</a>. Paste your key above to activate.
+    </p>`;
+  modalCallback = async () => {
+    const key = document.getElementById('sub-key-val').value.trim();
+    if (!key) return toast('Enter a subscription key', 'error');
+    try {
+      if (conn) await connPost(conn, `/api2/json/nodes/${node}/subscription`, { key });
+      else      await pvePost(`/api2/json/nodes/${node}/subscription`, { key });
+      toast(`Subscription key set for ${node}`, 'success');
+      setTimeout(loadSubscriptions, 1500);
+    } catch(e) { toast('Failed to set key: '+e.message, 'error'); }
+  };
+  document.getElementById('modal-bg').classList.add('open');
+}
+
+async function checkSubNow(node, connId) {
+  const conn = resolveConn(connId);
+  try {
+    if (conn) await connPost(conn, `/api2/json/nodes/${node}/subscription`, { force:1 });
+    else      await pvePost(`/api2/json/nodes/${node}/subscription`, { force:1 });
+    toast(`Subscription check triggered for ${node}`, 'success');
+    setTimeout(loadSubscriptions, 2000);
+  } catch(e) { toast('Check failed: '+e.message, 'error'); }
 }
 
 // ── UPLOAD ISO / CT TEMPLATE ─────────────────────────────
