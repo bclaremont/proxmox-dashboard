@@ -526,6 +526,11 @@
         <span class="sidebar-label-inner"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="4" rx="1"/><rect x="2" y="10" width="20" height="4" rx="1"/><rect x="2" y="17" width="20" height="4" rx="1"/></svg>Infrastructure</span>
         <span class="sidebar-chevron">▾</span>
       </div>
+      <div class="nav-item" data-view="affinity" onclick="switchView('affinity')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="9" cy="12" r="3"/><circle cx="15" cy="12" r="3"/><path d="M12 3v18M3 12h18"/></svg>
+        Affinity Rules
+        <span class="nav-badge warn" id="affinity-badge" style="display:none">!</span>
+      </div>
       <div class="nav-item" data-view="drs" onclick="switchView('drs')">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="16 12 12 8 8 12"/><line x1="12" y1="16" x2="12" y2="8"/></svg>
         DRS
@@ -928,6 +933,19 @@
         </div>
       </div>
       <div id="sdn-content"><div class="empty">Loading…</div></div>
+    </div>
+
+    <!-- AFFINITY RULES -->
+    <div id="view-affinity" style="display:none">
+      <div class="section-header">
+        <span class="section-title">Affinity / Anti-Affinity Rules</span>
+        <div style="display:flex;gap:6px">
+          <button class="btn small success" id="affinity-enforce-btn" onclick="enforceAllRules()" style="display:none">⚡ Enforce All</button>
+          <button class="btn small primary" onclick="openCreateAffinityModal()">+ Create Rule</button>
+          <button class="btn small" onclick="renderAffinityView()">Refresh</button>
+        </div>
+      </div>
+      <div id="affinity-content"><div class="empty">Loading…</div></div>
     </div>
 
     <!-- DRS — DYNAMIC RESOURCE SCHEDULING -->
@@ -1767,6 +1785,7 @@ async function refreshAll() {
     checkAndFireAlerts();
     updateTopbarStats();
     populateTagFilters();
+    updateAffinityBadge();
     document.getElementById('last-refresh').textContent='Updated '+new Date().toLocaleTimeString();
   } catch(e) {
     toast('Refresh failed: '+e.message,'error');
@@ -2416,7 +2435,7 @@ async function migrateVM(node, vmid, type, targetNode, online=false, withLocal=f
 
 function switchView(view) {
   expandSidebarSection(view); // auto-expand collapsed section if needed
-  const views=['connect','connections','worldmap','savedview','overview','vms','containers','nodes','tasks','syslog','storage','network','heatmap','isolib','sdn','drs','datacenter','pools','ceph','ha','firewall','backups','users','certs','audit','clustergraphs','tags','tfa','subscriptions','updates','pbs'];
+  const views=['connect','connections','worldmap','savedview','overview','vms','containers','nodes','tasks','syslog','storage','network','heatmap','isolib','sdn','affinity','drs','datacenter','pools','ceph','ha','firewall','backups','users','certs','audit','clustergraphs','tags','tfa','subscriptions','updates','pbs'];
   views.forEach(v=>{
     const el=document.getElementById('view-'+v);
     if(el) el.style.display=v===view?'':'none';
@@ -2467,6 +2486,7 @@ function switchView(view) {
   if(view==='tags') loadTagsView();
   if(view==='savedview') renderSavedView();
   if(view==='pools') loadPools();
+  if(view==='affinity') renderAffinityView();
   if(view==='datacenter') loadDatacenter();
   if(view!=='connect') renderCurrentView();
 }
@@ -9523,6 +9543,294 @@ function acToggleAuth() {
   document.getElementById('ac-tok-group').style.display = m==='token'?'':'none';
 }
 
+// ── AFFINITY / ANTI-AFFINITY RULES ───────────────────────
+// Rules stored in localStorage (PVE 9.1 has no native /cluster/rules).
+// Affinity:     listed VMs must be on the same node.
+// Anti-affinity: listed VMs must each be on a different node.
+// DRS respects these rules when making migration recommendations.
+
+function getAffinityRules() {
+  try { return JSON.parse(localStorage.getItem('pve-affinity-rules')||'[]'); }
+  catch(e) { return []; }
+}
+function saveAffinityRules(rules) {
+  localStorage.setItem('pve-affinity-rules', JSON.stringify(rules));
+}
+
+// Check a single rule — returns {violated, detail, affectedVMs, suggestedFixes}
+function checkRule(rule) {
+  const all    = allVMs().concat(allCTs());
+  const members= all.filter(x=>rule.vmids.includes(+x.vmid));
+  const running= members.filter(x=>x.status==='running');
+
+  if(running.length<2) return {violated:false, detail:'Not enough running VMs to evaluate', members, running};
+
+  const byNode={};
+  running.forEach(x=>{ (byNode[x.node]||(byNode[x.node]=[])).push(x); });
+  const nodes=Object.keys(byNode);
+
+  if(rule.type==='affinity') {
+    const violated=nodes.length>1;
+    const detail=violated
+      ? `VMs spread across ${nodes.length} nodes: ${nodes.map(n=>`${n}(${byNode[n].map(x=>x.name||x.vmid).join(',')})`).join(' / ')}`
+      : `All ${running.length} VMs on ${nodes[0]}`;
+    // Fix: pick the node with most VMs, migrate the rest there
+    const targetNode=Object.entries(byNode).sort((a,b)=>b[1].length-a[1].length)[0][0];
+    const fixes=running.filter(x=>x.node!==targetNode).map(x=>({vm:x,toNode:targetNode}));
+    return {violated, detail, members, running, fixes};
+  } else {
+    // Anti-affinity: any node with 2+ VMs from group is a violation
+    const dupes=Object.entries(byNode).filter(([,vms])=>vms.length>1);
+    const violated=dupes.length>0;
+    const detail=violated
+      ? `Co-located: ${dupes.map(([n,vms])=>`${vms.map(x=>x.name||x.vmid).join('+')} on ${n}`).join(', ')}`
+      : `All ${running.length} VMs on separate nodes ✓`;
+    // Fix: for each dupe group, pick the best other node for extra VMs
+    const fixes=[];
+    dupes.forEach(([srcNode,vms])=>{
+      vms.slice(1).forEach(vm=>{
+        // Find a node not already used by this rule's VMs
+        const usedNodes=new Set(running.map(x=>x.node));
+        const candidate=allNodes().find(n=>!usedNodes.has(n.node));
+        if(candidate) fixes.push({vm,toNode:candidate.node});
+      });
+    });
+    return {violated, detail, members, running, fixes};
+  }
+}
+
+// Update the sidebar violation badge
+function updateAffinityBadge() {
+  const rules=getAffinityRules().filter(r=>r.enabled!==false);
+  const violations=rules.filter(r=>checkRule(r).violated).length;
+  const badge=document.getElementById('affinity-badge');
+  if(badge){ badge.textContent=violations||'!'; badge.style.display=violations?'':'none'; }
+  const enforceBtn=document.getElementById('affinity-enforce-btn');
+  if(enforceBtn) enforceBtn.style.display=violations?'':'none';
+}
+
+function renderAffinityView() {
+  updateAffinityBadge();
+  const el=document.getElementById('affinity-content');
+  if(!el) return;
+  const rules=getAffinityRules();
+  const all=allVMs().concat(allCTs());
+
+  if(!rules.length){
+    el.innerHTML=`
+      <div style="text-align:center;padding:40px 20px;color:var(--muted)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="width:48px;height:48px;margin:0 auto 14px;display:block;opacity:.4"><circle cx="9" cy="12" r="3"/><circle cx="15" cy="12" r="3"/><path d="M12 3v18M3 12h18"/></svg>
+        <div style="font-size:15px;margin-bottom:8px">No affinity rules</div>
+        <div style="font-size:13px;margin-bottom:16px">
+          Rules control where VMs run relative to each other.<br>
+          <strong style="color:var(--green)">Affinity</strong> — keep VMs together (low latency)<br>
+          <strong style="color:var(--accent)">Anti-affinity</strong> — keep VMs apart (HA redundancy)
+        </div>
+        <button class="btn primary" onclick="openCreateAffinityModal()">+ Create First Rule</button>
+      </div>`;
+    return;
+  }
+
+  const checks=rules.map(r=>({rule:r,...checkRule(r)}));
+  const violations=checks.filter(c=>c.violated).length;
+
+  el.innerHTML=`
+    <div class="stats-grid" style="margin-bottom:16px">
+      <div class="stat-card accent-blue"><div class="label">Total Rules</div><div class="value">${rules.length}</div></div>
+      <div class="stat-card accent-green"><div class="label">Affinity</div><div class="value">${rules.filter(r=>r.type==='affinity').length}</div><div class="sub">keep together</div></div>
+      <div class="stat-card accent-orange"><div class="label">Anti-Affinity</div><div class="value">${rules.filter(r=>r.type==='anti-affinity').length}</div><div class="sub">keep apart</div></div>
+      <div class="stat-card accent-${violations?'red':'green'}"><div class="label">Violations</div><div class="value" style="color:${violations?'var(--red)':'var(--green)'}">${violations}</div><div class="sub">${violations?'action needed':'all compliant'}</div></div>
+    </div>
+
+    <div style="display:flex;flex-direction:column;gap:12px">
+      ${checks.map(({rule,violated,detail,members,running,fixes})=>{
+        const isAff=rule.type==='affinity';
+        const typeCol=isAff?'var(--green)':'var(--accent)';
+        const typeLabel=isAff?'AFFINITY':'ANTI-AFFINITY';
+        const statusCol=!rule.enabled?'var(--muted)':violated?'var(--red)':'var(--green)';
+        const statusLabel=!rule.enabled?'disabled':violated?'✗ VIOLATED':'✓ COMPLIANT';
+
+        // Show VM chips coloured by node
+        const nodeColors={};
+        const nodePalette=['var(--blue)','var(--purple)','var(--teal)','var(--accent)','var(--green)'];
+        [...new Set(running.map(x=>x.node))].forEach((n,i)=>nodeColors[n]=nodePalette[i%nodePalette.length]);
+        const vmChips=members.map(x=>{
+          const col=nodeColors[x.node]||'var(--muted)';
+          const name=x.name||String(x.vmid);
+          return `<span style="display:inline-flex;align-items:center;gap:4px;background:${col}20;color:${col};border:1px solid ${col}40;border-radius:12px;padding:2px 8px;font-size:11px;font-weight:600">
+            <span style="width:6px;height:6px;border-radius:50%;background:${col}"></span>${escHtml(name)}
+            <span style="font-size:9px;opacity:.7">${x.node}</span>
+          </span>`;}).join('');
+
+        return `<div style="background:var(--bg2);border:1px solid ${violated&&rule.enabled?'var(--red)':'var(--border)'};border-left:3px solid ${typeCol};border-radius:var(--radius);padding:14px 16px">
+          <div style="display:flex;align-items:flex-start;gap:12px;margin-bottom:10px">
+            <div style="flex:1">
+              <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
+                <span style="background:${typeCol}20;color:${typeCol};border:1px solid ${typeCol}40;border-radius:4px;padding:1px 7px;font-size:10px;font-weight:700">${typeLabel}</span>
+                <strong style="font-size:14px">${escHtml(rule.name||'Unnamed rule')}</strong>
+                <span style="color:${statusCol};font-size:11px;font-weight:600">${statusLabel}</span>
+              </div>
+              ${rule.comment?`<div style="font-size:12px;color:var(--muted);margin-bottom:6px">${escHtml(rule.comment)}</div>`:''}
+              <div style="font-size:12px;color:var(--muted);margin-bottom:8px">${escHtml(detail)}</div>
+              <div style="display:flex;flex-wrap:wrap;gap:4px">${vmChips||'<span style="font-size:12px;color:var(--muted)">No matching VMs found</span>'}</div>
+            </div>
+            <div style="display:flex;flex-direction:column;gap:5px;flex-shrink:0">
+              ${violated&&rule.enabled&&fixes.length?`<button class="btn small success" onclick="enforceRule('${rule.id}')">⚡ Fix</button>`:''}
+              <button class="btn small" onclick="openEditAffinityModal('${rule.id}')">✎ Edit</button>
+              <button class="btn small ${rule.enabled!==false?'warning':'success'}" onclick="toggleAffinityRule('${rule.id}')">${rule.enabled!==false?'Disable':'Enable'}</button>
+              <button class="btn small danger" onclick="confirmDeleteAffinityRule('${rule.id}')">Delete</button>
+            </div>
+          </div>
+          ${violated&&rule.enabled&&fixes.length?`
+          <div style="background:rgba(248,81,73,.06);border-top:1px solid var(--border);margin:-14px -16px 0;padding:8px 16px;font-size:12px;color:var(--muted)">
+            Suggested fix: ${fixes.map(f=>`migrate <strong>${escHtml(f.vm.name||String(f.vm.vmid))}</strong> → ${escHtml(f.toNode)}`).join(' · ')}
+          </div>`:''}
+        </div>`;}).join('')}
+    </div>`;
+}
+
+// ── RULE MODALS ───────────────────────────────────────────
+
+function openCreateAffinityModal() {
+  const all=allVMs().concat(allCTs());
+  const vmOpts=all.map(x=>`<option value="${x.vmid}">${x.type.toUpperCase()} ${x.vmid} — ${escHtml(x.name||String(x.vmid))} (${x.node})</option>`).join('');
+  document.getElementById('modal-title').textContent='Create Affinity Rule';
+  document.getElementById('modal-body').innerHTML=`
+    <div class="create-vm-grid">
+      <div class="form-group"><label>RULE NAME</label><input id="ar-name" placeholder="e.g. Web Cluster, DB Replicas"/></div>
+      <div class="form-group"><label>TYPE</label>
+        <select id="ar-type">
+          <option value="affinity">Affinity — keep VMs on the SAME node</option>
+          <option value="anti-affinity">Anti-Affinity — keep VMs on DIFFERENT nodes</option>
+        </select>
+      </div>
+    </div>
+    <div class="form-group"><label>VMs / CTs — hold Ctrl/Cmd to select multiple</label>
+      <select id="ar-vms" multiple size="8" style="width:100%;height:180px;background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius);color:var(--text);padding:4px;font-family:var(--font);font-size:13px">${vmOpts}</select>
+    </div>
+    <div class="form-group"><label>COMMENT (optional)</label><input id="ar-comment" placeholder="Why this rule exists"/></div>
+    <div id="ar-preview" style="margin-top:8px;font-size:12px;color:var(--muted)"></div>`;
+
+  // Live preview
+  setTimeout(()=>{
+    const upd=()=>{
+      const sel=[...document.getElementById('ar-vms')?.selectedOptions||[]].map(o=>o.text);
+      const type=document.getElementById('ar-type')?.value;
+      const prev=document.getElementById('ar-preview');
+      if(prev&&sel.length>1){
+        const label=type==='affinity'?'will run on the same node':'will run on different nodes';
+        prev.textContent=`✓ ${sel.length} VMs selected — they ${label}`;
+        prev.style.color=type==='affinity'?'var(--green)':'var(--accent)';
+      }else if(prev) prev.textContent=sel.length===1?'Select at least 2 VMs':'';
+    };
+    document.getElementById('ar-vms')?.addEventListener('change',upd);
+    document.getElementById('ar-type')?.addEventListener('change',upd);
+  },50);
+
+  modalCallback=()=>{
+    const name=(document.getElementById('ar-name')?.value||'').trim();
+    const type=document.getElementById('ar-type')?.value||'affinity';
+    const vmids=[...document.getElementById('ar-vms')?.selectedOptions||[]].map(o=>+o.value);
+    const comment=(document.getElementById('ar-comment')?.value||'').trim();
+    if(!name) return toast('Enter a rule name','error');
+    if(vmids.length<2) return toast('Select at least 2 VMs','error');
+    const rules=getAffinityRules();
+    rules.push({id:'ar-'+Date.now(),name,type,vmids,comment,enabled:true});
+    saveAffinityRules(rules);
+    toast(`Rule "${name}" created`,'success');
+    renderAffinityView();
+  };
+  document.getElementById('modal-bg').classList.add('open');
+}
+
+function openEditAffinityModal(id) {
+  const rules=getAffinityRules();
+  const rule=rules.find(r=>r.id===id);
+  if(!rule) return;
+  const all=allVMs().concat(allCTs());
+  const vmOpts=all.map(x=>`<option value="${x.vmid}"${rule.vmids.includes(+x.vmid)?' selected':''}>${x.type.toUpperCase()} ${x.vmid} — ${escHtml(x.name||String(x.vmid))} (${x.node})</option>`).join('');
+  document.getElementById('modal-title').textContent=`Edit Rule — ${rule.name}`;
+  document.getElementById('modal-body').innerHTML=`
+    <div class="create-vm-grid">
+      <div class="form-group"><label>RULE NAME</label><input id="er-name" value="${escHtml(rule.name||'')}"/></div>
+      <div class="form-group"><label>TYPE</label>
+        <select id="er-type">
+          <option value="affinity"${rule.type==='affinity'?' selected':''}>Affinity — same node</option>
+          <option value="anti-affinity"${rule.type==='anti-affinity'?' selected':''}>Anti-Affinity — different nodes</option>
+        </select>
+      </div>
+    </div>
+    <div class="form-group"><label>VMs / CTs</label>
+      <select id="er-vms" multiple size="8" style="width:100%;height:180px;background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius);color:var(--text);padding:4px;font-family:var(--font);font-size:13px">${vmOpts}</select>
+    </div>
+    <div class="form-group"><label>COMMENT</label><input id="er-comment" value="${escHtml(rule.comment||'')}"/></div>`;
+  modalCallback=()=>{
+    const name=(document.getElementById('er-name')?.value||'').trim();
+    const type=document.getElementById('er-type')?.value||'affinity';
+    const vmids=[...document.getElementById('er-vms')?.selectedOptions||[]].map(o=>+o.value);
+    const comment=(document.getElementById('er-comment')?.value||'').trim();
+    if(!name) return toast('Enter a rule name','error');
+    if(vmids.length<2) return toast('Select at least 2 VMs','error');
+    const idx=rules.findIndex(r=>r.id===id);
+    if(idx>=0){ rules[idx]={...rules[idx],name,type,vmids,comment}; saveAffinityRules(rules); }
+    toast(`Rule updated`,'success'); renderAffinityView();
+  };
+  document.getElementById('modal-bg').classList.add('open');
+}
+
+function toggleAffinityRule(id) {
+  const rules=getAffinityRules();
+  const r=rules.find(x=>x.id===id);
+  if(r){ r.enabled=r.enabled===false?true:false; saveAffinityRules(rules); renderAffinityView(); }
+}
+
+function confirmDeleteAffinityRule(id) {
+  const rule=getAffinityRules().find(r=>r.id===id);
+  document.getElementById('modal-title').textContent='Delete Rule';
+  document.getElementById('modal-body').innerHTML=`<p style="color:var(--muted)">Delete rule <strong style="color:var(--red)">${escHtml(rule?.name||id)}</strong>?</p>`;
+  modalCallback=()=>{
+    saveAffinityRules(getAffinityRules().filter(r=>r.id!==id));
+    toast('Rule deleted','success'); renderAffinityView();
+  };
+  document.getElementById('modal-bg').classList.add('open');
+}
+
+// ── ENFORCEMENT ───────────────────────────────────────────
+
+async function enforceRule(id) {
+  const rule=getAffinityRules().find(r=>r.id===id);
+  if(!rule) return;
+  const {violated,fixes}=checkRule(rule);
+  if(!violated||!fixes.length) return toast('No violations to fix','info');
+  const txt=fixes.map(f=>`${f.vm.name||f.vm.vmid} → ${f.toNode}`).join(', ');
+  if(!confirm(`Fix "${rule.name}"?\n\nWill migrate: ${txt}`)) return;
+  for(const f of fixes){
+    const ep=f.vm.type==='vm'?'qemu':'lxc';
+    const conn=resolveConn(f.vm.connId||'');
+    try{
+      const params={target:f.toNode,online:1,'with-local-disks':1};
+      const res=conn?await connPost(conn,`/api2/json/nodes/${f.vm.node}/${ep}/${f.vm.vmid}/migrate`,params)
+                     :await pvePost(`/api2/json/nodes/${f.vm.node}/${ep}/${f.vm.vmid}/migrate`,params);
+      const upid=res&&res.data;
+      if(upid&&typeof upid==='string') tmRegister(upid,f.vm.node,`Affinity fix: ${f.vm.vmid} → ${f.toNode}`);
+      toast(`${f.vm.name||f.vm.vmid} → ${f.toNode} started`,'success');
+    }catch(e){ toast(`Failed: ${e.message}`,'error'); }
+    await new Promise(r=>setTimeout(r,500));
+  }
+  setTimeout(renderAffinityView,3000);
+}
+
+async function enforceAllRules() {
+  const rules=getAffinityRules().filter(r=>r.enabled!==false);
+  const violated=rules.filter(r=>checkRule(r).violated);
+  if(!violated.length) return toast('No violations to fix','info');
+  if(!confirm(`Fix ${violated.length} violated rule(s)?`)) return;
+  for(const r of violated) await enforceRule(r.id);
+}
+
+// Call after every data refresh to keep badge current
+// (hooked into renderCurrentView and refreshAll)
+
 // ── DRS — DYNAMIC RESOURCE SCHEDULING ────────────────────
 // Analyses cluster resource imbalance across nodes and recommends
 // (or automatically executes) VM/CT migrations to restore balance.
@@ -9533,6 +9841,14 @@ let drsState = {
   nodeScores:      [],
   analysed:        false,
 };
+
+// Returns true if this VM is part of an AFFINITY rule that's currently compliant
+// — DRS should not move it as that would break the affinity grouping
+function _drsAffinityLocked(vmid) {
+  return getAffinityRules()
+    .filter(r=>r.enabled!==false && r.type==='affinity' && r.vmids.includes(vmid))
+    .some(r=>!checkRule(r).violated);
+}
 
 // ── Settings ──────────────────────────────────────────────
 function getDRSSettings() {
@@ -9616,6 +9932,8 @@ function _findMigrations(nodeInfos) {
     for(const vm of candidates) {
       if(moved.has(vm.vmid)) continue;
       if(excluded.has(+vm.vmid)) continue;
+      // Skip VMs pinned by an affinity rule (moving them would violate the rule)
+      if(_drsAffinityLocked(+vm.vmid)) continue;
 
       const vmMemMiB = vm.maxmem?vm.maxmem/1048576:512;
       const vmCpuPct = (vm.cpu||0)*100;
