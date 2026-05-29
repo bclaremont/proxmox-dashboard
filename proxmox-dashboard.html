@@ -71,8 +71,10 @@
     /* SIDEBAR */
     #sidebar{background:var(--bg2);border-right:1px solid var(--border);padding:14px 0;overflow-y:auto;}
     .sidebar-section{padding:0 10px;margin-bottom:18px;}
-    .sidebar-label{font-size:10px;text-transform:uppercase;letter-spacing:1.4px;color:var(--muted);padding:0 8px;margin-bottom:5px;cursor:pointer;user-select:none;display:flex;align-items:center;justify-content:space-between;}
-    .sidebar-label:hover{color:var(--text);}
+    .sidebar-label{font-size:11px;text-transform:uppercase;letter-spacing:1.2px;color:var(--text);opacity:.65;padding:0 8px;margin-bottom:5px;cursor:pointer;user-select:none;display:flex;align-items:center;justify-content:space-between;font-weight:600;}
+    .sidebar-label:hover{opacity:1;}
+    .sidebar-label-inner{display:flex;align-items:center;gap:6px;}
+    .sidebar-label svg{width:13px;height:13px;flex-shrink:0;opacity:.9;}
     .sidebar-chevron{font-size:10px;transition:transform .2s;opacity:.6;flex-shrink:0;margin-left:2px;}
     .sidebar-section.collapsed .sidebar-chevron{transform:rotate(-90deg);}
     .sidebar-section.collapsed>*:not(.sidebar-label){display:none!important;}
@@ -381,7 +383,10 @@
       </div>
     </div>
     <div class="sidebar-section" data-section="views">
-      <div class="sidebar-label" onclick="toggleSidebarSection(this)"><span>Views</span><span class="sidebar-chevron">▾</span></div>
+      <div class="sidebar-label" onclick="toggleSidebarSection(this)">
+        <span class="sidebar-label-inner"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>Views</span>
+        <span class="sidebar-chevron">▾</span>
+      </div>
       <div class="nav-item" data-view="connections" onclick="switchView('connections')">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="M8.59 13.51l6.83 3.98M15.41 6.51l-6.82 3.98"/></svg>
         Clusters &amp; Hosts
@@ -426,7 +431,10 @@
       </div>
     </div>
     <div class="sidebar-section" data-section="actions">
-      <div class="sidebar-label" onclick="toggleSidebarSection(this)"><span>Actions</span><span class="sidebar-chevron">▾</span></div>
+      <div class="sidebar-label" onclick="toggleSidebarSection(this)">
+        <span class="sidebar-label-inner"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>Actions</span>
+        <span class="sidebar-chevron">▾</span>
+      </div>
       <div class="nav-item" onclick="openCreateVMModal()">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="12" y1="8" x2="12" y2="14"/><line x1="9" y1="11" x2="15" y2="11"/></svg>
         Create VM
@@ -449,7 +457,10 @@
       </div>
     </div>
     <div class="sidebar-section" data-section="infra">
-      <div class="sidebar-label" onclick="toggleSidebarSection(this)"><span>Infrastructure</span><span class="sidebar-chevron">▾</span></div>
+      <div class="sidebar-label" onclick="toggleSidebarSection(this)">
+        <span class="sidebar-label-inner"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="4" rx="1"/><rect x="2" y="10" width="20" height="4" rx="1"/><rect x="2" y="17" width="20" height="4" rx="1"/></svg>Infrastructure</span>
+        <span class="sidebar-chevron">▾</span>
+      </div>
       <div class="nav-item" data-view="sdn" onclick="switchView('sdn')">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="2" width="6" height="6" rx="1"/><rect x="16" y="2" width="6" height="6" rx="1"/><rect x="9" y="16" width="6" height="6" rx="1"/><path d="M5 8v4a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8"/><line x1="12" y1="14" x2="12" y2="16"/></svg>
         SDN
@@ -478,7 +489,10 @@
       </div>
     </div>
     <div class="sidebar-section" data-section="admin">
-      <div class="sidebar-label" onclick="toggleSidebarSection(this)"><span>Admin</span><span class="sidebar-chevron">▾</span></div>
+      <div class="sidebar-label" onclick="toggleSidebarSection(this)">
+        <span class="sidebar-label-inner"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M12 12C8.686 12 6 14.686 6 18h12c0-3.314-2.686-6-6-6z"/><path d="M17 18v1a2 2 0 0 1-2 2H9a2 2 0 0 1-2-2v-1"/></svg>Admin</span>
+        <span class="sidebar-chevron">▾</span>
+      </div>
       <div class="nav-item" data-view="users" onclick="switchView('users')">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
         Users &amp; Perms
@@ -522,7 +536,7 @@
 
     <div class="sidebar-section" id="saved-views-sidebar" data-section="savedviews">
       <div class="sidebar-label" onclick="toggleSidebarSection(this)">
-        <span>Saved Views</span>
+        <span class="sidebar-label-inner"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>Saved Views</span>
         <div style="display:flex;align-items:center;gap:4px">
           <button onclick="openCreateViewModal();event.stopPropagation()" title="Create saved view" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:16px;line-height:1;padding:0 2px">+</button>
           <span class="sidebar-chevron">▾</span>
