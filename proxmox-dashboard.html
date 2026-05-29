@@ -71,10 +71,11 @@
     /* SIDEBAR */
     #sidebar{background:var(--bg2);border-right:1px solid var(--border);padding:14px 0;overflow-y:auto;}
     .sidebar-section{padding:0 10px;margin-bottom:18px;}
-    .sidebar-label{font-size:11px;text-transform:uppercase;letter-spacing:1.2px;color:var(--text);opacity:.65;padding:0 8px;margin-bottom:5px;cursor:pointer;user-select:none;display:flex;align-items:center;justify-content:space-between;font-weight:600;}
-    .sidebar-label:hover{opacity:1;}
+    .sidebar-label{font-size:10px;text-transform:uppercase;letter-spacing:1.2px;color:var(--text);padding:5px 8px 5px 10px;margin:6px 8px 4px;cursor:pointer;user-select:none;display:flex;align-items:center;justify-content:space-between;font-weight:700;background:var(--bg3);border-radius:var(--radius);border-left:2px solid var(--accent);}
+    .sidebar-label:hover{background:rgba(249,115,22,.12);color:var(--accent);}
+    .sidebar-label:hover .sidebar-chevron{opacity:1;}
     .sidebar-label-inner{display:flex;align-items:center;gap:6px;}
-    .sidebar-label svg{width:13px;height:13px;flex-shrink:0;opacity:.9;}
+    .sidebar-label svg{width:13px;height:13px;flex-shrink:0;color:var(--accent);}
     .sidebar-chevron{font-size:10px;transition:transform .2s;opacity:.6;flex-shrink:0;margin-left:2px;}
     .sidebar-section.collapsed .sidebar-chevron{transform:rotate(-90deg);}
     .sidebar-section.collapsed>*:not(.sidebar-label){display:none!important;}
@@ -384,7 +385,7 @@
     </div>
     <div class="sidebar-section" data-section="views">
       <div class="sidebar-label" onclick="toggleSidebarSection(this)">
-        <span class="sidebar-label-inner"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>Views</span>
+        <span class="sidebar-label-inner"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>Monitor</span>
         <span class="sidebar-chevron">▾</span>
       </div>
       <div class="nav-item" data-view="connections" onclick="switchView('connections')">
@@ -408,6 +409,10 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg>
         Nodes
       </div>
+      <div class="nav-item" data-view="heatmap" onclick="switchView('heatmap')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M3 15h18M9 3v18M15 3v18"/></svg>
+        Heatmap
+      </div>
       <div class="nav-item" data-view="tasks" onclick="switchView('tasks')">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
         Tasks
@@ -417,17 +422,13 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
         System Log
       </div>
-      <div class="nav-item" data-view="storage" onclick="switchView('storage')">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>
-        Storage
+      <div class="nav-item" data-view="audit" onclick="switchView('audit')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+        Audit Log
       </div>
-      <div class="nav-item" data-view="network" onclick="switchView('network')">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="16" y="16" width="6" height="6" rx="1"/><rect x="2" y="16" width="6" height="6" rx="1"/><rect x="9" y="2" width="6" height="6" rx="1"/><path d="M5 16v-4h14v4M12 12V8"/></svg>
-        Network
-      </div>
-      <div class="nav-item" data-view="heatmap" onclick="switchView('heatmap')">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M3 15h18M9 3v18M15 3v18"/></svg>
-        Heatmap
+      <div class="nav-item" data-view="clustergraphs" onclick="switchView('clustergraphs')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+        Cluster Graphs
       </div>
     </div>
     <div class="sidebar-section" data-section="actions">
@@ -460,6 +461,14 @@
       <div class="sidebar-label" onclick="toggleSidebarSection(this)">
         <span class="sidebar-label-inner"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="4" rx="1"/><rect x="2" y="10" width="20" height="4" rx="1"/><rect x="2" y="17" width="20" height="4" rx="1"/></svg>Infrastructure</span>
         <span class="sidebar-chevron">▾</span>
+      </div>
+      <div class="nav-item" data-view="storage" onclick="switchView('storage')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>
+        Storage
+      </div>
+      <div class="nav-item" data-view="network" onclick="switchView('network')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="16" y="16" width="6" height="6" rx="1"/><rect x="2" y="16" width="6" height="6" rx="1"/><rect x="9" y="2" width="6" height="6" rx="1"/><path d="M5 16v-4h14v4M12 12V8"/></svg>
+        Network
       </div>
       <div class="nav-item" data-view="sdn" onclick="switchView('sdn')">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="2" width="6" height="6" rx="1"/><rect x="16" y="2" width="6" height="6" rx="1"/><rect x="9" y="16" width="6" height="6" rx="1"/><path d="M5 8v4a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8"/><line x1="12" y1="14" x2="12" y2="16"/></svg>
@@ -501,14 +510,6 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
         Certificates
         <span class="nav-badge warn" id="cert-badge" style="display:none">!</span>
-      </div>
-      <div class="nav-item" data-view="audit" onclick="switchView('audit')">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
-        Audit Log
-      </div>
-      <div class="nav-item" data-view="clustergraphs" onclick="switchView('clustergraphs')">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
-        Cluster Graphs
       </div>
       <div class="nav-item" data-view="tfa" onclick="switchView('tfa')">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M12 17v-2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/><circle cx="12" cy="15" r="1" fill="currentColor"/></svg>
