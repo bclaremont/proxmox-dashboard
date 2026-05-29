@@ -42,6 +42,7 @@
       GET  /api2/json/cluster/resources?type=storage             - all cluster storage
   -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js" crossorigin="anonymous"></script>
   <style>
     :root {
       --bg: #0d1117; --bg2: #161b22; --bg3: #21262d;
@@ -473,6 +474,10 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
         Cluster Graphs
       </div>
+      <div class="nav-item" data-view="tfa" onclick="switchView('tfa')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M12 17v-2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/><circle cx="12" cy="15" r="1" fill="currentColor"/></svg>
+        2FA Management
+      </div>
       <div class="nav-item" data-view="sso" onclick="switchView('sso')">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/></svg>
         SSO &amp; Auth Realms
@@ -557,6 +562,18 @@
         </div>
       </div>
       <div id="sv-content"></div>
+    </div>
+
+    <!-- 2FA MANAGEMENT -->
+    <div id="view-tfa" style="display:none">
+      <div class="section-header">
+        <span class="section-title">Two-Factor Authentication</span>
+        <div style="display:flex;gap:6px">
+          <select class="conn-sel" id="tfa-conn" style="width:140px;padding:5px 8px;font-size:13px" onchange="loadTFA()"><option value="">Primary</option></select>
+          <button class="btn small" onclick="loadTFA()">Refresh</button>
+        </div>
+      </div>
+      <div id="tfa-content"><div class="empty">Loading…</div></div>
     </div>
 
     <!-- SSO & AUTH REALMS -->
@@ -1894,7 +1911,7 @@ async function migrateVM(node, vmid, type, targetNode, online=false, withLocal=f
 // ── RENDERING ─────────────────────────────────────────────
 
 function switchView(view) {
-  const views=['connect','connections','savedview','overview','vms','containers','nodes','tasks','syslog','storage','network','heatmap','isolib','sdn','pools','ceph','ha','firewall','backups','users','certs','audit','clustergraphs','sso','subscriptions','updates','pbs'];
+  const views=['connect','connections','savedview','overview','vms','containers','nodes','tasks','syslog','storage','network','heatmap','isolib','sdn','pools','ceph','ha','firewall','backups','users','certs','audit','clustergraphs','tfa','sso','subscriptions','updates','pbs'];
   views.forEach(v=>{
     const el=document.getElementById('view-'+v);
     if(el) el.style.display=v===view?'':'none';
@@ -1941,6 +1958,7 @@ function switchView(view) {
   if(view==='connections') renderConnections();
   if(view==='subscriptions') loadSubscriptions();
   if(view==='sso') loadSSO();
+  if(view==='tfa') loadTFA();
   if(view==='savedview') renderSavedView();
   if(view==='pools') loadPools();
   if(view!=='connect') renderCurrentView();
@@ -6678,6 +6696,224 @@ function confirmDeletePool(poolid, connId) {
     } catch(e) { toast('Delete failed: '+e.message, 'error'); }
   };
   document.getElementById('modal-bg').classList.add('open');
+}
+
+// ── 2FA MANAGEMENT ────────────────────────────────────────
+// GET    /api2/json/access/tfa              — all TFA entries (admin)
+// GET    /api2/json/access/users            — user list (tfa-locked, totp-locked)
+// POST   /api2/json/access/users/{u}/tfa   — add TFA entry
+// PUT    /api2/json/access/tfa/{id}         — enable/disable / update description
+// DELETE /api2/json/access/tfa/{id}         — remove entry
+// Official: https://pve.proxmox.com/pve-docs/api-viewer/#/access/tfa
+
+async function loadTFA() {
+  const conn = getViewConn('tfa-conn');
+  const get  = conn ? (p=>connGet(conn,p)) : pveGet;
+  const el   = document.getElementById('tfa-content');
+  el.innerHTML = '<div class="empty"><span class="loading"></span> Loading 2FA status…</div>';
+  try {
+    const [tfaRes, usersRes] = await Promise.all([
+      get('/api2/json/access/tfa').catch(()=>({data:[]})),
+      get('/api2/json/access/users').catch(()=>({data:[]}))
+    ]);
+    renderTFA(tfaRes.data||[], usersRes.data||[], conn);
+  } catch(e) {
+    el.innerHTML = `<div class="empty">Failed to load 2FA data: ${escHtml(e.message)}</div>`;
+  }
+}
+
+function renderTFA(entries, users, conn) {
+  const el = document.getElementById('tfa-content');
+  const connId = conn ? (extraConns.find(c=>c===conn)||{}).id||'' : '';
+
+  // Index entries by userid
+  const byUser = {};
+  entries.forEach(e => {
+    const uid = e.userid || '';
+    (byUser[uid]||(byUser[uid]=[])).push(e);
+  });
+
+  // Stats
+  const usersWithTFA = Object.keys(byUser).length;
+  const totpCount    = entries.filter(e=>e.type==='totp').length;
+  const webauthnCount= entries.filter(e=>e.type==='webauthn').length;
+  const recoveryCount= entries.filter(e=>e.type==='recovery').length;
+  const lockedUsers  = users.filter(u=>u['totp-locked']||u['tfa-locked-until']>Date.now()/1000).length;
+
+  let html = `
+    <div class="stats-grid" style="margin-bottom:16px">
+      <div class="stat-card accent-blue"><div class="label">Users with 2FA</div><div class="value">${usersWithTFA}</div><div class="sub">of ${users.length} total</div></div>
+      <div class="stat-card accent-orange"><div class="label">TOTP Entries</div><div class="value">${totpCount}</div><div class="sub">authenticator app</div></div>
+      <div class="stat-card accent-purple"><div class="label">WebAuthn / FIDO2</div><div class="value">${webauthnCount}</div><div class="sub">hardware keys</div></div>
+      <div class="stat-card accent-${lockedUsers>0?'red':'green'}"><div class="label">Locked Out</div><div class="value" style="color:${lockedUsers>0?'var(--red)':'var(--green)'}">${lockedUsers}</div><div class="sub">too many failed attempts</div></div>
+    </div>`;
+
+  if (!users.length) {
+    html += '<div class="empty">No users found.</div>';
+    el.innerHTML = html;
+    return;
+  }
+
+  // Per-user sections
+  html += `<div class="table-wrap"><table>
+    <thead><tr><th>User</th><th>Realm</th><th>2FA Entries</th><th>Locked</th><th>Actions</th></tr></thead>
+    <tbody>`;
+
+  users.forEach(u => {
+    const uid   = u.userid || '';
+    const realm = uid.includes('@') ? uid.split('@').slice(1).join('@') : '—';
+    const name  = uid.includes('@') ? uid.split('@')[0] : uid;
+    const uEntries = byUser[uid] || [];
+    const isLocked = u['totp-locked'] || (u['tfa-locked-until'] && u['tfa-locked-until'] > Date.now()/1000);
+    const lockUntil= u['tfa-locked-until'] ? new Date(u['tfa-locked-until']*1000).toLocaleString() : '';
+
+    const entryChips = uEntries.length
+      ? uEntries.map(e => {
+          const col = e.type==='totp'?'var(--orange, var(--accent))':e.type==='webauthn'?'var(--purple)':'var(--muted)';
+          const icon = e.type==='totp'?'📱':e.type==='webauthn'?'🔑':'🔄';
+          return `<span style="display:inline-flex;align-items:center;gap:4px;background:var(--bg3);border:1px solid var(--border);border-radius:20px;padding:2px 8px;font-size:11px;margin:2px;cursor:default"
+                   title="${escHtml(e.description||e.type)} · ${e.enable?'enabled':'disabled'}">${icon} ${escHtml(e.description||e.type)}
+            ${e.enable
+              ? '<span style="color:var(--green)">●</span>'
+              : '<span style="color:var(--muted)">○</span>'}
+            <button onclick="confirmDeleteTFA('${escHtml(e.id)}','${escHtml(uid)}','${escHtml(e.type)}','${connId}')"
+              style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:10px;padding:0 0 0 3px;line-height:1"
+              title="Remove this 2FA entry">✕</button>
+          </span>`;
+        }).join('')
+      : '<span style="font-size:12px;color:var(--muted)">None</span>';
+
+    html += `<tr>
+      <td><strong>${escHtml(name)}</strong></td>
+      <td style="font-size:12px;color:var(--muted)">${escHtml(realm)}</td>
+      <td>${entryChips}</td>
+      <td>
+        ${isLocked
+          ? `<span class="badge stopped" style="font-size:10px" title="${lockUntil?'Until '+lockUntil:''}"><span class="badge-dot"></span>locked</span>`
+          : '<span style="color:var(--muted);font-size:12px">—</span>'}
+      </td>
+      <td onclick="event.stopPropagation()">
+        <div class="actions-row">
+          <button class="btn small primary" onclick="openAddTOTPModal('${escHtml(uid)}','${connId}')">+ TOTP</button>
+          ${isLocked ? `<button class="btn small warning" onclick="unlockTFAUser('${escHtml(uid)}','${connId}')" title="Reset lock — user can try again">Unlock</button>` : ''}
+        </div>
+      </td>
+    </tr>`;
+  });
+
+  html += `</tbody></table></div>
+    <div style="margin-top:12px;padding:9px 14px;background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius);font-size:12px;color:var(--muted)">
+      <strong style="color:var(--text)">Removing a 2FA entry</strong> allows a locked-out user to log in again without their authenticator.
+      For security, verify the user's identity through another channel before removing.
+    </div>`;
+
+  el.innerHTML = html;
+}
+
+// ── ADD TOTP ──────────────────────────────────────────────
+
+function generateTOTPSecret() {
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+  const arr   = new Uint8Array(20);
+  crypto.getRandomValues(arr);
+  return Array.from(arr, b => chars[b % 32]).join('');
+}
+
+function openAddTOTPModal(userid, connId) {
+  const secret = generateTOTPSecret();
+  const issuer  = 'Proxmox VE';
+  const account = userid;
+  const uri     = `otpauth://totp/${encodeURIComponent(issuer)}:${encodeURIComponent(account)}?secret=${secret}&issuer=${encodeURIComponent(issuer)}&algorithm=SHA1&digits=6&period=30`;
+
+  document.getElementById('modal-title').textContent = `Add TOTP for ${userid}`;
+  document.getElementById('modal-body').innerHTML = `
+    <p style="color:var(--muted);font-size:13px;margin-bottom:14px">
+      Scan the QR code with an authenticator app (Google Authenticator, Authy, etc.), then enter the 6-digit code to confirm.
+    </p>
+    <div style="display:flex;gap:18px;align-items:flex-start;margin-bottom:14px">
+      <div id="totp-qr" style="background:#fff;padding:8px;border-radius:6px;flex-shrink:0"></div>
+      <div style="flex:1;min-width:0">
+        <div class="form-group"><label>DESCRIPTION (device name)</label>
+          <input id="totp-desc" value="My authenticator" placeholder="Phone, Authy, etc."/>
+        </div>
+        <div class="form-group">
+          <label>MANUAL ENTRY — secret key</label>
+          <div style="display:flex;gap:6px;align-items:center">
+            <input id="totp-secret-show" value="${secret}" readonly style="font-family:monospace;font-size:12px;letter-spacing:2px"/>
+            <button type="button" class="btn small" onclick="navigator.clipboard.writeText('${secret}').then(()=>toast('Copied','success'))">Copy</button>
+          </div>
+        </div>
+        <div class="form-group"><label>VERIFICATION CODE — enter the 6-digit code from your app</label>
+          <input id="totp-verify" type="text" inputmode="numeric" maxlength="8" placeholder="000000" style="font-size:18px;letter-spacing:4px;text-align:center"/>
+        </div>
+      </div>
+    </div>`;
+
+  // Render QR code after the modal HTML is in the DOM
+  setTimeout(() => {
+    const qrEl = document.getElementById('totp-qr');
+    if (!qrEl) return;
+    if (typeof QRCode !== 'undefined') {
+      new QRCode(qrEl, { text:uri, width:160, height:160, colorDark:'#000', colorLight:'#fff' });
+    } else {
+      qrEl.innerHTML = `<div style="font-size:11px;color:var(--muted);padding:8px;width:160px;word-break:break-all">${escHtml(uri)}</div>`;
+    }
+  }, 50);
+
+  modalCallback = async () => {
+    const code = (document.getElementById('totp-verify').value||'').replace(/\s/g,'');
+    const desc = (document.getElementById('totp-desc').value||'My authenticator').trim();
+    if (!code || code.length < 6) return toast('Enter the 6-digit verification code from your app', 'error');
+    const conn = resolveConn(connId);
+    const post = conn ? (p,d)=>connPost(conn,p,d) : pvePost;
+    try {
+      await post(`/api2/json/access/users/${encodeURIComponent(userid)}/tfa`, {
+        type:'totp', description:desc, key:secret, value:code
+      });
+      toast(`TOTP added for ${userid}`, 'success');
+      setTimeout(loadTFA, 800);
+    } catch(e) {
+      toast('Failed: '+e.message+' — check the code is correct', 'error');
+    }
+  };
+  document.getElementById('modal-bg').classList.add('open');
+}
+
+// ── MANAGE TFA ENTRIES ────────────────────────────────────
+
+function confirmDeleteTFA(id, userid, type, connId) {
+  const typeLabel = {totp:'TOTP', webauthn:'WebAuthn', recovery:'Recovery'}[type] || type;
+  document.getElementById('modal-title').textContent = `Remove 2FA Entry`;
+  document.getElementById('modal-body').innerHTML = `
+    <p style="color:var(--muted)">Remove <strong style="color:var(--text)">${typeLabel}</strong> entry for <strong style="color:var(--accent)">${escHtml(userid)}</strong>?</p>
+    <p style="color:var(--red);font-size:12px;margin-top:8px">⚠ The user will be able to log in without this 2FA method. Verify their identity before proceeding.</p>`;
+  modalCallback = async () => {
+    const conn = resolveConn(connId);
+    try {
+      if (conn) await connDelete(conn, `/api2/json/access/tfa/${encodeURIComponent(id)}`);
+      else      await pveDelete(`/api2/json/access/tfa/${encodeURIComponent(id)}`);
+      toast(`2FA entry removed for ${userid}`, 'success');
+      setTimeout(loadTFA, 800);
+    } catch(e) { toast('Remove failed: '+e.message, 'error'); }
+  };
+  document.getElementById('modal-bg').classList.add('open');
+}
+
+async function unlockTFAUser(userid, connId) {
+  // Proxmox locks the user after too many failed 2FA attempts.
+  // Unlock by resetting via PUT /access/users/{userid} with tfa-locked-until=0
+  const conn = resolveConn(connId);
+  try {
+    if (conn) {
+      const h = connHeaders(conn, {'Content-Type':'application/x-www-form-urlencoded'});
+      const r = await fetch(conn.host+`/api2/json/access/users/${encodeURIComponent(userid)}`, {method:'PUT', headers:h, body:'tfa-locked-until=0&totp-locked=0'});
+      if (!r.ok){const t=await r.text();throw new Error(`HTTP ${r.status}: ${t}`);}
+    } else {
+      await pvePut(`/api2/json/access/users/${encodeURIComponent(userid)}`, {'tfa-locked-until':0,'totp-locked':0});
+    }
+    toast(`${userid} unlocked — they can attempt 2FA again`, 'success');
+    setTimeout(loadTFA, 800);
+  } catch(e) { toast('Unlock failed: '+e.message, 'error'); }
 }
 
 // ── SSO & AUTH REALMS ─────────────────────────────────────
