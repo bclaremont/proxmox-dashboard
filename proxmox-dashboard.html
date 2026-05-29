@@ -1931,7 +1931,8 @@ async function openNodeDetail(nodeData) {
   const online = nodeData.status==='online'||(nodeData.statusData&&Object.keys(nodeData.statusData).length>0);
   document.getElementById('detail-status').innerHTML = statusBadge(online?'online':'offline');
   document.getElementById('detail-actions').innerHTML = `
-    <button class="btn small" onclick="openConsole('${nodeData.node}','','node')">⌨ Shell</button>`;
+    <button class="btn small" onclick="openConsole('${nodeData.node}','','node')">⌨ Shell</button>
+    <button class="btn small warning" onclick="openDrainNodeModal(${JSON.stringify(nodeData).replace(/"/g,'&quot;')})">🔧 Drain</button>`;
   // Show node-only tabs, hide VM-only tabs
   document.querySelectorAll('.dtab').forEach(t=>{
     const vmOnly  =['snapshots','vmfw','hardware','options','backup'];
@@ -2755,7 +2756,12 @@ function renderNodes(){
     const memStr=s.memory?`${fmtBytes(s.memory.used)}/${fmtBytes(s.memory.total)}`:'—';
     const online=n.status==='online'||(s&&Object.keys(s).length>0);
     return `<div class="node-card ${online?'online':'offline'}" onclick="openNodeDetail(${JSON.stringify(n).replace(/"/g,'&quot;')})">
-      <div class="node-card-header"><span class="node-name">${n.node}</span>${statusBadge(online?'online':'offline')}</div>
+      <div class="node-card-header"><span class="node-name">${n.node}</span>
+        <div style="display:flex;gap:5px;align-items:center">
+          ${statusBadge(online?'online':'offline')}
+          ${isMaintenanceMode(n.node)?'<span class="badge warning" style="font-size:9px">🔧 MAINTENANCE</span>':''}
+        </div>
+      </div>
       <div class="node-metric"><span class="key">CPU</span><span>${cpuPct}%</span></div>
       <div class="gauge-bar" style="margin-bottom:10px"><div class="gauge-fill ${gaugeClass(parseFloat(cpuPct)||0)}" style="width:${Math.min(parseFloat(cpuPct)||0,100)}%"></div></div>
       <div class="node-metric"><span class="key">Memory</span><span>${memPct}%</span></div>
@@ -10797,6 +10803,158 @@ async function requestNotifPermission() {
   if (!('Notification' in window)) return toast('Browser notifications not supported in this browser', 'error');
   const perm = await Notification.requestPermission();
   toast(perm==='granted' ? '✓ Browser notifications enabled' : 'Browser notifications denied — check browser settings', perm==='granted'?'success':'error');
+}
+
+// ── MAINTENANCE MODE — NODE DRAIN ────────────────────────
+// Migrates all VMs/CTs off a node so it can be safely shut down
+// for hardware maintenance, updates, etc.
+// State stored in localStorage so the "in maintenance" badge persists.
+
+function _maintKey() { return 'pve-maintenance-nodes'; }
+
+function getMaintenanceNodes() {
+  try { return JSON.parse(localStorage.getItem(_maintKey())||'{}'); } catch(e) { return {}; }
+}
+
+function isMaintenanceMode(node) {
+  return !!getMaintenanceNodes()[node];
+}
+
+function setMaintenanceMode(node, state) {
+  const m=getMaintenanceNodes();
+  if(state) m[node]={since:Date.now()};
+  else delete m[node];
+  localStorage.setItem(_maintKey(),JSON.stringify(m));
+}
+
+async function openDrainNodeModal(nodeData) {
+  const node   = nodeData.node;
+  const connId = nodeData.connId||'';
+  const conn   = resolveConn(connId);
+  const nodes  = conn?(conn.nodes||[]):PVE.nodes;
+  const otherNodes = nodes.filter(n=>n.node!==node);
+
+  // Get all VMs/CTs currently on this node
+  const items = allVMs().concat(allCTs()).filter(x=>x.node===node);
+  const running = items.filter(x=>x.status==='running');
+  const stopped = items.filter(x=>x.status!=='running');
+  const inMaint = isMaintenanceMode(node);
+
+  if(!items.length && !inMaint) {
+    toast(`${node} has no VMs/CTs — nothing to drain`,'info'); return;
+  }
+
+  const nodeOpts = otherNodes.map(n=>`<option value="${n.node}">${n.node}</option>`).join('');
+
+  document.getElementById('modal-title').textContent = inMaint
+    ? `Exit Maintenance — ${node}` : `Drain Node — ${node}`;
+
+  document.getElementById('modal-body').innerHTML = inMaint ? `
+    <div style="background:rgba(210,153,34,.1);border:1px solid rgba(210,153,34,.3);border-radius:var(--radius);padding:12px 16px;margin-bottom:14px">
+      <div style="font-weight:600;color:var(--yellow);margin-bottom:4px">🔧 ${node} is in Maintenance Mode</div>
+      <div style="font-size:12px;color:var(--muted)">Since: ${new Date(getMaintenanceNodes()[node]?.since||0).toLocaleString()}</div>
+    </div>
+    <p style="color:var(--muted);font-size:13px;margin-bottom:12px">
+      To rebalance the cluster after maintenance, use <strong>Infrastructure → DRS → Analyse</strong>.
+      Or mark the maintenance as complete to clear the badge.
+    </p>
+    <p style="font-size:12px;color:var(--muted)">Current VMs on ${node}: <strong>${items.length}</strong></p>` : `
+    <div style="background:rgba(249,115,22,.08);border:1px solid rgba(249,115,22,.25);border-radius:var(--radius);padding:10px 14px;margin-bottom:14px;font-size:12px;color:var(--muted)">
+      Migrates all <strong>${items.length} VM${items.length!==1?'s':''}/CT${items.length!==1?'s':''}</strong> off <strong>${node}</strong>
+      so it can be safely shut down for maintenance.
+      <span style="color:var(--yellow);display:block;margin-top:4px">⚠ ${running.length} running (will live-migrate) · ${stopped.length} stopped (will cold-migrate or skip)</span>
+    </div>
+    <div class="create-vm-grid">
+      <div class="form-group"><label>TARGET NODE</label>
+        <select id="drain-target">
+          <option value="_auto">Auto — use DRS to distribute</option>
+          ${nodeOpts}
+        </select>
+      </div>
+      <div class="form-group"><label>OPTIONS</label>
+        <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;margin-bottom:6px">
+          <input type="checkbox" id="drain-online" checked style="width:auto;height:auto;padding:0;margin:0"> Online migration (keep VMs running)
+        </label>
+        <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer">
+          <input type="checkbox" id="drain-local" checked style="width:auto;height:auto;padding:0;margin:0"> With local disks
+        </label>
+      </div>
+    </div>
+    ${items.length ? `
+    <div class="section-title" style="font-size:11px;margin-bottom:6px">VMs / CTs to migrate (${items.length})</div>
+    <div style="max-height:180px;overflow-y:auto;border:1px solid var(--border);border-radius:var(--radius)">
+      ${items.map(x=>`<div style="padding:6px 10px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px;font-size:12px">
+        <span class="type-chip ${x.type==='vm'?'vm':'ct'}">${x.type.toUpperCase()}</span>
+        <strong>${escHtml(x.name||String(x.vmid))}</strong>
+        <span style="color:var(--muted)">${x.vmid}</span>
+        <span style="margin-left:auto">${statusBadge(x.status)}</span>
+      </div>`).join('')}
+    </div>` : '<div class="empty">No VMs or CTs on this node</div>'}
+    <div id="drain-progress" style="display:none;margin-top:12px"></div>`;
+
+  // Maintenance exit path
+  if(inMaint) {
+    modalCallback=()=>{ setMaintenanceMode(node,false); toast(`${node} maintenance mode cleared`,'success'); refreshAll(); };
+    document.getElementById('modal-confirm-btn').textContent='Clear Maintenance Flag';
+    document.getElementById('modal-bg').classList.add('open');
+    return;
+  }
+
+  // Drain execution
+  modalCallback=null;
+  const btn=document.getElementById('modal-confirm-btn');
+  btn.textContent=`🔧 Drain ${node}`; btn.disabled=false;
+  btn.onclick=async()=>{
+    if(!items.length) { setMaintenanceMode(node,true); document.getElementById('modal-bg').classList.remove('open'); btn.onclick=confirmModal; btn.textContent='Confirm'; btn.disabled=false; toast(`${node} marked as maintenance (no VMs to migrate)`,'success'); refreshAll(); return; }
+    const targetPref=document.getElementById('drain-target')?.value;
+    const online=document.getElementById('drain-online')?.checked;
+    const withLocal=document.getElementById('drain-local')?.checked;
+    btn.disabled=true; btn.textContent='Draining…';
+
+    const progress=document.getElementById('drain-progress');
+    if(progress) progress.style.display='';
+    const updateProg=(msg,ok)=>{
+      if(progress) progress.innerHTML=(progress.innerHTML||'')+
+        `<div style="padding:4px 0;font-size:12px;color:${ok?'var(--green)':ok===false?'var(--red)':'var(--muted)'}">${msg}</div>`;
+    };
+    updateProg(`Starting drain of ${node} — ${items.length} VM(s)/CT(s)…`);
+
+    let ok=0,fail=0;
+    for(const x of items) {
+      // Select target node
+      let target=targetPref;
+      if(target==='_auto') {
+        // Use DRS scoring to pick best target
+        const nodeInfos=_drsNodeInfo(allNodes().filter(n=>n.node!==node),allVMs().concat(allCTs()).filter(v=>v.node!==node));
+        const best=nodeInfos.sort((a,b)=>a.score-b.score)[0];
+        target=best?best.node:otherNodes[0]?.node;
+      }
+      if(!target) { updateProg(`✗ ${x.name||x.vmid}: no target node available`,false); fail++; continue; }
+      updateProg(`→ Migrating ${x.type.toUpperCase()} ${x.name||x.vmid} → ${target}…`);
+      try {
+        const ep=x.type==='vm'?'qemu':'lxc';
+        const params={target};
+        if(x.type==='vm'){params.online=online?1:0;if(withLocal)params['with-local-disks']=1;}
+        const c=resolveConn(connId);
+        const res=c?await connPost(c,`/api2/json/nodes/${node}/${ep}/${x.vmid}/migrate`,params)
+                    :await pvePost(`/api2/json/nodes/${node}/${ep}/${x.vmid}/migrate`,params);
+        const upid=res&&res.data;
+        if(upid&&typeof upid==='string') tmRegister(upid,node,`Drain: ${x.type.toUpperCase()} ${x.vmid} → ${target}`);
+        updateProg(`✓ ${x.name||x.vmid} → ${target} (task started)`,true);
+        ok++;
+        await new Promise(r=>setTimeout(r,600)); // stagger migrations
+      } catch(e) {
+        updateProg(`✗ ${x.name||x.vmid}: ${e.message}`,false); fail++;
+      }
+    }
+
+    setMaintenanceMode(node,true);
+    updateProg(`Drain complete: ${ok} migrated, ${fail} failed. Node marked as maintenance.`,true);
+    btn.textContent='Done — Close'; btn.disabled=false;
+    btn.onclick=()=>{ document.getElementById('modal-bg').classList.remove('open'); btn.onclick=confirmModal; btn.textContent='Confirm'; refreshAll(); };
+    toast(`${node} drained — ${ok} migrated, ${fail} failed`,'success');
+  };
+  document.getElementById('modal-bg').classList.add('open');
 }
 
 // ── VM / CT TAGS ──────────────────────────────────────────
