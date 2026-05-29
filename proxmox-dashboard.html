@@ -575,10 +575,6 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M12 17v-2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/><circle cx="12" cy="15" r="1" fill="currentColor"/></svg>
         2FA Management
       </div>
-      <div class="nav-item" data-view="sso" onclick="switchView('sso')">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/></svg>
-        SSO &amp; Auth Realms
-      </div>
       <div class="nav-item" data-view="subscriptions" onclick="switchView('subscriptions')">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
         Subscriptions
@@ -976,11 +972,19 @@
     <!-- USERS & PERMS -->
     <div id="view-users" style="display:none">
       <div class="section-header">
-        <span class="section-title">Users, Roles &amp; Permissions</span>
-        <div style="display:flex;gap:6px">
+        <span class="section-title">Users &amp; Access</span>
+        <div style="display:flex;gap:6px;align-items:center">
           <select class="conn-sel" id="users-conn" style="width:140px;padding:5px 8px;font-size:13px" onchange="loadUsers()"><option value="">Primary</option></select>
+          <div id="users-tab-action"></div>
           <button class="btn small" onclick="loadUsers()">Refresh</button>
         </div>
+      </div>
+      <div class="dtabs" id="users-tabs" style="margin-bottom:14px">
+        <div class="dtab active" onclick="switchUsersTab('users')">Users</div>
+        <div class="dtab" onclick="switchUsersTab('groups')">Groups</div>
+        <div class="dtab" onclick="switchUsersTab('permissions')">Permissions</div>
+        <div class="dtab" onclick="switchUsersTab('roles')">Roles</div>
+        <div class="dtab" onclick="switchUsersTab('realms')">Auth Realms</div>
       </div>
       <div id="users-content"><div class="empty">Loading…</div></div>
     </div>
@@ -2288,7 +2292,7 @@ async function migrateVM(node, vmid, type, targetNode, online=false, withLocal=f
 
 function switchView(view) {
   expandSidebarSection(view); // auto-expand collapsed section if needed
-  const views=['connect','connections','worldmap','savedview','overview','vms','containers','nodes','tasks','syslog','storage','network','heatmap','isolib','sdn','pools','ceph','ha','firewall','backups','users','certs','audit','clustergraphs','tfa','sso','subscriptions','updates','pbs'];
+  const views=['connect','connections','worldmap','savedview','overview','vms','containers','nodes','tasks','syslog','storage','network','heatmap','isolib','sdn','pools','ceph','ha','firewall','backups','users','certs','audit','clustergraphs','tfa','subscriptions','updates','pbs'];
   views.forEach(v=>{
     const el=document.getElementById('view-'+v);
     if(el) el.style.display=v===view?'':'none';
@@ -2335,7 +2339,6 @@ function switchView(view) {
   if(view==='connections') renderConnections();
   if(view==='worldmap') { initWorldMap(); renderWorldMap(); }
   if(view==='subscriptions') loadSubscriptions();
-  if(view==='sso') loadSSO();
   if(view==='tfa') loadTFA();
   if(view==='savedview') renderSavedView();
   if(view==='pools') loadPools();
@@ -4795,105 +4798,430 @@ async function loadBackups() {
 // GET /api2/json/access/users?full=1   - user list with group membership
 // GET /api2/json/access/roles          - all roles and their privileges
 // GET /api2/json/access/acl            - all ACL entries (path + user + role)
+// ── USERS & ACCESS — DATA STORE ──────────────────────────
+let usersData = { users:[], groups:[], roles:[], acls:[], domains:[], connId:'' };
+let _usersTab = 'users';
+
+function switchUsersTab(tab) {
+  _usersTab = tab;
+  document.querySelectorAll('#users-tabs .dtab').forEach((t,i) => {
+    t.classList.toggle('active', ['users','groups','permissions','roles','realms'][i] === tab);
+  });
+  _renderUsersTab();
+}
+
 async function loadUsers() {
   const conn = getViewConn('users-conn');
-  const get = conn ? (p=>connGet(conn,p)) : pveGet;
+  const get  = conn ? (p=>connGet(conn,p)) : pveGet;
+  usersData.connId = conn ? (extraConns.find(c=>c===conn)||{}).id||'' : '';
   const el = document.getElementById('users-content');
-  el.innerHTML = '<div class="empty"><span class="loading"></span> Loading users…</div>';
+  el.innerHTML = `<div class="empty"><span class="loading"></span> Loading…</div>`;
   try {
-    const [uRes, rRes, aRes] = await Promise.all([
-      get('/api2/json/access/users?full=1').catch(() => ({ data: [] })),
-      get('/api2/json/access/roles').catch(() => ({ data: [] })),
-      get('/api2/json/access/acl').catch(() => ({ data: [] }))
+    const [uRes, gRes, rRes, aRes, dRes] = await Promise.all([
+      get('/api2/json/access/users?full=1').catch(()=>({data:[]})),
+      get('/api2/json/access/groups').catch(()=>({data:[]})),
+      get('/api2/json/access/roles').catch(()=>({data:[]})),
+      get('/api2/json/access/acl').catch(()=>({data:[]})),
+      get('/api2/json/access/domains').catch(()=>({data:[]})),
     ]);
-    const users = uRes.data || [];
-    const roles = rRes.data || [];
-    const acls  = aRes.data || [];
-
-    const enabledCount = users.filter(u => u.enable !== 0).length;
-    const realmCounts = {};
-    users.forEach(u => {
-      const realm = (u.userid || '').split('@')[1] || 'unknown';
-      realmCounts[realm] = (realmCounts[realm] || 0) + 1;
-    });
-
-    el.innerHTML = `
-      <div class="stats-grid">
-        <div class="stat-card">
-          <div class="label">Total Users</div>
-          <div class="value" style="color:var(--blue)">${users.length}</div>
-          <div class="sub">${enabledCount} enabled</div>
-        </div>
-        <div class="stat-card">
-          <div class="label">Roles</div>
-          <div class="value" style="color:var(--purple)">${roles.length}</div>
-        </div>
-        <div class="stat-card">
-          <div class="label">ACL Entries</div>
-          <div class="value" style="color:var(--teal)">${acls.length}</div>
-        </div>
-        <div class="stat-card">
-          <div class="label">Realms</div>
-          <div class="value" style="color:var(--accent)">${Object.keys(realmCounts).length}</div>
-          <div class="sub">${Object.entries(realmCounts).map(([r,n])=>`${r}:${n}`).join(', ')}</div>
-        </div>
-      </div>
-
-      <div class="section-header"><span class="section-title">Users (${users.length})</span></div>
-      <div class="table-wrap">
-        <table>
-          <thead><tr><th>User ID</th><th>Name</th><th>Email</th><th>Realm</th><th>Groups</th><th>Enabled</th><th>Expires</th><th>Comment</th></tr></thead>
-          <tbody>${users.map(u => {
-            const realm = (u.userid || '').split('@')[1] || '—';
-            const exp = u.expire ? new Date(u.expire * 1000).toLocaleDateString() : 'Never';
-            const expSoon = u.expire && (u.expire * 1000 - Date.now()) < 30 * 86400000;
-            return `<tr>
-              <td><strong>${escHtml(u.userid || '—')}</strong></td>
-              <td>${escHtml([u.firstname, u.lastname].filter(Boolean).join(' ') || '—')}</td>
-              <td style="font-size:12px;color:var(--muted)">${escHtml(u.email || '—')}</td>
-              <td><span class="role-chip">${escHtml(realm)}</span></td>
-              <td style="font-size:12px;color:var(--muted)">${escHtml(u.groups || '—')}</td>
-              <td class="${u.enable !== 0 ? 'user-enabled' : 'user-disabled'}">${u.enable !== 0 ? '✓ Yes' : '✗ No'}</td>
-              <td style="font-size:12px;${expSoon ? 'color:var(--yellow);font-weight:700' : 'color:var(--muted)'}">${exp}</td>
-              <td style="font-size:11px;color:var(--muted)">${escHtml(u.comment || '—')}</td>
-            </tr>`;
-          }).join('')}
-          </tbody>
-        </table>
-      </div>
-
-      <div class="section-header" style="margin-top:8px"><span class="section-title">Roles (${roles.length})</span></div>
-      <div class="table-wrap">
-        <table>
-          <thead><tr><th>Role</th><th>Special</th><th>Privileges</th></tr></thead>
-          <tbody>${roles.map(r => `
-            <tr>
-              <td><strong>${escHtml(r.roleid || '—')}</strong></td>
-              <td>${r.special ? '<span class="badge running" style="font-size:10px">built-in</span>' : ''}</td>
-              <td style="font-size:11px;color:var(--muted);word-break:break-word">${escHtml(r.privs || '—')}</td>
-            </tr>`).join('')}
-          </tbody>
-        </table>
-      </div>
-
-      <div class="section-header" style="margin-top:8px"><span class="section-title">ACL Permissions (${acls.length})</span></div>
-      <div class="table-wrap scroll">
-        <table>
-          <thead><tr><th>Path</th><th>User / Group</th><th>Role</th><th>Type</th><th>Propagate</th></tr></thead>
-          <tbody>${acls.map(a => `
-            <tr>
-              <td class="perm-path">${escHtml(a.path || '/')}</td>
-              <td>${escHtml(a.ugid || '—')}</td>
-              <td><span class="role-chip">${escHtml(a.roleid || '—')}</span></td>
-              <td style="color:var(--muted);font-size:12px">${escHtml(a.type || '—')}</td>
-              <td>${a.propagate ? '<span style="color:var(--green)">Yes</span>' : '<span style="color:var(--muted)">No</span>'}</td>
-            </tr>`).join('')}
-          </tbody>
-        </table>
-      </div>`;
+    usersData.users   = uRes.data || [];
+    usersData.groups  = gRes.data || [];
+    usersData.roles   = rRes.data || [];
+    usersData.acls    = aRes.data || [];
+    usersData.domains = dRes.data || [];
+    _renderUsersTab();
   } catch(e) {
-    document.getElementById('users-content').innerHTML = `<div class="empty">Failed to load users: ${e.message}</div>`;
+    document.getElementById('users-content').innerHTML = `<div class="empty">Failed to load: ${e.message}</div>`;
   }
+}
+
+function _renderUsersTab() {
+  const el  = document.getElementById('users-content');
+  const cid = usersData.connId;
+  const tab = _usersTab;
+  const conn= resolveConn(cid);
+
+  // Update tab action button
+  const actEl = document.getElementById('users-tab-action');
+  if (actEl) {
+    const btns={users:`<button class="btn small primary" onclick="openCreateUserModal()">+ User</button>`,
+      groups:`<button class="btn small primary" onclick="openCreateGroupModal()">+ Group</button>`,
+      permissions:`<button class="btn small primary" onclick="openAddPermissionModal()">+ Permission</button>`,
+      roles:`<button class="btn small primary" onclick="openCreateRoleModal()">+ Role</button>`,
+      realms:`<button class="btn small primary" onclick="openCreateRealmModal()">+ Realm</button>`};
+    actEl.innerHTML=btns[tab]||'';
+  }
+
+  // ── USERS TAB ─────────────────────────────────────────
+  if (tab==='users') {
+    const users=usersData.users;
+    const enabled=users.filter(u=>u.enable!==0).length;
+    el.innerHTML=`
+      <div class="stats-grid" style="margin-bottom:14px">
+        <div class="stat-card accent-blue"><div class="label">Total Users</div><div class="value">${users.length}</div><div class="sub">${enabled} enabled</div></div>
+        <div class="stat-card accent-green"><div class="label">Enabled</div><div class="value">${enabled}</div></div>
+        <div class="stat-card accent-${users.length-enabled?'red':'green'}"><div class="label">Disabled</div><div class="value" style="color:${users.length-enabled?'var(--red)':'var(--green)'}">${users.length-enabled}</div></div>
+        <div class="stat-card accent-purple"><div class="label">Auth Realms</div><div class="value">${[...new Set(users.map(u=>(u.userid||'').split('@')[1]).filter(Boolean))].length}</div></div>
+      </div>
+      <div class="table-wrap"><table>
+        <thead><tr><th>User ID</th><th>Name</th><th>Email</th><th>Realm</th><th>Groups</th><th>Status</th><th>Expires</th><th>Actions</th></tr></thead>
+        <tbody>${users.map(u=>{
+          const realm=(u.userid||'').split('@')[1]||'—';
+          const name=[u.firstname,u.lastname].filter(Boolean).join(' ')||'—';
+          const exp=u.expire?new Date(u.expire*1000).toLocaleDateString():'Never';
+          const expSoon=u.expire&&(u.expire*1000-Date.now())<30*86400000;
+          const isRoot=u.userid==='root@pam';
+          const enb=u.enable!==0;
+          return `<tr>
+            <td><strong>${escHtml(u.userid||'—')}</strong></td>
+            <td>${escHtml(name)}</td>
+            <td style="font-size:12px;color:var(--muted)">${escHtml(u.email||'—')}</td>
+            <td><span class="role-chip">${escHtml(realm)}</span></td>
+            <td style="font-size:12px;color:var(--muted)">${escHtml(u.groups||'—')}</td>
+            <td>${enb?'<span class="badge running" style="font-size:10px"><span class="badge-dot"></span>enabled</span>':'<span class="badge stopped" style="font-size:10px"><span class="badge-dot"></span>disabled</span>'}</td>
+            <td style="font-size:12px;${expSoon?'color:var(--yellow);font-weight:700':'color:var(--muted)'}">${exp}</td>
+            <td onclick="event.stopPropagation()" style="white-space:nowrap"><div class="actions-row">
+              <button class="btn small" onclick="openEditUserModal('${escHtml(u.userid||'')}','${cid}')">✎</button>
+              <button class="btn small" onclick="openChangePasswordModal('${escHtml(u.userid||'')}','${cid}')" title="Change password">🔑</button>
+              ${!isRoot?`<button class="btn small ${enb?'warning':'success'}" onclick="toggleUser('${escHtml(u.userid||'')}',${enb?0:1},'${cid}')">${enb?'Disable':'Enable'}</button>`:''}
+              ${!isRoot?`<button class="btn small danger" onclick="confirmDeleteUser('${escHtml(u.userid||'')}','${cid}')">Delete</button>`:''}
+            </div></td>
+          </tr>`;}).join('')||'<tr><td colspan="8" class="empty">No users</td></tr>'}
+        </tbody></table></div>`;
+  }
+
+  // ── GROUPS TAB ────────────────────────────────────────
+  else if (tab==='groups') {
+    const groups=usersData.groups;
+    el.innerHTML=`<div class="table-wrap"><table>
+      <thead><tr><th>Group</th><th>Comment</th><th>Members</th><th>Actions</th></tr></thead>
+      <tbody>${groups.map(g=>`<tr>
+        <td><strong>${escHtml(g.groupid||'—')}</strong></td>
+        <td style="color:var(--muted);font-size:12px">${escHtml(g.comment||'—')}</td>
+        <td style="font-size:12px;color:var(--muted)">${escHtml(Array.isArray(g.members)?g.members.join(', '):(g.members||'—'))}</td>
+        <td onclick="event.stopPropagation()"><div class="actions-row">
+          <button class="btn small" onclick="openEditGroupModal('${escHtml(g.groupid||'')}','${cid}')">✎ Edit</button>
+          <button class="btn small danger" onclick="confirmDeleteGroup('${escHtml(g.groupid||'')}','${cid}')">Delete</button>
+        </div></td>
+      </tr>`).join('')||'<tr><td colspan="4" class="empty">No groups — click + Group to create one</td></tr>'}
+      </tbody></table></div>`;
+  }
+
+  // ── PERMISSIONS TAB ───────────────────────────────────
+  else if (tab==='permissions') {
+    const acls=usersData.acls;
+    el.innerHTML=`<div class="table-wrap"><table>
+      <thead><tr><th>Path</th><th>User / Group</th><th>Role</th><th>Type</th><th>Propagate</th><th>Actions</th></tr></thead>
+      <tbody>${acls.map(a=>`<tr>
+        <td class="perm-path">${escHtml(a.path||'/')}</td>
+        <td><strong>${escHtml(a.ugid||'—')}</strong></td>
+        <td><span class="role-chip">${escHtml(a.roleid||'—')}</span></td>
+        <td style="color:var(--muted);font-size:12px">${escHtml(a.type||'—')}</td>
+        <td>${a.propagate?'<span style="color:var(--green);font-size:12px">Yes</span>':'<span style="color:var(--muted);font-size:12px">No</span>'}</td>
+        <td onclick="event.stopPropagation()">
+          <button class="btn small danger" onclick="confirmRemovePermission('${escHtml(a.path||'')}','${escHtml(a.ugid||'')}','${escHtml(a.roleid||'')}','${escHtml(a.type||'')}','${cid}')">Remove</button>
+        </td>
+      </tr>`).join('')||'<tr><td colspan="6" class="empty">No ACL entries — click + Permission to add one</td></tr>'}
+      </tbody></table></div>`;
+  }
+
+  // ── ROLES TAB ─────────────────────────────────────────
+  else if (tab==='roles') {
+    const roles=usersData.roles;
+    el.innerHTML=`<div class="table-wrap"><table>
+      <thead><tr><th>Role</th><th>Type</th><th>Privileges</th><th>Actions</th></tr></thead>
+      <tbody>${roles.map(r=>`<tr>
+        <td><strong>${escHtml(r.roleid||'—')}</strong></td>
+        <td>${r.special?'<span class="badge running" style="font-size:10px">built-in</span>':'<span class="type-chip vm">custom</span>'}</td>
+        <td style="font-size:11px;color:var(--muted);max-width:400px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escHtml(r.privs||'')}">${escHtml(r.privs||'—')}</td>
+        <td onclick="event.stopPropagation()">
+          ${!r.special?`<div class="actions-row">
+            <button class="btn small" onclick="openEditRoleModal('${escHtml(r.roleid||'')}','${cid}')">✎ Edit</button>
+            <button class="btn small danger" onclick="confirmDeleteRole('${escHtml(r.roleid||'')}','${cid}')">Delete</button>
+          </div>`:'<span style="font-size:11px;color:var(--muted)">read-only</span>'}
+        </td>
+      </tr>`).join('')}
+      </tbody></table></div>`;
+  }
+
+  // ── AUTH REALMS TAB ───────────────────────────────────
+  else if (tab==='realms') {
+    // Temporarily redirect #sso-content to users-content for renderSSO
+    el.innerHTML = '<div id="sso-content"></div>';
+    renderSSO(usersData.domains, conn);
+  }
+}
+
+// ── USER CRUD ─────────────────────────────────────────────
+function openCreateUserModal() {
+  const realmOpts=usersData.domains.map(d=>`<option value="${escHtml(d.realm)}">${escHtml(d.realm)} (${d.type})</option>`).join('');
+  document.getElementById('modal-title').textContent='Create User';
+  document.getElementById('modal-body').innerHTML=`
+    <div class="create-vm-grid">
+      <div class="form-group"><label>USERNAME</label><input id="uu-name" placeholder="john.doe"/></div>
+      <div class="form-group"><label>REALM</label><select id="uu-realm">${realmOpts}</select></div>
+    </div>
+    <div class="create-vm-grid">
+      <div class="form-group"><label>FIRST NAME</label><input id="uu-fn" placeholder="John"/></div>
+      <div class="form-group"><label>LAST NAME</label><input id="uu-ln" placeholder="Doe"/></div>
+    </div>
+    <div class="create-vm-grid">
+      <div class="form-group"><label>EMAIL</label><input id="uu-email" type="email" placeholder="john@example.com"/></div>
+      <div class="form-group"><label>PASSWORD (pam/pve only)</label><input id="uu-pw" type="password"/></div>
+    </div>
+    <div class="create-vm-grid">
+      <div class="form-group"><label>GROUPS (comma-separated)</label><input id="uu-groups" placeholder="admins,devs"/></div>
+      <div class="form-group"><label>EXPIRES (blank = never)</label><input id="uu-expire" type="date"/></div>
+    </div>
+    <div class="form-group"><label>COMMENT</label><input id="uu-comment"/></div>
+    <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;margin-top:8px">
+      <input type="checkbox" id="uu-enable" checked style="width:auto;height:auto;padding:0;margin:0"> Enabled
+    </label>`;
+  modalCallback=async()=>{
+    const name=(document.getElementById('uu-name')?.value||'').trim();
+    const realm=document.getElementById('uu-realm')?.value;
+    if(!name)return toast('Enter a username','error');
+    const userid=`${name}@${realm}`;
+    const g=id=>{const el=document.getElementById(id);if(!el)return null;return el.type==='checkbox'?el.checked:(el.value.trim()||null);};
+    const params={userid,enable:g('uu-enable')?1:0};
+    const fn=g('uu-fn');if(fn)params.firstname=fn; const ln=g('uu-ln');if(ln)params.lastname=ln;
+    const em=g('uu-email');if(em)params.email=em; const pw=g('uu-pw');if(pw)params.password=pw;
+    const gr=g('uu-groups');if(gr)params.groups=gr;
+    const ex=g('uu-expire');if(ex)params.expire=Math.floor(new Date(ex).getTime()/1000);
+    const cm=g('uu-comment');if(cm)params.comment=cm;
+    const conn=resolveConn(usersData.connId);
+    try{if(conn)await connPost(conn,'/api2/json/access/users',params);else await pvePost('/api2/json/access/users',params);
+    toast(`User "${userid}" created`,'success');setTimeout(loadUsers,800);}catch(e){toast('Create failed: '+e.message,'error');}
+  };
+  document.getElementById('modal-bg').classList.add('open');
+}
+
+async function openEditUserModal(userid, connId) {
+  document.getElementById('modal-title').textContent=`Edit User — ${userid}`;
+  document.getElementById('modal-body').innerHTML='<div class="empty"><span class="loading"></span></div>';
+  modalCallback=null; document.getElementById('modal-bg').classList.add('open');
+  const conn=resolveConn(connId); const get=conn?(p=>connGet(conn,p)):pveGet;
+  let u={};
+  try{const d=await get(`/api2/json/access/users/${encodeURIComponent(userid)}`);u=d.data||{};}
+  catch(e){toast('Load failed: '+e.message,'error');document.getElementById('modal-bg').classList.remove('open');return;}
+  const expVal=u.expire?new Date(u.expire*1000).toISOString().split('T')[0]:'';
+  document.getElementById('modal-body').innerHTML=`
+    <div style="background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius);padding:8px 12px;font-size:12px;color:var(--muted);margin-bottom:12px">
+      User: <strong style="color:var(--text)">${userid}</strong>
+    </div>
+    <div class="create-vm-grid">
+      <div class="form-group"><label>FIRST NAME</label><input id="eu-fn" value="${escHtml(u.firstname||'')}"/></div>
+      <div class="form-group"><label>LAST NAME</label><input id="eu-ln" value="${escHtml(u.lastname||'')}"/></div>
+    </div>
+    <div class="create-vm-grid">
+      <div class="form-group"><label>EMAIL</label><input id="eu-email" type="email" value="${escHtml(u.email||'')}"/></div>
+      <div class="form-group"><label>EXPIRES (blank = never)</label><input id="eu-expire" type="date" value="${expVal}"/></div>
+    </div>
+    <div class="form-group"><label>GROUPS (comma-separated)</label><input id="eu-groups" value="${escHtml(u.groups||'')}"/></div>
+    <div class="form-group"><label>COMMENT</label><input id="eu-comment" value="${escHtml(u.comment||'')}"/></div>
+    <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;margin-top:8px">
+      <input type="checkbox" id="eu-enable"${u.enable!==0?' checked':''} style="width:auto;height:auto;padding:0;margin:0"> Enabled
+    </label>`;
+  const btn=document.getElementById('modal-confirm-btn');btn.textContent='Save';btn.disabled=false;
+  btn.onclick=async()=>{
+    const g=id=>{const el=document.getElementById(id);if(!el)return null;return el.type==='checkbox'?el.checked:(el.value.trim()||null);};
+    const params={enable:g('eu-enable')?1:0};
+    ['fn:firstname','ln:lastname','email:email','groups:groups','comment:comment'].forEach(pair=>{const[id,key]=pair.split(':');const v=g('eu-'+id);if(v!==null)params[key]=v;});
+    const ex=g('eu-expire');params.expire=ex?Math.floor(new Date(ex).getTime()/1000):0;
+    btn.disabled=true;btn.textContent='Saving…';
+    try{if(conn){const h=connHeaders(conn,{'Content-Type':'application/x-www-form-urlencoded'});const body=Object.entries(params).map(([k,v])=>`${encodeURIComponent(k)}=${encodeURIComponent(v)}`).join('&');const r=await fetch(conn.host+`/api2/json/access/users/${encodeURIComponent(userid)}`,{method:'PUT',headers:h,body});if(!r.ok){const t=await r.text();throw new Error(`HTTP ${r.status}: ${t}`);}}
+    else await pvePut(`/api2/json/access/users/${encodeURIComponent(userid)}`,params);
+    document.getElementById('modal-bg').classList.remove('open');btn.onclick=confirmModal;btn.textContent='Confirm';btn.disabled=false;
+    toast(`"${userid}" updated`,'success');setTimeout(loadUsers,800);}catch(e){btn.disabled=false;btn.textContent='Save';toast('Save failed: '+e.message,'error');}
+  };
+}
+
+function openChangePasswordModal(userid,connId){
+  document.getElementById('modal-title').textContent=`Change Password — ${userid}`;
+  document.getElementById('modal-body').innerHTML=`
+    <div class="form-group"><label>NEW PASSWORD</label><input id="cpw-pw" type="password"/></div>
+    <div class="form-group"><label>CONFIRM PASSWORD</label><input id="cpw-pw2" type="password"/></div>`;
+  modalCallback=async()=>{
+    const pw1=document.getElementById('cpw-pw')?.value||'';
+    const pw2=document.getElementById('cpw-pw2')?.value||'';
+    if(!pw1)return toast('Enter a password','error');
+    if(pw1!==pw2)return toast('Passwords do not match','error');
+    const conn=resolveConn(connId);
+    try{if(conn)await connPost(conn,'/api2/json/access/password',{userid,password:pw1});else await pvePost('/api2/json/access/password',{userid,password:pw1});
+    toast(`Password changed for "${userid}"`,'success');}catch(e){toast('Failed: '+e.message,'error');}
+  };
+  document.getElementById('modal-bg').classList.add('open');
+}
+
+async function toggleUser(userid,enable,connId){
+  const conn=resolveConn(connId);
+  try{if(conn){const h=connHeaders(conn,{'Content-Type':'application/x-www-form-urlencoded'});const r=await fetch(conn.host+`/api2/json/access/users/${encodeURIComponent(userid)}`,{method:'PUT',headers:h,body:`enable=${enable}`});if(!r.ok){const t=await r.text();throw new Error(`HTTP ${r.status}: ${t}`);}}
+  else await pvePut(`/api2/json/access/users/${encodeURIComponent(userid)}`,{enable});
+  toast(`"${userid}" ${enable?'enabled':'disabled'}`,'success');setTimeout(loadUsers,800);}catch(e){toast('Toggle failed: '+e.message,'error');}
+}
+
+function confirmDeleteUser(userid,connId){
+  document.getElementById('modal-title').textContent=`Delete User "${userid}"`;
+  document.getElementById('modal-body').innerHTML=`
+    <p style="color:var(--muted)">Delete <strong style="color:var(--red)">${escHtml(userid)}</strong>?</p>
+    <p style="color:var(--yellow);font-size:12px;margin-top:8px">⚠ Their ACL permissions will also be removed.</p>`;
+  modalCallback=async()=>{
+    const conn=resolveConn(connId);
+    try{if(conn)await connDelete(conn,`/api2/json/access/users/${encodeURIComponent(userid)}`);else await pveDelete(`/api2/json/access/users/${encodeURIComponent(userid)}`);
+    toast(`"${userid}" deleted`,'success');setTimeout(loadUsers,800);}catch(e){toast('Delete failed: '+e.message,'error');}
+  };
+  document.getElementById('modal-bg').classList.add('open');
+}
+
+// ── GROUPS ────────────────────────────────────────────────
+function openCreateGroupModal(){
+  document.getElementById('modal-title').textContent='Create Group';
+  document.getElementById('modal-body').innerHTML=`
+    <div class="form-group"><label>GROUP ID</label><input id="gg-id" placeholder="admins, developers…"/></div>
+    <div class="form-group"><label>COMMENT (optional)</label><input id="gg-cm"/></div>`;
+  modalCallback=async()=>{
+    const id=(document.getElementById('gg-id')?.value||'').trim();
+    if(!id)return toast('Enter a group name','error');
+    const params={groupid:id};const cm=document.getElementById('gg-cm')?.value?.trim();if(cm)params.comment=cm;
+    const conn=resolveConn(usersData.connId);
+    try{if(conn)await connPost(conn,'/api2/json/access/groups',params);else await pvePost('/api2/json/access/groups',params);
+    toast(`Group "${id}" created`,'success');setTimeout(loadUsers,800);}catch(e){toast('Create failed: '+e.message,'error');}
+  };
+  document.getElementById('modal-bg').classList.add('open');
+}
+
+async function openEditGroupModal(groupid,connId){
+  document.getElementById('modal-title').textContent=`Edit Group — ${groupid}`;
+  document.getElementById('modal-body').innerHTML='<div class="empty"><span class="loading"></span></div>';
+  modalCallback=null;document.getElementById('modal-bg').classList.add('open');
+  const conn=resolveConn(connId);const get=conn?(p=>connGet(conn,p)):pveGet;
+  let g={};
+  try{const d=await get(`/api2/json/access/groups/${encodeURIComponent(groupid)}`);g=d.data||{};}
+  catch(e){toast('Load failed: '+e.message,'error');document.getElementById('modal-bg').classList.remove('open');return;}
+  document.getElementById('modal-body').innerHTML=`
+    <div class="form-group"><label>COMMENT</label><input id="eg-cm" value="${escHtml(g.comment||'')}"/></div>
+    <div style="font-size:12px;color:var(--muted);margin-top:8px">Members: ${escHtml(Array.isArray(g.members)?g.members.join(', '):(g.members||'none'))}</div>`;
+  const btn=document.getElementById('modal-confirm-btn');btn.textContent='Save';btn.disabled=false;
+  btn.onclick=async()=>{
+    const params={comment:document.getElementById('eg-cm')?.value?.trim()||''};
+    btn.disabled=true;btn.textContent='Saving…';
+    try{if(conn){const h=connHeaders(conn,{'Content-Type':'application/x-www-form-urlencoded'});const body=`comment=${encodeURIComponent(params.comment)}`;const r=await fetch(conn.host+`/api2/json/access/groups/${encodeURIComponent(groupid)}`,{method:'PUT',headers:h,body});if(!r.ok){const t=await r.text();throw new Error(`HTTP ${r.status}: ${t}`);}}
+    else await pvePut(`/api2/json/access/groups/${encodeURIComponent(groupid)}`,params);
+    document.getElementById('modal-bg').classList.remove('open');btn.onclick=confirmModal;btn.textContent='Confirm';btn.disabled=false;
+    toast(`Group "${groupid}" updated`,'success');setTimeout(loadUsers,800);}catch(e){btn.disabled=false;btn.textContent='Save';toast('Failed: '+e.message,'error');}
+  };
+}
+
+function confirmDeleteGroup(groupid,connId){
+  document.getElementById('modal-title').textContent=`Delete Group "${groupid}"`;
+  document.getElementById('modal-body').innerHTML=`<p style="color:var(--muted)">Delete group <strong style="color:var(--red)">${escHtml(groupid)}</strong>?</p>`;
+  modalCallback=async()=>{
+    const conn=resolveConn(connId);
+    try{if(conn)await connDelete(conn,`/api2/json/access/groups/${encodeURIComponent(groupid)}`);else await pveDelete(`/api2/json/access/groups/${encodeURIComponent(groupid)}`);
+    toast(`Group "${groupid}" deleted`,'success');setTimeout(loadUsers,800);}catch(e){toast('Delete failed: '+e.message,'error');}
+  };
+  document.getElementById('modal-bg').classList.add('open');
+}
+
+// ── PERMISSIONS (ACL) ─────────────────────────────────────
+function openAddPermissionModal(){
+  const roleOpts=usersData.roles.map(r=>`<option value="${escHtml(r.roleid)}">${escHtml(r.roleid)}</option>`).join('');
+  const userOpts=[...usersData.users.map(u=>`<option value="${escHtml(u.userid)}">${escHtml(u.userid)}</option>`),...usersData.groups.map(g=>`<option value="@${escHtml(g.groupid)}">Group: ${escHtml(g.groupid)}</option>`)].join('');
+  document.getElementById('modal-title').textContent='Add Permission';
+  document.getElementById('modal-body').innerHTML=`
+    <div class="form-group"><label>PATH — resource to grant access to</label>
+      <input id="ap-path" value="/" list="ap-paths"/>
+      <datalist id="ap-paths"><option value="/"/><option value="/vms"/><option value="/storage"/><option value="/nodes"/><option value="/pools"/></datalist>
+    </div>
+    <div class="create-vm-grid">
+      <div class="form-group"><label>USER / GROUP</label><select id="ap-ugid">${userOpts}</select></div>
+      <div class="form-group"><label>ROLE</label><select id="ap-role">${roleOpts}</select></div>
+    </div>
+    <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;margin-top:8px">
+      <input type="checkbox" id="ap-prop" checked style="width:auto;height:auto;padding:0;margin:0"> Propagate to sub-paths
+    </label>`;
+  modalCallback=async()=>{
+    const path=(document.getElementById('ap-path')?.value||'').trim()||'/';
+    const ugid=document.getElementById('ap-ugid')?.value||'';
+    const role=document.getElementById('ap-role')?.value||'';
+    const prop=document.getElementById('ap-prop')?.checked;
+    if(!ugid)return toast('Select a user or group','error');
+    const isGroup=ugid.startsWith('@');
+    const params={path,roles:role,propagate:prop?1:0};
+    if(isGroup)params.groups=ugid.slice(1);else params.users=ugid;
+    const conn=resolveConn(usersData.connId);
+    try{if(conn){const h=connHeaders(conn,{'Content-Type':'application/x-www-form-urlencoded'});const body=Object.entries(params).map(([k,v])=>`${encodeURIComponent(k)}=${encodeURIComponent(v)}`).join('&');const r=await fetch(conn.host+'/api2/json/access/acl',{method:'PUT',headers:h,body});if(!r.ok){const t=await r.text();throw new Error(`HTTP ${r.status}: ${t}`);}}
+    else await pvePut('/api2/json/access/acl',params);
+    toast('Permission added','success');setTimeout(loadUsers,800);}catch(e){toast('Add failed: '+e.message,'error');}
+  };
+  document.getElementById('modal-bg').classList.add('open');
+}
+
+function confirmRemovePermission(path,ugid,roleid,type,connId){
+  document.getElementById('modal-title').textContent='Remove Permission';
+  document.getElementById('modal-body').innerHTML=`<p style="color:var(--muted)">Remove <strong style="color:var(--accent)">${escHtml(roleid)}</strong> from <strong>${escHtml(ugid)}</strong> on <code>${escHtml(path)}</code>?</p>`;
+  modalCallback=async()=>{
+    const params={path,roles:roleid,delete:1};if(type==='group')params.groups=ugid;else params.users=ugid;
+    const conn=resolveConn(connId);
+    try{if(conn){const h=connHeaders(conn,{'Content-Type':'application/x-www-form-urlencoded'});const body=Object.entries(params).map(([k,v])=>`${encodeURIComponent(k)}=${encodeURIComponent(v)}`).join('&');const r=await fetch(conn.host+'/api2/json/access/acl',{method:'PUT',headers:h,body});if(!r.ok){const t=await r.text();throw new Error(`HTTP ${r.status}: ${t}`);}}
+    else await pvePut('/api2/json/access/acl',params);
+    toast('Permission removed','success');setTimeout(loadUsers,800);}catch(e){toast('Remove failed: '+e.message,'error');}
+  };
+  document.getElementById('modal-bg').classList.add('open');
+}
+
+// ── ROLES ─────────────────────────────────────────────────
+function openCreateRoleModal(){
+  document.getElementById('modal-title').textContent='Create Custom Role';
+  document.getElementById('modal-body').innerHTML=`
+    <div class="form-group"><label>ROLE NAME</label><input id="cr-id" placeholder="e.g. VMOperator"/></div>
+    <div class="form-group"><label>PRIVILEGES — comma-separated</label>
+      <textarea id="cr-privs" rows="4" style="width:100%;background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius);color:var(--text);padding:8px;font-family:var(--font);font-size:12px;resize:vertical" placeholder="VM.PowerMgmt,VM.Console,VM.Audit"></textarea>
+      <div style="font-size:11px;color:var(--muted);margin-top:4px">Common: VM.PowerMgmt · VM.Console · VM.Audit · Datastore.Audit · Sys.Audit</div>
+    </div>`;
+  modalCallback=async()=>{
+    const id=(document.getElementById('cr-id')?.value||'').trim();
+    const privs=(document.getElementById('cr-privs')?.value||'').trim();
+    if(!id)return toast('Enter a role name','error');
+    const conn=resolveConn(usersData.connId);
+    try{if(conn)await connPost(conn,'/api2/json/access/roles',{roleid:id,privs});else await pvePost('/api2/json/access/roles',{roleid:id,privs});
+    toast(`Role "${id}" created`,'success');setTimeout(loadUsers,800);}catch(e){toast('Create failed: '+e.message,'error');}
+  };
+  document.getElementById('modal-bg').classList.add('open');
+}
+
+async function openEditRoleModal(roleid,connId){
+  document.getElementById('modal-title').textContent=`Edit Role — ${roleid}`;
+  document.getElementById('modal-body').innerHTML='<div class="empty"><span class="loading"></span></div>';
+  modalCallback=null;document.getElementById('modal-bg').classList.add('open');
+  const conn=resolveConn(connId);const get=conn?(p=>connGet(conn,p)):pveGet;
+  let r={};
+  try{const d=await get(`/api2/json/access/roles/${encodeURIComponent(roleid)}`);r=d.data||{};}
+  catch(e){toast('Load failed: '+e.message,'error');document.getElementById('modal-bg').classList.remove('open');return;}
+  document.getElementById('modal-body').innerHTML=`
+    <div class="form-group"><label>PRIVILEGES — comma-separated</label>
+      <textarea id="er-privs" rows="5" style="width:100%;background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius);color:var(--text);padding:8px;font-family:var(--font);font-size:12px;resize:vertical">${escHtml(r.privs||'')}</textarea>
+    </div>`;
+  const btn=document.getElementById('modal-confirm-btn');btn.textContent='Save';btn.disabled=false;
+  btn.onclick=async()=>{
+    const privs=(document.getElementById('er-privs')?.value||'').trim();
+    btn.disabled=true;btn.textContent='Saving…';
+    try{if(conn){const h=connHeaders(conn,{'Content-Type':'application/x-www-form-urlencoded'});const r2=await fetch(conn.host+`/api2/json/access/roles/${encodeURIComponent(roleid)}`,{method:'PUT',headers:h,body:`privs=${encodeURIComponent(privs)}`});if(!r2.ok){const t=await r2.text();throw new Error(`HTTP ${r2.status}: ${t}`);}}
+    else await pvePut(`/api2/json/access/roles/${encodeURIComponent(roleid)}`,{privs});
+    document.getElementById('modal-bg').classList.remove('open');btn.onclick=confirmModal;btn.textContent='Confirm';btn.disabled=false;
+    toast(`Role "${roleid}" updated`,'success');setTimeout(loadUsers,800);}catch(e){btn.disabled=false;btn.textContent='Save';toast('Failed: '+e.message,'error');}
+  };
+}
+
+function confirmDeleteRole(roleid,connId){
+  document.getElementById('modal-title').textContent=`Delete Role "${roleid}"`;
+  document.getElementById('modal-body').innerHTML=`<p style="color:var(--muted)">Delete role <strong style="color:var(--red)">${escHtml(roleid)}</strong>? Users with this role will lose access.</p>`;
+  modalCallback=async()=>{
+    const conn=resolveConn(connId);
+    try{if(conn)await connDelete(conn,`/api2/json/access/roles/${encodeURIComponent(roleid)}`);else await pveDelete(`/api2/json/access/roles/${encodeURIComponent(roleid)}`);
+    toast(`Role "${roleid}" deleted`,'success');setTimeout(loadUsers,800);}catch(e){toast('Delete failed: '+e.message,'error');}
+  };
+  document.getElementById('modal-bg').classList.add('open');
 }
 
 // ── CERTIFICATES ──────────────────────────────────────────
