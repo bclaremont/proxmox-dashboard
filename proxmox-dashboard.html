@@ -3,9 +3,9 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Proxmox VE Dashboard</title>
+  <title>PCC — Proxmox Command Center</title>
   <!--
-    PROXMOX VE DASHBOARD v2
+    PCC — PROXMOX COMMAND CENTER
     ========================
     Official Proxmox VE REST API: https://pve.proxmox.com/pve-docs/api-viewer/
 
@@ -401,9 +401,10 @@
 <body>
 
 <div id="topbar">
-  <div class="logo">
+  <div class="logo" title="Proxmox Command Center">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/><path d="M7 8h10M7 11h6"/></svg>
-    PROXMOX DASHBOARD
+    PCC
+    <span style="font-size:10px;font-weight:400;color:var(--muted);letter-spacing:.5px;margin-left:2px">Proxmox Command Center</span>
   </div>
   <div class="spacer"></div>
   <div id="search-wrap">
@@ -634,7 +635,7 @@
     <!-- CONNECT -->
     <div id="view-connect">
       <div id="connect-panel">
-        <h2>Connect to Proxmox VE</h2>
+        <h2>PCC — Proxmox Command Center</h2>
         <p>Uses the official PVE REST API (port 8006 via nginx reverse proxy on 8080).</p>
         <div class="form-group">
           <label>HOST URL</label>
@@ -11262,7 +11263,7 @@ async function _fireBrowserNotif(title, body) {
   if (!('Notification' in window)) return;
   if (Notification.permission==='default') await Notification.requestPermission();
   if (Notification.permission==='granted') {
-    try { new Notification('Proxmox Dashboard: '+title, { body }); } catch(e) {}
+    try { new Notification('PCC: '+title, { body }); } catch(e) {}
   }
 }
 
