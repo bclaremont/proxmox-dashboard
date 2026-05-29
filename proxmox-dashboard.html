@@ -2256,12 +2256,16 @@ function openBulkModal(){
   document.getElementById('modal-bg').classList.add('open');
 }
 
-function confirmModal(){closeModal();if(modalCallback)modalCallback();modalCallback=null;}
+function confirmModal(){
+  const cb=modalCallback;  // save before closeModal nulls it
+  closeModal();
+  if(cb) cb();
+}
 function closeModal(e){
   if(e&&e.target!==document.getElementById('modal-bg'))return;
   document.getElementById('modal-bg').classList.remove('open');
-  // Always restore the confirm button — some modals override onclick directly
-  // and only restore on success, leaving a stale handler if the user cancels
+  // Always restore the confirm button so stale handlers from one modal
+  // (e.g. "Connect", "Create VNet") don't bleed into the next modal
   const btn = document.getElementById('modal-confirm-btn');
   if(btn){btn.onclick=confirmModal;btn.textContent='Confirm';btn.disabled=false;}
   modalCallback=null;
