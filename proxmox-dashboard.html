@@ -342,6 +342,11 @@
   <nav id="sidebar">
     <div class="sidebar-section">
       <div class="sidebar-label">Views</div>
+      <div class="nav-item" data-view="connections" onclick="switchView('connections')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="M8.59 13.51l6.83 3.98M15.41 6.51l-6.82 3.98"/></svg>
+        Clusters &amp; Hosts
+        <span class="nav-badge" id="conn-count-badge" style="display:none;background:var(--blue)">0</span>
+      </div>
       <div class="nav-item active" data-view="overview" onclick="switchView('overview')">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
         Overview
@@ -501,6 +506,15 @@
           Connect to Proxmox VE
         </button>
       </div>
+    </div>
+
+    <!-- CONNECTIONS -->
+    <div id="view-connections" style="display:none">
+      <div class="section-header">
+        <span class="section-title">Clusters &amp; Standalone Hosts</span>
+        <button class="btn small primary" onclick="openAddConnectionModal()">+ Add Cluster / Host</button>
+      </div>
+      <div id="connections-content"><div class="empty">Loading…</div></div>
     </div>
 
     <!-- OVERVIEW -->
@@ -1020,6 +1034,96 @@ async function pveDelete(path) {
   return res.json();
 }
 
+// ── MULTI-CONNECTION INFRASTRUCTURE ──────────────────────
+// Allows connecting to multiple independent PVE clusters or standalone hosts.
+// Each extra connection is an independent object mirroring the PVE structure.
+
+let extraConns = [];  // [{id,name,host,ticket,csrfToken,tokenAuth,useToken,nodes,vms,containers,nodeStatuses,storage,status,error}]
+
+function _connId() { return 'c' + Date.now().toString(36) + Math.random().toString(36).substr(2,4); }
+
+function resolveConn(connId) {
+  if (!connId) return null;
+  return extraConns.find(c => c.id === connId) || null;
+}
+
+function getConnName(connId) {
+  if (!connId) return 'Primary';
+  const c = resolveConn(connId);
+  return c ? (c.name || c.host) : connId;
+}
+
+function connHeaders(conn, extra={}) {
+  const h = {};
+  if (conn.useToken) h['Authorization'] = conn.tokenAuth;
+  else {
+    if (conn.ticket)    h['Authorization']      = `PVEAuthCookie=${conn.ticket}`;
+    if (conn.csrfToken) h['CSRFPreventionToken'] = conn.csrfToken;
+  }
+  return Object.assign(h, extra);
+}
+
+async function connGet(conn, path) {
+  const res = await fetch(conn.host + path, { headers: connHeaders(conn) });
+  if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText}`);
+  return res.json();
+}
+
+async function connPost(conn, path, data={}) {
+  const body = Object.entries(data).map(([k,v])=>`${encodeURIComponent(k)}=${encodeURIComponent(v)}`).join('&');
+  const res = await fetch(conn.host + path, { method:'POST', headers:connHeaders(conn,{'Content-Type':'application/x-www-form-urlencoded'}), body });
+  if (!res.ok) { const t=await res.text(); throw new Error(`HTTP ${res.status}: ${t}`); }
+  return res.json();
+}
+
+async function connDelete(conn, path) {
+  const res = await fetch(conn.host + path, { method:'DELETE', headers:connHeaders(conn) });
+  if (!res.ok) { const t=await res.text(); throw new Error(`HTTP ${res.status}: ${t}`); }
+  return res.json();
+}
+
+// Helpers to pick right get/post for detail panel based on currentDetail.connId
+function detailGet(path) {
+  const conn = resolveConn(currentDetail && currentDetail.connId);
+  return conn ? connGet(conn, path) : pveGet(path);
+}
+async function detailPost(path, data={}) {
+  const conn = resolveConn(currentDetail && currentDetail.connId);
+  return conn ? connPost(conn, path, data) : pvePost(path, data);
+}
+async function detailDelete(path) {
+  const conn = resolveConn(currentDetail && currentDetail.connId);
+  if (conn) return connDelete(conn, path);
+  const res = await fetch(PVE.host+path, {method:'DELETE', headers:pveHeaders()});
+  if (!res.ok){const t=await res.text();throw new Error(`HTTP ${res.status}: ${t}`);}
+  return res.json();
+}
+
+// Aggregate helpers
+function allVMs()   { return [...PVE.vms,       ...extraConns.flatMap(c=>c.vms||[])]; }
+function allCTs()   { return [...PVE.containers, ...extraConns.flatMap(c=>c.containers||[])]; }
+function allNodes() { return [...PVE.nodeStatuses,...extraConns.flatMap(c=>c.nodeStatuses||[])]; }
+
+async function refreshExtraConn(conn) {
+  conn.status = 'refreshing';
+  try {
+    const nd = await connGet(conn, '/api2/json/nodes');
+    conn.nodes = nd.data || [];
+    const vms=[], cts=[], ns=[];
+    await Promise.all(conn.nodes.map(async n => {
+      const [v,c,s] = await Promise.all([
+        connGet(conn,`/api2/json/nodes/${n.node}/qemu`).then(d=>(d.data||[]).map(x=>({...x,node:n.node,type:'vm',connId:conn.id}))).catch(()=>[]),
+        connGet(conn,`/api2/json/nodes/${n.node}/lxc`).then(d=>(d.data||[]).map(x=>({...x,node:n.node,type:'ct',connId:conn.id}))).catch(()=>[]),
+        connGet(conn,`/api2/json/nodes/${n.node}/status`).then(d=>d.data).catch(()=>null),
+      ]);
+      vms.push(...v); cts.push(...c);
+      ns.push({...n, statusData:s, connId:conn.id});
+    }));
+    conn.vms=vms; conn.containers=cts; conn.nodeStatuses=ns;
+    conn.status='connected'; conn.error='';
+  } catch(e) { conn.status='error'; conn.error=e.message; }
+}
+
 async function pvePost(path,data={},noAuth=false) {
   const headers = noAuth
     ? {'Content-Type':'application/x-www-form-urlencoded'}
@@ -1053,7 +1157,8 @@ async function refreshAll() {
       nodeStats.push({...n,statusData:status});
     }));
     PVE.vms=allVMs; PVE.containers=allCTs; PVE.nodeStatuses=nodeStats;
-    await Promise.all([loadTasks(), loadStorageBackground(), loadUpdatesBackground()]);
+    await Promise.all([loadTasks(), loadStorageBackground(), loadUpdatesBackground(),
+      ...extraConns.map(c => refreshExtraConn(c))]);
     renderCurrentView();
     renderSidebarNodes();
     checkAlerts();
@@ -1111,38 +1216,36 @@ function filterSyslog() {
 
 // ── RRD / GRAPHS ─────────────────────────────────────────
 
-async function loadRRD(node, type, vmid, timeframe) {
-  // GET /api2/json/nodes/{node}/rrddata?timeframe=hour
-  // GET /api2/json/nodes/{node}/qemu/{vmid}/rrddata?timeframe=hour
-  // GET /api2/json/nodes/{node}/lxc/{vmid}/rrddata?timeframe=hour
+async function loadRRD(node, type, vmid, timeframe, get=pveGet) {
   let path;
   if (type==='node') path=`/api2/json/nodes/${node}/rrddata?timeframe=${timeframe}&cf=AVERAGE`;
   else if (type==='vm') path=`/api2/json/nodes/${node}/qemu/${vmid}/rrddata?timeframe=${timeframe}&cf=AVERAGE`;
   else path=`/api2/json/nodes/${node}/lxc/${vmid}/rrddata?timeframe=${timeframe}&cf=AVERAGE`;
-  const d = await pveGet(path);
+  const d = await get(path);
   return d.data||[];
 }
 
-async function loadConfig(node, type, vmid) {
-  // GET /api2/json/nodes/{node}/qemu/{vmid}/config
-  // GET /api2/json/nodes/{node}/lxc/{vmid}/config
+async function loadConfig(node, type, vmid, get=pveGet) {
   const endpoint = type==='vm'?'qemu':'lxc';
-  const d = await pveGet(`/api2/json/nodes/${node}/${endpoint}/${vmid}/config`);
+  const d = await get(`/api2/json/nodes/${node}/${endpoint}/${vmid}/config`);
   return d.data||{};
 }
 
-async function loadCurrentStatus(node, type, vmid) {
-  // GET /api2/json/nodes/{node}/qemu/{vmid}/status/current
-  // GET /api2/json/nodes/{node}/lxc/{vmid}/status/current
+async function loadCurrentStatus(node, type, vmid, get=pveGet) {
   const endpoint = type==='vm'?'qemu':'lxc';
-  const d = await pveGet(`/api2/json/nodes/${node}/${endpoint}/${vmid}/status/current`);
+  const d = await get(`/api2/json/nodes/${node}/${endpoint}/${vmid}/status/current`);
   return d.data||{};
 }
 
-async function loadVMTasks(node, vmid) {
-  // GET /api2/json/nodes/{node}/tasks?vmid={vmid}
-  const d = await pveGet(`/api2/json/nodes/${node}/tasks?vmid=${vmid}&limit=50`).catch(()=>({data:[]}));
+async function loadVMTasks(node, vmid, get=pveGet) {
+  const d = await get(`/api2/json/nodes/${node}/tasks?vmid=${vmid}&limit=50`).catch(()=>({data:[]}));
   return d.data||[];
+}
+
+async function loadSnapshots(node, type, vmid, get=pveGet) {
+  const ep = type === 'vm' ? 'qemu' : 'lxc';
+  const d = await get(`/api2/json/nodes/${node}/${ep}/${vmid}/snapshot`).catch(() => ({ data: [] }));
+  return d.data || [];
 }
 
 // ── DETAIL PANEL ─────────────────────────────────────────
@@ -1158,15 +1261,15 @@ async function openDetail(item) {
   document.getElementById('detail-status').innerHTML = statusBadge(item.status);
   // Action buttons
   const running = item.status==='running';
+  const cid = item.connId||'';
   document.getElementById('detail-actions').innerHTML = running
-    ? `<button class="btn small warning" onclick="confirmAction('${item.node}','${item.vmid}','${item.type}','shutdown')">Shutdown</button>
-       <button class="btn small danger" onclick="confirmAction('${item.node}','${item.vmid}','${item.type}','stop')">Force Stop</button>
-       <button class="btn small" onclick="confirmAction('${item.node}','${item.vmid}','${item.type}','reboot')">Reboot</button>`
-    : `<button class="btn small success" onclick="vmAction('${item.node}','${item.vmid}','${item.type}','start')">▶ Start</button>`;
-  // Add console to running action buttons
+    ? `<button class="btn small warning" onclick="confirmAction('${item.node}','${item.vmid}','${item.type}','shutdown','${cid}')">Shutdown</button>
+       <button class="btn small danger" onclick="confirmAction('${item.node}','${item.vmid}','${item.type}','stop','${cid}')">Force Stop</button>
+       <button class="btn small" onclick="confirmAction('${item.node}','${item.vmid}','${item.type}','reboot','${cid}')">Reboot</button>`
+    : `<button class="btn small success" onclick="vmAction('${item.node}','${item.vmid}','${item.type}','start','${cid}')">▶ Start</button>`;
   document.getElementById('detail-actions').innerHTML += running
     ? `<button class="btn small" onclick="openConsole('${item.node}','${item.vmid}','${item.type}')">⌨ Console</button>` : '';
-  document.getElementById('detail-actions').innerHTML += `<button class="btn small" onclick="openCloneModal('${item.node}','${item.vmid}','${item.type}','${(item.name||'').replace(/['"]/g,'')}')">⎘ Clone</button>`;
+  document.getElementById('detail-actions').innerHTML += `<button class="btn small" onclick="openCloneModal('${item.node}','${item.vmid}','${item.type}','${(item.name||'').replace(/['"]/g,'')}','${cid}')">⎘ Clone</button>`;
   if (!running) document.getElementById('detail-actions').innerHTML += `<button class="btn small warning" onclick="convertToTemplate('${item.node}','${item.vmid}','${item.type}')" title="Convert to template (irreversible)">⬡ Template</button>`;
   switchDetailTab('overview');
   loadDetailOverview(item);
@@ -1223,7 +1326,7 @@ async function loadDetailOverview(item) {
   const el = document.getElementById('dtab-overview');
   el.innerHTML = '<div class="empty"><span class="loading"></span> Loading…</div>';
   try {
-    const status = await loadCurrentStatus(item.node, item.type, item.vmid);
+    const status = await loadCurrentStatus(item.node, item.type, item.vmid, detailGet);
     const cpuPct = status.cpu?(status.cpu*100).toFixed(1):'0';
     const memPct = status.mem&&status.maxmem?((status.mem/status.maxmem)*100).toFixed(0):0;
     const diskPct = status.disk&&status.maxdisk?((status.disk/status.maxdisk)*100).toFixed(0):0;
@@ -1324,7 +1427,7 @@ async function loadDetailConfig(item) {
   const el = document.getElementById('dtab-config');
   el.innerHTML='<div class="empty"><span class="loading"></span> Loading config…</div>';
   try {
-    const cfg = await loadConfig(item.node, item.type, item.vmid);
+    const cfg = await loadConfig(item.node, item.type, item.vmid, detailGet);
     const rows = Object.entries(cfg).map(([k,v])=>`<tr><td>${escHtml(k)}</td><td>${escHtml(String(v))}</td></tr>`).join('');
     el.innerHTML=`
       <p style="color:var(--muted);font-size:12px;margin-bottom:12px">
@@ -1373,7 +1476,7 @@ async function loadDetailGraphs(item, type, vmid, timeframe) {
 
   try {
     const node = item.node || (PVE.nodes[0] && PVE.nodes[0].node);
-    const data = await loadRRD(node, type, vmid, timeframe);
+    const data = await loadRRD(node, type, vmid, timeframe, detailGet);
 
     if (!data.length) {
       el.innerHTML = `<div class="tf-btns">${tfBtns}</div><div class="empty">No RRD data available yet — VM may be too new or recently started.</div>`;
@@ -1567,7 +1670,7 @@ async function loadDetailTasks(item) {
   const el = document.getElementById('dtab-tasks');
   el.innerHTML='<div class="empty"><span class="loading"></span> Loading tasks…</div>';
   try {
-    const tasks = await loadVMTasks(item.node, item.vmid);
+    const tasks = await loadVMTasks(item.node, item.vmid, detailGet);
     if (!tasks.length){el.innerHTML='<div class="empty">No tasks found</div>';return;}
     el.innerHTML=`<div class="table-wrap"><table>
       <thead><tr><th>Started</th><th>Type</th><th>Status</th><th>Duration</th><th>User</th></tr></thead>
@@ -1634,7 +1737,7 @@ async function migrateVM(node, vmid, type, targetNode, online=false, withLocal=f
 // ── RENDERING ─────────────────────────────────────────────
 
 function switchView(view) {
-  const views=['connect','overview','vms','containers','nodes','tasks','syslog','storage','network','heatmap','isolib','sdn','ceph','ha','firewall','backups','users','certs','audit','clustergraphs','updates','pbs'];
+  const views=['connect','connections','overview','vms','containers','nodes','tasks','syslog','storage','network','heatmap','isolib','sdn','ceph','ha','firewall','backups','users','certs','audit','clustergraphs','updates','pbs'];
   views.forEach(v=>{
     const el=document.getElementById('view-'+v);
     if(el) el.style.display=v===view?'':'none';
@@ -1678,6 +1781,7 @@ function switchView(view) {
   if(view==='updates') loadUpdates();
   if(view==='pbs') loadPBS();
   if(view==='sdn') loadSDN();
+  if(view==='connections') renderConnections();
   if(view!=='connect') renderCurrentView();
 }
 
@@ -1693,22 +1797,24 @@ function renderCurrentView() {
 }
 
 function renderOverview() {
-  const all=[...PVE.vms,...PVE.containers];
+  const all=allVMs().concat(allCTs());
   const running=all.filter(x=>x.status==='running').length;
   const stopped=all.filter(x=>x.status==='stopped').length;
+  const totalNodes=allNodes().length;
   const errTasks=PVE.tasks.filter(t=>t.status&&t.status!=='OK'&&t.status!=='running'&&t.status!=='').length;
+  const connCount = 1 + extraConns.filter(c=>c.status==='connected').length;
   document.getElementById('overview-stats').innerHTML=`
     <div class="stat-card accent-green"><div class="label">Running</div><div class="value">${running}</div><div class="sub">${stopped} stopped</div></div>
-    <div class="stat-card accent-blue"><div class="label">VMs</div><div class="value">${PVE.vms.length}</div><div class="sub">QEMU/KVM</div></div>
-    <div class="stat-card accent-purple"><div class="label">Containers</div><div class="value">${PVE.containers.length}</div><div class="sub">LXC</div></div>
-    <div class="stat-card accent-orange"><div class="label">Nodes</div><div class="value">${PVE.nodes.length}</div><div class="sub">${PVE.nodes.filter(n=>n.status==='online').length} online</div></div>
+    <div class="stat-card accent-blue"><div class="label">VMs</div><div class="value">${allVMs().length}</div><div class="sub">QEMU/KVM</div></div>
+    <div class="stat-card accent-purple"><div class="label">Containers</div><div class="value">${allCTs().length}</div><div class="sub">LXC</div></div>
+    <div class="stat-card accent-orange"><div class="label">Nodes</div><div class="value">${totalNodes}</div><div class="sub">${connCount} cluster${connCount!==1?'s':''}/host${connCount!==1?'s':''}</div></div>
     <div class="stat-card accent-yellow"><div class="label">Task Errors</div><div class="value" style="color:${errTasks>0?'var(--red)':'var(--green)'}">${errTasks}</div><div class="sub">recent</div></div>
-    <div class="stat-card"><div class="label">Storage</div><div class="value" style="color:var(--teal)">${PVE.storage.length}</div><div class="sub">pools</div></div>`;
+    <div class="stat-card"><div class="label">Storage</div><div class="value" style="color:var(--teal)">${PVE.storage.length}</div><div class="sub">pools (primary)</div></div>`;
   renderAllTable();
 }
 
 function renderAllTable() {
-  const all=[...PVE.vms,...PVE.containers];
+  const all=allVMs().concat(allCTs());
   const q=(document.getElementById('search-all').value||'').toLowerCase();
   const sf=(document.getElementById('filter-status').value||'');
   const filtered=all.filter(x=>{
@@ -1724,14 +1830,16 @@ function renderAllTable() {
 function filterAll(){renderAllTable();}
 
 function renderVMTable(){
-  document.getElementById('vm-table-body').innerHTML=PVE.vms.length
-    ?PVE.vms.map(v=>vmRow(v)).join('')
+  const vms=allVMs();
+  document.getElementById('vm-table-body').innerHTML=vms.length
+    ?vms.map(v=>vmRow(v)).join('')
     :`<tr><td colspan="9" class="empty">No VMs found</td></tr>`;
 }
 
 function renderCTTable(){
-  document.getElementById('ct-table-body').innerHTML=PVE.containers.length
-    ?PVE.containers.map(c=>vmRow(c)).join('')
+  const cts=allCTs();
+  document.getElementById('ct-table-body').innerHTML=cts.length
+    ?cts.map(c=>vmRow(c)).join('')
     :`<tr><td colspan="9" class="empty">No containers found</td></tr>`;
 }
 
@@ -1743,9 +1851,11 @@ function vmRow(x,showType=false){
   const uptime=x.uptime?fmtUptime(x.uptime):'—';
   const running=x.status==='running';
   const typeChip=showType?`<span class="type-chip ${x.type}">${x.type==='vm'?'VM':'CT'}</span> `:'';
+  const cid=x.connId||'';
+  const connLabel=extraConns.length&&cid?`<div style="font-size:10px;color:var(--blue);margin-top:1px">${escHtml(getConnName(cid))}</div>`:'';
   return `<tr class="clickable-row" onclick="openDetail(${JSON.stringify(x).replace(/"/g,'&quot;')})">
     <td style="color:var(--muted);font-size:12px">${x.vmid}</td>
-    <td>${typeChip}<strong>${x.name||'(unnamed)'}</strong></td>
+    <td>${typeChip}<strong>${x.name||'(unnamed)'}</strong>${connLabel}</td>
     ${showType?`<td style="color:var(--muted)">${x.node}</td>`:''}
     <td style="color:var(--muted)">${x.node}</td>
     <td>${statusBadge(x.status)}</td>
@@ -1767,13 +1877,13 @@ function vmRow(x,showType=false){
     <td onclick="event.stopPropagation()">
       <div class="actions-row">
         ${running
-          ?`<button class="btn small warning" onclick="confirmAction('${x.node}','${x.vmid}','${x.type}','shutdown')" title="Shutdown">⏻</button>
-             <button class="btn small danger" onclick="confirmAction('${x.node}','${x.vmid}','${x.type}','stop')" title="Force stop">■</button>
-             <button class="btn small" onclick="confirmAction('${x.node}','${x.vmid}','${x.type}','reboot')" title="Reboot">↺</button>`
-          :`<button class="btn small success" onclick="vmAction('${x.node}','${x.vmid}','${x.type}','start')" title="Start">▶</button>`
+          ?`<button class="btn small warning" onclick="confirmAction('${x.node}','${x.vmid}','${x.type}','shutdown','${cid}')" title="Shutdown">⏻</button>
+             <button class="btn small danger" onclick="confirmAction('${x.node}','${x.vmid}','${x.type}','stop','${cid}')" title="Force stop">■</button>
+             <button class="btn small" onclick="confirmAction('${x.node}','${x.vmid}','${x.type}','reboot','${cid}')" title="Reboot">↺</button>`
+          :`<button class="btn small success" onclick="vmAction('${x.node}','${x.vmid}','${x.type}','start','${cid}')" title="Start">▶</button>`
         }
-        <button class="btn small" onclick="openMigrateModal('${x.node}','${x.vmid}','${x.type}')" title="Migrate">⇢</button>
-        <button class="btn small" onclick="openCloneModal('${x.node}','${x.vmid}','${x.type}','${(x.name||'').replace(/['"]/g,'')}')" title="Clone">⎘</button>
+        <button class="btn small" onclick="openMigrateModal('${x.node}','${x.vmid}','${x.type}','${cid}')" title="Migrate">⇢</button>
+        <button class="btn small" onclick="openCloneModal('${x.node}','${x.vmid}','${x.type}','${(x.name||'').replace(/['"]/g,'')}','${cid}')" title="Clone">⎘</button>
       </div>
     </td>
   </tr>`;
@@ -1843,29 +1953,30 @@ function taskRow(t, showNode=false){
 
 // ── MODALS ────────────────────────────────────────────────
 
-function confirmAction(node,vmid,type,action){
+function confirmAction(node,vmid,type,action,connId=''){
   const labels={start:'Start',stop:'Force Stop',shutdown:'Graceful Shutdown',reboot:'Reboot'};
   document.getElementById('modal-title').textContent=`${labels[action]||action} ${type.toUpperCase()} ${vmid}`;
-  document.getElementById('modal-body').innerHTML=`<p style="color:var(--muted)">Are you sure you want to <strong style="color:var(--text)">${action}</strong> ${type.toUpperCase()} <strong style="color:var(--accent)">${vmid}</strong> on node <strong>${node}</strong>?</p>`;
-  modalCallback=()=>vmAction(node,vmid,type,action);
+  document.getElementById('modal-body').innerHTML=`<p style="color:var(--muted)">Are you sure you want to <strong style="color:var(--text)">${action}</strong> ${type.toUpperCase()} <strong style="color:var(--accent)">${vmid}</strong> on node <strong>${node}</strong>${connId?` (${escHtml(getConnName(connId))})`:''}</p>`;
+  modalCallback=()=>vmAction(node,vmid,type,action,connId);
   document.getElementById('modal-bg').classList.add('open');
 }
 
-function openMigrateModal(node, vmid, type) {
-  if (PVE.nodes.length < 2) {
+function openMigrateModal(node, vmid, type, connId='') {
+  const conn = resolveConn(connId);
+  const nodeList = conn ? conn.nodes : PVE.nodes;
+  if (nodeList.length < 2) {
     toast('Migration requires at least 2 nodes in the cluster', 'error');
     return;
   }
 
-  const srcOpts = PVE.nodes.map(n =>
+  const srcOpts = nodeList.map(n =>
     `<option value="${n.node}" ${n.node === node ? 'selected' : ''}>${n.node}</option>`
   ).join('');
-  const tgtOpts = PVE.nodes.map(n =>
+  const tgtOpts = nodeList.map(n =>
     `<option value="${n.node}" ${n.node !== node ? 'selected' : ''}>${n.node}</option>`
   ).join('');
 
-  // Pre-populate storage from known PVE.storage for the initial target node
-  const initialTarget = PVE.nodes.find(n => n.node !== node);
+  const initialTarget = nodeList.find(n => n.node !== node);
   const initialTgtNode = initialTarget ? initialTarget.node : '';
   const storageOpts = buildStorageOpts(initialTgtNode);
 
@@ -1938,7 +2049,7 @@ function openMigrateModal(node, vmid, type) {
     const local   = mt === 'vm' && document.getElementById('mig-local')  && document.getElementById('mig-local').checked;
     if (!mid)        return toast('Enter a VM/CT ID', 'error');
     if (src === tgt) return toast('Source and target nodes must differ', 'error');
-    migrateVM(src, mid, mt, tgt, online, local, storage);
+    migrateVM(src, mid, mt, tgt, online, local, storage, connId);
   };
   document.getElementById('modal-bg').classList.add('open');
 }
@@ -2266,19 +2377,13 @@ function openConsole(node, vmid, type) {
 }
 
 // ── SNAPSHOTS ────────────────────────────────────────────
-// GET /api2/json/nodes/{node}/qemu/{vmid}/snapshot
-// GET /api2/json/nodes/{node}/lxc/{vmid}/snapshot
-async function loadSnapshots(node, type, vmid) {
-  const ep = type === 'vm' ? 'qemu' : 'lxc';
-  const d = await pveGet(`/api2/json/nodes/${node}/${ep}/${vmid}/snapshot`).catch(() => ({ data: [] }));
-  return d.data || [];
-}
+// loadSnapshots is defined near the top with detailGet support
 
 async function loadDetailSnapshots(item) {
   const el = document.getElementById('dtab-snapshots');
   el.innerHTML = '<div class="empty"><span class="loading"></span> Loading snapshots…</div>';
   try {
-    const snaps = await loadSnapshots(item.node, item.type, item.vmid);
+    const snaps = await loadSnapshots(item.node, item.type, item.vmid, detailGet);
     const real = snaps.filter(s => s.name !== 'current');
     el.innerHTML = `
       <div style="display:flex;justify-content:flex-end;margin-bottom:12px">
@@ -2336,10 +2441,7 @@ function rollbackSnapshot(node, vmid, type, snapname) {
   modalCallback = async () => {
     const ep = type === 'vm' ? 'qemu' : 'lxc';
     try {
-      const res = await fetch(PVE.host + `/api2/json/nodes/${node}/${ep}/${vmid}/snapshot/${snapname}/rollback`, {
-        method: 'POST', headers: pveHeaders({'Content-Type':'application/x-www-form-urlencoded'})
-      });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      await detailPost(`/api2/json/nodes/${node}/${ep}/${vmid}/snapshot/${snapname}/rollback`);
       toast('Rollback started', 'success');
       setTimeout(refreshAll, 2000);
     } catch(e) { toast('Rollback failed: ' + e.message, 'error'); }
@@ -2355,10 +2457,7 @@ function deleteSnapshot(node, vmid, type, snapname) {
   modalCallback = async () => {
     const ep = type === 'vm' ? 'qemu' : 'lxc';
     try {
-      const res = await fetch(PVE.host + `/api2/json/nodes/${node}/${ep}/${vmid}/snapshot/${snapname}`, {
-        method: 'DELETE', headers: pveHeaders()
-      });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      await detailDelete(`/api2/json/nodes/${node}/${ep}/${vmid}/snapshot/${snapname}`);
       toast('Snapshot deleted', 'success');
       setTimeout(() => loadDetailSnapshots(currentDetail), 1500);
     } catch(e) { toast('Delete failed: ' + e.message, 'error'); }
@@ -3646,8 +3745,8 @@ async function loadDetailVMFirewall(item) {
   const ep = item.type === 'vm' ? 'qemu' : 'lxc';
   try {
     const [rulesRes, optsRes] = await Promise.all([
-      pveGet(`/api2/json/nodes/${item.node}/${ep}/${item.vmid}/firewall/rules`).catch(() => ({ data: [] })),
-      pveGet(`/api2/json/nodes/${item.node}/${ep}/${item.vmid}/firewall/options`).catch(() => ({ data: {} }))
+      detailGet(`/api2/json/nodes/${item.node}/${ep}/${item.vmid}/firewall/rules`).catch(() => ({ data: [] })),
+      detailGet(`/api2/json/nodes/${item.node}/${ep}/${item.vmid}/firewall/options`).catch(() => ({ data: {} }))
     ]);
 
     const rules = rulesRes.data || [];
@@ -4268,12 +4367,15 @@ function tmStop() {
 
 // ── Wrap power actions to register UPIDs ─────────────────
 const _origVmAction = vmAction;
-vmAction = async function(node, vmid, type, action) {
+vmAction = async function(node, vmid, type, action, connId='') {
   const ep = type === 'vm' ? 'qemu' : 'lxc';
   const labelMap = { start:'qmstart', stop:'qmstop', shutdown:'qmshutdown', reboot:'qmreboot' };
   const label = tmFriendlyLabel(labelMap[action] || action, vmid);
+  const conn = resolveConn(connId);
   try {
-    const res = await pvePost(`/api2/json/nodes/${node}/${ep}/${vmid}/status/${action}`);
+    const res = conn
+      ? await connPost(conn, `/api2/json/nodes/${node}/${ep}/${vmid}/status/${action}`)
+      : await pvePost(`/api2/json/nodes/${node}/${ep}/${vmid}/status/${action}`);
     const upid = res && res.data;
     toast(`${action} sent to ${type.toUpperCase()} ${vmid}`, 'success');
     if (upid && typeof upid === 'string') tmRegister(upid, node, label);
@@ -4283,8 +4385,9 @@ vmAction = async function(node, vmid, type, action) {
 
 // ── Wrap migrate to register UPIDs ────────────────────────
 const _origMigrateVM = migrateVM;
-migrateVM = async function(node, vmid, type, targetNode, online, withLocal, targetStorage) {
+migrateVM = async function(node, vmid, type, targetNode, online, withLocal, targetStorage, connId='') {
   const endpoint = type === 'vm' ? 'qemu' : 'lxc';
+  const conn = resolveConn(connId);
   const params = { target: targetNode };
   if (type === 'vm') {
     params.online = online ? 1 : 0;
@@ -4293,7 +4396,9 @@ migrateVM = async function(node, vmid, type, targetNode, online, withLocal, targ
   if (targetStorage && targetStorage !== '_keep') params.targetstorage = targetStorage;
   const label = `Migrate ${type.toUpperCase()} ${vmid} → ${targetNode}`;
   try {
-    const res = await pvePost(`/api2/json/nodes/${node}/${endpoint}/${vmid}/migrate`, params);
+    const res = conn
+      ? await connPost(conn, `/api2/json/nodes/${node}/${endpoint}/${vmid}/migrate`, params)
+      : await pvePost(`/api2/json/nodes/${node}/${endpoint}/${vmid}/migrate`, params);
     const upid = res && res.data;
     toast('Migration task started', 'success');
     if (upid && typeof upid === 'string') tmRegister(upid, node, label);
@@ -4325,10 +4430,12 @@ function convertToTemplate(node, vmid, type) {
 // POST /api2/json/nodes/{node}/lxc/{vmid}/clone
 // Official: https://pve.proxmox.com/pve-docs/api-viewer/#/nodes/{node}/qemu/{vmid}/clone
 
-function openCloneModal(node, vmid, type, name) {
-  const usedIDs = new Set([...PVE.vms,...PVE.containers].map(x=>x.vmid));
-  let nextID = parseInt(vmid)+1; while(usedIDs.has(nextID)) nextID++;
-  const nodeOpts = PVE.nodes.map(n=>`<option value="${n.node}"${n.node===node?' selected':''}>${n.node}</option>`).join('');
+function openCloneModal(node, vmid, type, name, connId='') {
+  const conn = resolveConn(connId);
+  const allUsed = new Set(allVMs().concat(allCTs()).map(x=>x.vmid));
+  let nextID = parseInt(vmid)+1; while(allUsed.has(nextID)) nextID++;
+  const nodeList = conn ? conn.nodes : PVE.nodes;
+  const nodeOpts = nodeList.map(n=>`<option value="${n.node}"${n.node===node?' selected':''}>${n.node}</option>`).join('');
   document.getElementById('modal-title').textContent = `Clone ${type.toUpperCase()} ${vmid}${name?' — '+name:''}`;
   document.getElementById('modal-body').innerHTML = `
     <div class="create-vm-grid">
@@ -4351,7 +4458,7 @@ function openCloneModal(node, vmid, type, name) {
       <strong style="color:var(--text)">Full clone:</strong> completely independent VM on any storage.<br>
       <strong style="color:var(--text)">Linked clone:</strong> source should be converted to a template first.
     </div>`;
-  modalCallback = () => doCloneVM(node, vmid, type);
+  modalCallback = () => doCloneVM(node, vmid, type, connId);
   document.getElementById('modal-bg').classList.add('open');
 }
 
@@ -4363,7 +4470,8 @@ function cloneRefreshStor() {
   document.getElementById('cl-stor').innerHTML = buildStorageOpts(document.getElementById('cl-node').value);
 }
 
-async function doCloneVM(srcNode, srcVMID, type) {
+async function doCloneVM(srcNode, srcVMID, type, connId='') {
+  const conn = resolveConn(connId);
   const newid  = parseInt(document.getElementById('cl-newid').value);
   const name   = document.getElementById('cl-name').value.trim();
   const target = document.getElementById('cl-node').value;
@@ -4379,7 +4487,9 @@ async function doCloneVM(srcNode, srcVMID, type) {
   if (pool) params.pool = pool;
   const label = `Clone ${type.toUpperCase()} ${srcVMID} → ${newid}`;
   try {
-    const res = await pvePost(`/api2/json/nodes/${srcNode}/${ep}/${srcVMID}/clone`, params);
+    const res = conn
+      ? await connPost(conn, `/api2/json/nodes/${srcNode}/${ep}/${srcVMID}/clone`, params)
+      : await pvePost(`/api2/json/nodes/${srcNode}/${ep}/${srcVMID}/clone`, params);
     const upid = res && res.data;
     toast(`Clone started: ${srcVMID} → ${newid}`, 'success');
     if (upid && typeof upid === 'string') tmRegister(upid, srcNode, label);
@@ -5184,6 +5294,171 @@ function deleteSDNVNet(vnet) {
     } catch(e) { toast('Delete VNet failed: '+e.message,'error'); }
   };
   document.getElementById('modal-bg').classList.add('open');
+}
+
+// ── CONNECTIONS VIEW ──────────────────────────────────────
+
+function renderConnections() {
+  const el = document.getElementById('connections-content');
+  if (!el) return;
+
+  // Update sidebar badge
+  const badge = document.getElementById('conn-count-badge');
+  if (badge) { badge.textContent = extraConns.length; badge.style.display = extraConns.length ? '' : 'none'; }
+
+  const primary = {
+    id:null, name:'Primary', host:PVE.host,
+    nodes:PVE.nodeStatuses, vms:PVE.vms, containers:PVE.containers,
+    status:PVE.host?'connected':'disconnected', primary:true, error:''
+  };
+  const all = [primary, ...extraConns];
+
+  const totalVMs   = all.reduce((a,c)=>(c.vms||[]).length+a, 0);
+  const totalCTs   = all.reduce((a,c)=>(c.containers||[]).length+a, 0);
+  const totalNodes = all.reduce((a,c)=>(c.nodes||[]).length+a, 0);
+
+  let html = `
+    <div class="stats-grid" style="margin-bottom:16px">
+      <div class="stat-card accent-blue"><div class="label">Clusters / Hosts</div><div class="value">${all.filter(c=>c.status==='connected').length}</div><div class="sub">${all.length} total</div></div>
+      <div class="stat-card accent-orange"><div class="label">Total Nodes</div><div class="value">${totalNodes}</div></div>
+      <div class="stat-card accent-green"><div class="label">Total VMs</div><div class="value">${totalVMs}</div></div>
+      <div class="stat-card accent-purple"><div class="label">Total CTs</div><div class="value">${totalCTs}</div></div>
+    </div>
+    <div class="node-grid">`;
+
+  all.forEach(c => {
+    const vms=c.vms||[], cts=c.containers||[], nodes=c.nodes||[];
+    const runVMs=vms.filter(x=>x.status==='running').length;
+    const runCTs=cts.filter(x=>x.status==='running').length;
+    const isErr = c.status==='error';
+    const borderColor = c.status==='connected'?'var(--green)':isErr?'var(--red)':'var(--border)';
+    html += `<div class="node-card" style="border-top:2px solid ${borderColor}">
+      <div class="node-card-header">
+        <div>
+          <div class="node-name">${escHtml(c.name||c.host)}</div>
+          <div style="font-size:11px;color:var(--muted);margin-top:2px;word-break:break-all">${escHtml(c.host||'')}</div>
+        </div>
+        <div style="text-align:right">
+          ${statusBadge(c.status==='connected'?'online':c.status==='refreshing'?'paused':'offline')}
+          ${c.primary?`<div style="font-size:10px;color:var(--accent);font-weight:700;margin-top:3px">PRIMARY</div>`:''}
+        </div>
+      </div>
+      <div class="node-metric"><span class="key">Nodes</span><span>${nodes.length}</span></div>
+      <div class="node-metric"><span class="key">VMs</span><span>${runVMs} running / ${vms.length} total</span></div>
+      <div class="node-metric"><span class="key">Containers</span><span>${runCTs} running / ${cts.length} total</span></div>
+      ${isErr?`<div style="font-size:11px;color:var(--red);margin-top:6px">${escHtml(c.error)}</div>`:''}
+      <div style="margin-top:10px;display:flex;gap:6px;flex-wrap:wrap">
+        ${c.primary
+          ? `<button class="btn small" onclick="refreshAll()">↻ Refresh</button>`
+          : `<button class="btn small" onclick="refreshExtraConnById('${c.id}')">↻ Refresh</button>
+             <button class="btn small danger" onclick="removeConn('${c.id}')">Disconnect</button>`}
+      </div>
+    </div>`;
+  });
+
+  html += `</div>`;
+  el.innerHTML = html;
+}
+
+async function refreshExtraConnById(connId) {
+  const conn = resolveConn(connId);
+  if (!conn) return;
+  toast(`Refreshing ${conn.name||conn.host}…`, 'info');
+  await refreshExtraConn(conn);
+  renderConnections();
+  renderCurrentView();
+}
+
+function removeConn(connId) {
+  const conn = resolveConn(connId);
+  if (!conn) return;
+  const idx = extraConns.indexOf(conn);
+  if (idx >= 0) extraConns.splice(idx, 1);
+  toast(`Disconnected from "${conn.name||conn.host}"`, 'info');
+  renderConnections();
+  renderCurrentView();
+}
+
+function openAddConnectionModal() {
+  const nodeOpts = PVE.nodes.map(n=>`<option value="${n.node}">${n.node}</option>`).join('');
+  document.getElementById('modal-title').textContent = 'Add Cluster / Standalone Host';
+  document.getElementById('modal-body').innerHTML = `
+    <p style="color:var(--muted);font-size:12px;margin-bottom:14px">
+      Connect to any Proxmox VE installation — single-node standalone hosts and multi-node clusters both work identically.
+    </p>
+    <div class="form-group"><label>DISPLAY NAME</label><input id="ac-name" placeholder="e.g. Production Cluster / Lab Server"/></div>
+    <div class="form-group"><label>HOST URL</label><input id="ac-host" placeholder="http://10.0.0.1:8080 or https://pve.example.com:8006"/></div>
+    <div class="form-row">
+      <div class="form-group"><label>USERNAME</label><input id="ac-user" value="root@pam"/></div>
+      <div class="form-group"><label>AUTH METHOD</label>
+        <select id="ac-authtype" onchange="acToggleAuth()">
+          <option value="password">Password</option>
+          <option value="token">API Token</option>
+        </select>
+      </div>
+    </div>
+    <div class="form-group" id="ac-pw-group"><label>PASSWORD</label><input id="ac-password" type="password"/></div>
+    <div class="form-group" id="ac-tok-group" style="display:none"><label>API TOKEN</label><input id="ac-token" placeholder="PVEAPIToken=root@pam!id=uuid"/></div>
+    <div id="ac-err" style="display:none;margin-top:8px;padding:8px 12px;background:rgba(248,81,73,.1);border:1px solid var(--red);border-radius:var(--radius);font-size:12px;color:var(--red)"></div>`;
+
+  modalCallback = null;
+  const btn = document.getElementById('modal-confirm-btn');
+  btn.textContent = 'Connect'; btn.disabled = false;
+  btn.onclick = async () => {
+    const name   = document.getElementById('ac-name').value.trim();
+    const host   = document.getElementById('ac-host').value.trim().replace(/\/$/,'');
+    const user   = document.getElementById('ac-user').value.trim();
+    const method = document.getElementById('ac-authtype').value;
+    const errEl  = document.getElementById('ac-err');
+    const showErr = msg => { errEl.textContent = msg; errEl.style.display=''; };
+    errEl.style.display = 'none';
+    if (!host) return showErr('Enter a host URL');
+
+    const conn = {
+      id:_connId(), name:name||host, host,
+      ticket:'', csrfToken:'', tokenAuth:'', useToken:false,
+      nodes:[], vms:[], containers:[], nodeStatuses:[], storage:[],
+      status:'connecting', error:''
+    };
+
+    btn.disabled=true; btn.textContent='Connecting…';
+    try {
+      if (method==='token') {
+        const t = document.getElementById('ac-token').value.trim();
+        if (!t) { btn.disabled=false; btn.textContent='Connect'; return showErr('Enter API token'); }
+        conn.useToken=true; conn.tokenAuth=t;
+      } else {
+        const pw = document.getElementById('ac-password').value;
+        const r = await fetch(`${host}/api2/json/access/ticket`, {
+          method:'POST',
+          headers:{'Content-Type':'application/x-www-form-urlencoded'},
+          body:`username=${encodeURIComponent(user)}&password=${encodeURIComponent(pw)}`
+        });
+        if (!r.ok) throw new Error(`HTTP ${r.status} — check host URL and credentials`);
+        const d = await r.json();
+        if (!d.data||!d.data.ticket) throw new Error('Authentication failed');
+        conn.ticket=d.data.ticket; conn.csrfToken=d.data.CSRFPreventionToken;
+      }
+      await refreshExtraConn(conn);
+      if (conn.status==='error') throw new Error(conn.error);
+      extraConns.push(conn);
+      document.getElementById('modal-bg').classList.remove('open');
+      btn.onclick=confirmModal; btn.textContent='Confirm'; btn.disabled=false;
+      toast(`Connected to "${conn.name}" — ${conn.nodes.length} node(s), ${conn.vms.length} VM(s)`, 'success');
+      renderConnections();
+      renderCurrentView();
+    } catch(e) {
+      btn.disabled=false; btn.textContent='Connect';
+      showErr('Connection failed: '+e.message);
+    }
+  };
+  document.getElementById('modal-bg').classList.add('open');
+}
+
+function acToggleAuth() {
+  const m = document.getElementById('ac-authtype').value;
+  document.getElementById('ac-pw-group').style.display  = m==='password'?'':'none';
+  document.getElementById('ac-tok-group').style.display = m==='token'?'':'none';
 }
 
 // ── PACKAGE UPDATES ───────────────────────────────────────
