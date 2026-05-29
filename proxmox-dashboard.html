@@ -522,6 +522,10 @@
         <span class="sidebar-label-inner"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="4" rx="1"/><rect x="2" y="10" width="20" height="4" rx="1"/><rect x="2" y="17" width="20" height="4" rx="1"/></svg>Infrastructure</span>
         <span class="sidebar-chevron">▾</span>
       </div>
+      <div class="nav-item" data-view="datacenter" onclick="switchView('datacenter')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+        Datacenter
+      </div>
       <div class="nav-item" data-view="storage" onclick="switchView('storage')">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>
         Storage
@@ -897,6 +901,25 @@
         </div>
       </div>
       <div id="sdn-content"><div class="empty">Loading…</div></div>
+    </div>
+
+    <!-- DATACENTER MANAGEMENT -->
+    <div id="view-datacenter" style="display:none">
+      <div class="section-header">
+        <span class="section-title">Datacenter Management</span>
+        <div style="display:flex;gap:6px;align-items:center">
+          <select class="conn-sel" id="dc-conn" style="width:140px;padding:5px 8px;font-size:13px" onchange="loadDatacenter()"><option value="">Primary</option></select>
+          <div id="dc-tab-action"></div>
+          <button class="btn small" onclick="loadDatacenter()">Refresh</button>
+        </div>
+      </div>
+      <div class="dtabs" id="dc-tabs" style="margin-bottom:14px">
+        <div class="dtab active" onclick="switchDCTab('status')">Status</div>
+        <div class="dtab" onclick="switchDCTab('options')">Options</div>
+        <div class="dtab" onclick="switchDCTab('replication')">Replication</div>
+        <div class="dtab" onclick="switchDCTab('log')">Cluster Log</div>
+      </div>
+      <div id="dc-content"><div class="empty">Loading…</div></div>
     </div>
 
     <!-- RESOURCE POOLS -->
@@ -2350,7 +2373,7 @@ async function migrateVM(node, vmid, type, targetNode, online=false, withLocal=f
 
 function switchView(view) {
   expandSidebarSection(view); // auto-expand collapsed section if needed
-  const views=['connect','connections','worldmap','savedview','overview','vms','containers','nodes','tasks','syslog','storage','network','heatmap','isolib','sdn','pools','ceph','ha','firewall','backups','users','certs','audit','clustergraphs','tfa','subscriptions','updates','pbs'];
+  const views=['connect','connections','worldmap','savedview','overview','vms','containers','nodes','tasks','syslog','storage','network','heatmap','isolib','sdn','datacenter','pools','ceph','ha','firewall','backups','users','certs','audit','clustergraphs','tfa','subscriptions','updates','pbs'];
   views.forEach(v=>{
     const el=document.getElementById('view-'+v);
     if(el) el.style.display=v===view?'':'none';
@@ -2400,6 +2423,7 @@ function switchView(view) {
   if(view==='tfa') loadTFA();
   if(view==='savedview') renderSavedView();
   if(view==='pools') loadPools();
+  if(view==='datacenter') loadDatacenter();
   if(view!=='connect') renderCurrentView();
 }
 
@@ -9359,6 +9383,389 @@ function acToggleAuth() {
   const m = document.getElementById('ac-authtype').value;
   document.getElementById('ac-pw-group').style.display  = m==='password'?'':'none';
   document.getElementById('ac-tok-group').style.display = m==='token'?'':'none';
+}
+
+// ── DATACENTER MANAGEMENT ────────────────────────────────
+// GET/PUT  /cluster/options         — datacenter-wide settings
+// GET      /cluster/status          — node membership + quorum
+// GET/POST /cluster/replication     — ZFS replication jobs
+// PUT/DEL  /cluster/replication/{id}
+// POST     /cluster/replication/{id}/schedule_now
+// GET      /cluster/log             — cluster event log
+// Official: https://pve.proxmox.com/pve-docs/api-viewer/#/cluster
+
+let _dcTab = 'status';
+let dcData  = { status:[], opts:{}, repl:[], connId:'' };
+
+function switchDCTab(tab) {
+  _dcTab = tab;
+  document.querySelectorAll('#dc-tabs .dtab').forEach((t,i)=>{
+    t.classList.toggle('active', ['status','options','replication','log'][i]===tab);
+  });
+  const actEl = document.getElementById('dc-tab-action');
+  if(actEl) actEl.innerHTML = tab==='replication'
+    ? `<button class="btn small primary" onclick="openCreateReplModal()">+ Add Replication Job</button>` : '';
+  _renderDCTab();
+}
+
+async function loadDatacenter() {
+  const conn = getViewConn('dc-conn');
+  const get  = conn ? (p=>connGet(conn,p)) : pveGet;
+  dcData.connId = conn ? (extraConns.find(c=>c===conn)||{}).id||'' : '';
+  const el = document.getElementById('dc-content');
+  el.innerHTML = '<div class="empty"><span class="loading"></span> Loading datacenter data…</div>';
+  try {
+    const [statusRes, optsRes, replRes] = await Promise.all([
+      get('/api2/json/cluster/status').catch(()=>({data:[]})),
+      get('/api2/json/cluster/options').catch(()=>({data:{}})),
+      get('/api2/json/cluster/replication').catch(()=>({data:[]})),
+    ]);
+    dcData.status = statusRes.data || [];
+    dcData.opts   = optsRes.data   || {};
+    dcData.repl   = replRes.data   || [];
+    _renderDCTab();
+  } catch(e) {
+    el.innerHTML = `<div class="empty">Failed to load datacenter data: ${e.message}</div>`;
+  }
+}
+
+function _renderDCTab() {
+  const el  = document.getElementById('dc-content');
+  const cid = dcData.connId;
+  const conn= resolveConn(cid);
+  const get = conn ? (p=>connGet(conn,p)) : pveGet;
+
+  // Tab action button
+  const actEl = document.getElementById('dc-tab-action');
+  if(actEl) actEl.innerHTML = _dcTab==='replication'
+    ? `<button class="btn small primary" onclick="openCreateReplModal()">+ Add Replication Job</button>` : '';
+
+  // ── STATUS TAB ─────────────────────────────────────────
+  if (_dcTab==='status') {
+    const cluster = dcData.status.find(s=>s.type==='cluster') || {};
+    const nodes   = dcData.status.filter(s=>s.type==='node');
+    const allItems= allVMs().concat(allCTs());
+    const running = allItems.filter(x=>x.status==='running').length;
+    el.innerHTML = `
+      <div class="stats-grid" style="margin-bottom:16px">
+        <div class="stat-card accent-blue">
+          <div class="label">Cluster Name</div>
+          <div class="value" style="font-size:18px">${escHtml(cluster.name||'—')}</div>
+          <div class="sub">${nodes.length} node(s)</div>
+        </div>
+        <div class="stat-card accent-${cluster.quorate?'green':'red'}">
+          <div class="label">Quorum</div>
+          <div class="value" style="color:${cluster.quorate?'var(--green)':'var(--red)'}">${cluster.quorate?'✓ OK':'✗ No quorum'}</div>
+          <div class="sub">version ${cluster.version||'—'}</div>
+        </div>
+        <div class="stat-card accent-green"><div class="label">Running</div><div class="value">${running}</div><div class="sub">of ${allItems.length} total</div></div>
+        <div class="stat-card accent-orange"><div class="label">Nodes Online</div><div class="value">${nodes.filter(n=>n.online).length}</div><div class="sub">of ${nodes.length}</div></div>
+      </div>
+
+      <div class="section-header" style="margin-bottom:8px"><span class="section-title">Node Membership</span></div>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Node</th><th>IP Address</th><th>Node ID</th><th>Status</th><th>Local</th></tr></thead>
+        <tbody>${nodes.map(n=>`<tr>
+          <td><strong>${escHtml(n.name||n.id||'—')}</strong></td>
+          <td style="font-family:monospace;font-size:12px;color:var(--muted)">${escHtml(n.ip||'—')}</td>
+          <td style="color:var(--muted)">${n.nodeid||'—'}</td>
+          <td>${n.online?'<span class="badge running" style="font-size:10px"><span class="badge-dot"></span>online</span>':'<span class="badge stopped" style="font-size:10px"><span class="badge-dot"></span>offline</span>'}</td>
+          <td>${n.local?'<span class="badge ok" style="font-size:10px">local</span>':'—'}</td>
+        </tr>`).join('')||'<tr><td colspan="5" class="empty">No node data</td></tr>'}
+        </tbody></table></div>`;
+  }
+
+  // ── OPTIONS TAB ────────────────────────────────────────
+  else if (_dcTab==='options') {
+    const o = dcData.opts;
+    const mig = o.migration||{};
+    const ha  = o.ha||{};
+    const bw  = o.bandwidth_limit||{};
+    const nid = o['next-id']||{};
+    el.innerHTML = `
+      <form onsubmit="event.preventDefault();saveDatacenterOptions()">
+        <div class="section-title" style="font-size:11px;margin-bottom:10px">General</div>
+        <div class="create-vm-grid">
+          <div class="form-group"><label>DESCRIPTION / DATACENTER NAME</label>
+            <input id="dco-desc" value="${escHtml(o.description||'')}" placeholder="My Datacenter"/>
+          </div>
+          <div class="form-group"><label>EMAIL FROM</label>
+            <input id="dco-email" value="${escHtml(o.email_from||'')}" placeholder="admin@example.com"/>
+          </div>
+        </div>
+        <div class="create-vm-grid">
+          <div class="form-group"><label>HTTP PROXY (for apt, downloads)</label>
+            <input id="dco-proxy" value="${escHtml(o.http_proxy||'')}" placeholder="http://proxy:3128"/>
+          </div>
+          <div class="form-group"><label>MAC PREFIX</label>
+            <input id="dco-mac" value="${escHtml(o.mac_prefix||'')}" placeholder="BC:24:11"/>
+          </div>
+        </div>
+        <div class="create-vm-grid">
+          <div class="form-group"><label>KEYBOARD LAYOUT</label>
+            <select id="dco-keyboard">
+              ${['de','de-ch','en-gb','en-us','es','fr','fr-be','fr-ch','hu','it','ja','nl','no','pl','pt','pt-br','sv','tr'].map(k=>`<option value="${k}"${(o.keyboard||'en-us')===k?' selected':''}>${k}</option>`).join('')}
+            </select>
+          </div>
+          <div class="form-group"><label>CONSOLE VIEWER</label>
+            <select id="dco-console">
+              <option value="xtermjs"${(o.console||'xtermjs')==='xtermjs'?' selected':''}>xtermjs (web terminal)</option>
+              <option value="html5"${o.console==='html5'?' selected':''}>HTML5 (noVNC)</option>
+              <option value="vv"${o.console==='vv'?' selected':''}>SPICE (virt-viewer)</option>
+              <option value="applet"${o.console==='applet'?' selected':''}>Java applet (legacy)</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="section-title" style="font-size:11px;margin:14px 0 10px">Migration</div>
+        <div class="create-vm-grid">
+          <div class="form-group"><label>MIGRATION TYPE</label>
+            <select id="dco-migtype">
+              <option value="secure"${(mig.type||'secure')==='secure'?' selected':''}>Secure — encrypted (slower)</option>
+              <option value="insecure"${mig.type==='insecure'?' selected':''}>Insecure — unencrypted (faster, trusted LAN)</option>
+              <option value="websocket"${mig.type==='websocket'?' selected':''}>WebSocket</option>
+            </select>
+          </div>
+          <div class="form-group"><label>MIGRATION NETWORK (CIDR, blank = default)</label>
+            <input id="dco-mignet" value="${escHtml(mig.network||'')}" placeholder="10.10.10.0/24"/>
+          </div>
+        </div>
+        <div class="create-vm-grid">
+          <div class="form-group"><label>MIGRATION BANDWIDTH (MB/s, 0 = unlimited)</label>
+            <input id="dco-migbw" type="number" value="${bw.migration||0}" min="0"/>
+          </div>
+          <div class="form-group"><label>RESTORE BANDWIDTH (MB/s, 0 = unlimited)</label>
+            <input id="dco-resbw" type="number" value="${bw.restore||0}" min="0"/>
+          </div>
+        </div>
+
+        <div class="section-title" style="font-size:11px;margin:14px 0 10px">High Availability</div>
+        <div class="create-vm-grid">
+          <div class="form-group"><label>HA FENCING</label>
+            <select id="dco-fencing">
+              ${['watchdog','ipmi','manual','never'].map(f=>`<option value="${f}"${(o.fencing||'watchdog')===f?' selected':''}>${f}</option>`).join('')}
+            </select>
+          </div>
+          <div class="form-group"><label>HA SHUTDOWN POLICY</label>
+            <select id="dco-hashutdown">
+              ${['conditional','freeze','failover','migrate'].map(p=>`<option value="${p}"${(ha.shutdown_policy||'conditional')===p?' selected':''}>${p}</option>`).join('')}
+            </select>
+          </div>
+        </div>
+
+        <div class="section-title" style="font-size:11px;margin:14px 0 10px">VM/CT ID Range</div>
+        <div class="create-vm-grid">
+          <div class="form-group"><label>LOWER BOUND (next-id min)</label>
+            <input id="dco-nidlow" type="number" value="${nid.lower||100}" min="100" max="999999999"/>
+          </div>
+          <div class="form-group"><label>UPPER BOUND (next-id max)</label>
+            <input id="dco-nidup" type="number" value="${nid.upper||1000000000}" min="100" max="999999999"/>
+          </div>
+        </div>
+
+        <button type="submit" class="btn primary" style="margin-top:16px">💾 Save Options</button>
+      </form>`;
+  }
+
+  // ── REPLICATION TAB ────────────────────────────────────
+  else if (_dcTab==='replication') {
+    const jobs = dcData.repl;
+    el.innerHTML = `
+      <div class="table-wrap"><table>
+        <thead><tr><th>Job ID</th><th>VM/CT</th><th>Type</th><th>Target</th><th>Schedule</th><th>Rate (MB/s)</th><th>Status</th><th>Actions</th></tr></thead>
+        <tbody>${jobs.length ? jobs.map(j=>`<tr>
+          <td><strong style="font-family:monospace">${escHtml(j.id||'—')}</strong></td>
+          <td style="color:var(--muted)">${j.vmid||'—'}</td>
+          <td><span class="type-chip vm">${escHtml(j.type||'zfspool')}</span></td>
+          <td style="color:var(--muted)">${escHtml(j.target||'—')}</td>
+          <td style="font-family:monospace;font-size:12px;color:var(--muted)">${escHtml(j.schedule||'*/30 * * * *')}</td>
+          <td style="color:var(--muted)">${j.rate||'unlimited'}</td>
+          <td>
+            ${j.disable?'<span class="badge stopped" style="font-size:10px"><span class="badge-dot"></span>disabled</span>':
+                         '<span class="badge running" style="font-size:10px"><span class="badge-dot"></span>active</span>'}
+            ${j.error?`<div style="font-size:10px;color:var(--red);margin-top:2px">${escHtml(j.error)}</div>`:''}
+            ${j.last_try?`<div style="font-size:10px;color:var(--muted)">${new Date(j.last_try*1000).toLocaleString()}</div>`:''}
+          </td>
+          <td onclick="event.stopPropagation()"><div class="actions-row">
+            <button class="btn small success" onclick="runReplNow('${escHtml(j.id||'')}','${cid}')" title="Run now">▶</button>
+            <button class="btn small" onclick="openEditReplModal('${escHtml(j.id||'')}','${cid}')">✎</button>
+            <button class="btn small danger" onclick="confirmDeleteRepl('${escHtml(j.id||'')}','${cid}')">Delete</button>
+          </div></td>
+        </tr>`).join('')
+        : '<tr><td colspan="8" class="empty">No replication jobs. Click <strong>+ Add Replication Job</strong> to create one.</td></tr>'}
+        </tbody></table></div>
+      <div style="margin-top:12px;padding:9px 14px;background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius);font-size:12px;color:var(--muted)">
+        Replication uses ZFS snapshots to continuously replicate VM/CT disks to another node. Requires ZFS storage on both nodes.
+      </div>`;
+  }
+
+  // ── LOG TAB ────────────────────────────────────────────
+  else if (_dcTab==='log') {
+    el.innerHTML = '<div class="empty"><span class="loading"></span> Loading cluster log…</div>';
+    get('/api2/json/cluster/log?max=300').then(d=>{
+      const entries = (d.data||[]).slice().reverse(); // newest first
+      const qEl = document.getElementById('dc-log-q');
+      const q = qEl ? qEl.value.toLowerCase() : '';
+      const filtered = q ? entries.filter(e=>(e.msg||'').toLowerCase().includes(q)||(e.node||'').toLowerCase().includes(q)||(e.user||'').toLowerCase().includes(q)) : entries;
+      el.innerHTML = `
+        <div style="display:flex;gap:8px;margin-bottom:12px">
+          <input id="dc-log-q" placeholder="Filter messages, nodes, users…" style="flex:1;padding:5px 10px;font-size:13px;background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius);color:var(--text);outline:none" oninput="_renderDCTab()"/>
+          <span style="font-size:12px;color:var(--muted);align-self:center">${filtered.length} entries</span>
+        </div>
+        <div class="table-wrap" style="max-height:540px;overflow-y:auto"><table>
+          <thead><tr><th>Time</th><th>Node</th><th>User</th><th>Category</th><th>Message</th></tr></thead>
+          <tbody>${filtered.map(e=>{
+            const isErr=/error|fail|crit|emerg|alert/i.test(e.msg||'');
+            const isWarn=/warn/i.test(e.msg||'');
+            const col=isErr?'var(--red)':isWarn?'var(--yellow)':'';
+            return `<tr>
+              <td style="font-size:11px;color:var(--muted);white-space:nowrap">${e.time?new Date(e.time*1000).toLocaleString():'—'}</td>
+              <td style="font-size:12px;color:var(--muted)">${escHtml(e.node||'—')}</td>
+              <td style="font-size:12px;color:var(--accent)">${escHtml(e.user||'—')}</td>
+              <td style="font-size:11px;color:var(--muted)">${escHtml(e.tag||e.category||'—')}</td>
+              <td style="font-size:12px;${col?'color:'+col:''};word-break:break-word">${escHtml(e.msg||'—')}</td>
+            </tr>`;}).join('')||'<tr><td colspan="5" class="empty">No log entries</td></tr>'}
+          </tbody></table></div>`;
+    }).catch(e=>{ el.innerHTML=`<div class="empty">Failed: ${e.message}</div>`; });
+  }
+}
+
+// ── DATACENTER OPTIONS SAVE ───────────────────────────────
+async function saveDatacenterOptions() {
+  const g = id => { const el=document.getElementById(id); return el?el.value.trim():null; };
+  const n = id => { const el=document.getElementById(id); return el?parseInt(el.value)||0:0; };
+  const conn = resolveConn(dcData.connId);
+  const params = {};
+  const desc=g('dco-desc');       if(desc!==null) params.description=desc;
+  const email=g('dco-email');     if(email)params.email_from=email;
+  const proxy=g('dco-proxy');     if(proxy!==null)params.http_proxy=proxy;
+  const mac=g('dco-mac');         if(mac)params.mac_prefix=mac;
+  const kb=g('dco-keyboard');     if(kb)params.keyboard=kb;
+  const con=g('dco-console');     if(con)params.console=con;
+  const mt=g('dco-migtype');      if(mt)params.migration=JSON.stringify({type:mt,network:g('dco-mignet')||undefined});
+  const fen=g('dco-fencing');     if(fen)params.fencing=fen;
+  const hap=g('dco-hashutdown');  if(hap)params.ha=JSON.stringify({shutdown_policy:hap});
+  const bwMig=n('dco-migbw');
+  const bwRes=n('dco-resbw');
+  if(bwMig||bwRes) params.bandwidth_limit=JSON.stringify({migration:bwMig,restore:bwRes});
+  const nidLow=n('dco-nidlow'), nidUp=n('dco-nidup');
+  if(nidLow||nidUp) params['next-id']=JSON.stringify({lower:nidLow,upper:nidUp});
+  try {
+    if(conn){
+      const h=connHeaders(conn,{'Content-Type':'application/x-www-form-urlencoded'});
+      const body=Object.entries(params).map(([k,v])=>`${encodeURIComponent(k)}=${encodeURIComponent(v)}`).join('&');
+      const r=await fetch(conn.host+'/api2/json/cluster/options',{method:'PUT',headers:h,body});
+      if(!r.ok){const t=await r.text();throw new Error(`HTTP ${r.status}: ${t}`);}
+    } else {
+      await pvePut('/api2/json/cluster/options',params);
+    }
+    toast('Datacenter options saved','success');
+    setTimeout(loadDatacenter,800);
+  } catch(e){ toast('Save failed: '+e.message,'error'); }
+}
+
+// ── REPLICATION JOBS ──────────────────────────────────────
+function openCreateReplModal() {
+  const nodes = (resolveConn(dcData.connId)?resolveConn(dcData.connId).nodes:PVE.nodes)||[];
+  const nodeOpts = nodes.map(n=>`<option value="${n.node}">${n.node}</option>`).join('');
+  const vms = allVMs().concat(allCTs());
+  const vmOpts = vms.map(x=>`<option value="${x.vmid}">${x.type.toUpperCase()} ${x.vmid} — ${escHtml(x.name||String(x.vmid))} (${x.node})</option>`).join('');
+
+  document.getElementById('modal-title').textContent = 'Add Replication Job';
+  document.getElementById('modal-body').innerHTML = `
+    <div class="create-vm-grid">
+      <div class="form-group"><label>VM / CONTAINER</label><select id="rj-vmid">${vmOpts||'<option>— no VMs —</option>'}</select></div>
+      <div class="form-group"><label>TARGET NODE</label><select id="rj-target">${nodeOpts}</select></div>
+    </div>
+    <div class="create-vm-grid">
+      <div class="form-group"><label>SCHEDULE (cron)</label>
+        <input id="rj-schedule" value="*/30 * * * *" placeholder="*/30 * * * *"/>
+        <div style="font-size:11px;color:var(--muted);margin-top:3px">Every 30min: <code>*/30 * * * *</code> &nbsp; Hourly: <code>0 * * * *</code></div>
+      </div>
+      <div class="form-group"><label>BANDWIDTH LIMIT (MB/s, 0 = unlimited)</label>
+        <input id="rj-rate" type="number" value="0" min="0"/>
+      </div>
+    </div>
+    <div class="form-group"><label>COMMENT (optional)</label><input id="rj-comment" placeholder="description"/></div>
+    <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;margin-top:8px">
+      <input type="checkbox" id="rj-enabled" checked style="width:auto;height:auto;padding:0;margin:0"> Enabled
+    </label>
+    <div style="background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius);padding:9px 12px;font-size:12px;color:var(--muted);margin-top:10px">
+      ⚠ Replication requires <strong>ZFS storage</strong> on both source and target nodes. The VM's disks must be on ZFS storage.
+    </div>`;
+  modalCallback = async () => {
+    const vmid    = parseInt(document.getElementById('rj-vmid')?.value||'0');
+    const target  = document.getElementById('rj-target')?.value;
+    const sched   = document.getElementById('rj-schedule')?.value||'*/30 * * * *';
+    const rate    = parseInt(document.getElementById('rj-rate')?.value||'0');
+    const comment = document.getElementById('rj-comment')?.value?.trim();
+    const enabled = document.getElementById('rj-enabled')?.checked;
+    if(!vmid) return toast('Select a VM or container','error');
+    // Find next free job ID for this VM
+    const used = new Set(dcData.repl.map(j=>j.id));
+    let jobid=0; while(used.has(`${vmid}-${jobid}`))jobid++;
+    const id = `${vmid}-${jobid}`;
+    const params = {id,type:'zfspool',target,vmid,schedule:sched,disable:enabled?0:1};
+    if(rate>0)params.rate=rate; if(comment)params.comment=comment;
+    const conn=resolveConn(dcData.connId);
+    try{
+      if(conn)await connPost(conn,'/api2/json/cluster/replication',params);
+      else await pvePost('/api2/json/cluster/replication',params);
+      toast(`Replication job ${id} created`,'success');setTimeout(loadDatacenter,800);
+    }catch(e){toast('Create failed: '+e.message,'error');}
+  };
+  document.getElementById('modal-bg').classList.add('open');
+}
+
+async function openEditReplModal(id, connId) {
+  const job = dcData.repl.find(j=>j.id===id)||{};
+  document.getElementById('modal-title').textContent=`Edit Replication — ${id}`;
+  document.getElementById('modal-body').innerHTML=`
+    <div style="background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius);padding:8px 12px;font-size:12px;color:var(--muted);margin-bottom:12px">
+      Job: <strong style="color:var(--text)">${id}</strong> &nbsp;·&nbsp; VM/CT: <strong>${job.vmid||'—'}</strong> &nbsp;→&nbsp; <strong>${escHtml(job.target||'—')}</strong>
+    </div>
+    <div class="create-vm-grid">
+      <div class="form-group"><label>SCHEDULE</label><input id="re-sched" value="${escHtml(job.schedule||'*/30 * * * *')}"/></div>
+      <div class="form-group"><label>RATE (MB/s, 0=unlimited)</label><input id="re-rate" type="number" value="${job.rate||0}" min="0"/></div>
+    </div>
+    <div class="form-group"><label>COMMENT</label><input id="re-comment" value="${escHtml(job.comment||'')}"/></div>
+    <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;margin-top:8px">
+      <input type="checkbox" id="re-enabled"${!job.disable?' checked':''} style="width:auto;height:auto;padding:0;margin:0"> Enabled
+    </label>`;
+  modalCallback=async()=>{
+    const params={schedule:document.getElementById('re-sched')?.value,disable:document.getElementById('re-enabled')?.checked?0:1};
+    const rate=parseInt(document.getElementById('re-rate')?.value||'0');if(rate>0)params.rate=rate;
+    const cm=document.getElementById('re-comment')?.value?.trim();if(cm!==undefined)params.comment=cm;
+    const conn=resolveConn(connId);
+    try{
+      if(conn){const h=connHeaders(conn,{'Content-Type':'application/x-www-form-urlencoded'});const body=Object.entries(params).map(([k,v])=>`${encodeURIComponent(k)}=${encodeURIComponent(v)}`).join('&');const r=await fetch(conn.host+`/api2/json/cluster/replication/${encodeURIComponent(id)}`,{method:'PUT',headers:h,body});if(!r.ok){const t=await r.text();throw new Error(`HTTP ${r.status}: ${t}`);}}
+      else await pvePut(`/api2/json/cluster/replication/${encodeURIComponent(id)}`,params);
+      toast(`Job ${id} updated`,'success');setTimeout(loadDatacenter,800);
+    }catch(e){toast('Update failed: '+e.message,'error');}
+  };
+  document.getElementById('modal-bg').classList.add('open');
+}
+
+function confirmDeleteRepl(id, connId) {
+  document.getElementById('modal-title').textContent=`Delete Replication Job — ${id}`;
+  document.getElementById('modal-body').innerHTML=`
+    <p style="color:var(--muted)">Delete replication job <strong style="color:var(--red)">${escHtml(id)}</strong>?</p>
+    <p style="color:var(--yellow);font-size:12px;margin-top:8px">⚠ Existing replicated snapshots on the target node will remain but won't be updated.</p>`;
+  modalCallback=async()=>{
+    const conn=resolveConn(connId);
+    try{if(conn)await connDelete(conn,`/api2/json/cluster/replication/${encodeURIComponent(id)}`);else await pveDelete(`/api2/json/cluster/replication/${encodeURIComponent(id)}`);
+    toast(`Job ${id} deleted`,'success');setTimeout(loadDatacenter,800);}catch(e){toast('Delete failed: '+e.message,'error');}
+  };
+  document.getElementById('modal-bg').classList.add('open');
+}
+
+async function runReplNow(id, connId) {
+  const conn=resolveConn(connId);
+  try{
+    if(conn)await connPost(conn,`/api2/json/cluster/replication/${encodeURIComponent(id)}/schedule_now`,{});
+    else await pvePost(`/api2/json/cluster/replication/${encodeURIComponent(id)}/schedule_now`,{});
+    toast(`Replication job ${id} triggered`,'success');setTimeout(loadDatacenter,2000);
+  }catch(e){toast('Trigger failed: '+e.message,'error');}
 }
 
 // ── PACKAGE UPDATES ───────────────────────────────────────
