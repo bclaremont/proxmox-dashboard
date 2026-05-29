@@ -71,7 +71,11 @@
     /* SIDEBAR */
     #sidebar{background:var(--bg2);border-right:1px solid var(--border);padding:14px 0;overflow-y:auto;}
     .sidebar-section{padding:0 10px;margin-bottom:18px;}
-    .sidebar-label{font-size:10px;text-transform:uppercase;letter-spacing:1.4px;color:var(--muted);padding:0 8px;margin-bottom:5px;}
+    .sidebar-label{font-size:10px;text-transform:uppercase;letter-spacing:1.4px;color:var(--muted);padding:0 8px;margin-bottom:5px;cursor:pointer;user-select:none;display:flex;align-items:center;justify-content:space-between;}
+    .sidebar-label:hover{color:var(--text);}
+    .sidebar-chevron{font-size:10px;transition:transform .2s;opacity:.6;flex-shrink:0;margin-left:2px;}
+    .sidebar-section.collapsed .sidebar-chevron{transform:rotate(-90deg);}
+    .sidebar-section.collapsed>*:not(.sidebar-label){display:none!important;}
     .nav-item{display:flex;align-items:center;gap:9px;padding:8px 10px;border-radius:var(--radius);cursor:pointer;color:var(--muted);transition:all .15s;border:1px solid transparent;font-size:14px;}
     .nav-item:hover{background:var(--bg3);color:var(--text);}
     .nav-item.active{background:rgba(249,115,22,.12);border-color:rgba(249,115,22,.3);color:var(--accent);}
@@ -369,8 +373,8 @@
 
 <div id="app">
   <nav id="sidebar">
-    <div class="sidebar-section">
-      <div class="sidebar-label">Views</div>
+    <div class="sidebar-section" data-section="views">
+      <div class="sidebar-label" onclick="toggleSidebarSection(this)"><span>Views</span><span class="sidebar-chevron">▾</span></div>
       <div class="nav-item" data-view="connections" onclick="switchView('connections')">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="M8.59 13.51l6.83 3.98M15.41 6.51l-6.82 3.98"/></svg>
         Clusters &amp; Hosts
@@ -418,8 +422,8 @@
         Heatmap
       </div>
     </div>
-    <div class="sidebar-section">
-      <div class="sidebar-label">Actions</div>
+    <div class="sidebar-section" data-section="actions">
+      <div class="sidebar-label" onclick="toggleSidebarSection(this)"><span>Actions</span><span class="sidebar-chevron">▾</span></div>
       <div class="nav-item" onclick="openCreateVMModal()">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="12" y1="8" x2="12" y2="14"/><line x1="9" y1="11" x2="15" y2="11"/></svg>
         Create VM
@@ -441,8 +445,8 @@
         ISO &amp; Templates
       </div>
     </div>
-    <div class="sidebar-section">
-      <div class="sidebar-label">Infrastructure</div>
+    <div class="sidebar-section" data-section="infra">
+      <div class="sidebar-label" onclick="toggleSidebarSection(this)"><span>Infrastructure</span><span class="sidebar-chevron">▾</span></div>
       <div class="nav-item" data-view="sdn" onclick="switchView('sdn')">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="2" width="6" height="6" rx="1"/><rect x="16" y="2" width="6" height="6" rx="1"/><rect x="9" y="16" width="6" height="6" rx="1"/><path d="M5 8v4a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8"/><line x1="12" y1="14" x2="12" y2="16"/></svg>
         SDN
@@ -470,8 +474,8 @@
         Backups
       </div>
     </div>
-    <div class="sidebar-section">
-      <div class="sidebar-label">Admin</div>
+    <div class="sidebar-section" data-section="admin">
+      <div class="sidebar-label" onclick="toggleSidebarSection(this)"><span>Admin</span><span class="sidebar-chevron">▾</span></div>
       <div class="nav-item" data-view="users" onclick="switchView('users')">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
         Users &amp; Perms
@@ -513,17 +517,15 @@
       </div>
     </div>
 
-    <div class="sidebar-section" id="saved-views-sidebar">
-      <div class="sidebar-label" style="display:flex;align-items:center;justify-content:space-between;padding-right:8px">
+    <div class="sidebar-section" id="saved-views-sidebar" data-section="savedviews">
+      <div class="sidebar-label" onclick="toggleSidebarSection(this)">
         <span>Saved Views</span>
-        <button onclick="openCreateViewModal()" title="Create saved view" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:16px;line-height:1;padding:0 2px">+</button>
+        <div style="display:flex;align-items:center;gap:4px">
+          <button onclick="openCreateViewModal();event.stopPropagation()" title="Create saved view" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:16px;line-height:1;padding:0 2px">+</button>
+          <span class="sidebar-chevron">▾</span>
+        </div>
       </div>
       <div id="saved-views-nav"></div>
-    </div>
-
-    <div class="sidebar-section" id="node-list-sidebar">
-      <div class="sidebar-label">Nodes</div>
-      <div id="sidebar-nodes"></div>
     </div>
   </nav>
 
@@ -1153,6 +1155,7 @@ async function connect() {
     PVE.refreshInterval = setInterval(refreshAll, 30000);
     tmStart();
     renderSavedViewsSidebar();
+    restoreSidebarSections();
     loadStoredNotifs();
     updateNotifBadge();
     switchView('overview');
@@ -1961,6 +1964,7 @@ async function migrateVM(node, vmid, type, targetNode, online=false, withLocal=f
 // ── RENDERING ─────────────────────────────────────────────
 
 function switchView(view) {
+  expandSidebarSection(view); // auto-expand collapsed section if needed
   const views=['connect','connections','worldmap','savedview','overview','vms','containers','nodes','tasks','syslog','storage','network','heatmap','isolib','sdn','pools','ceph','ha','firewall','backups','users','certs','audit','clustergraphs','tfa','sso','subscriptions','updates','pbs'];
   views.forEach(v=>{
     const el=document.getElementById('view-'+v);
@@ -2142,13 +2146,38 @@ function renderNodes(){
 }
 
 function renderSidebarNodes(){
-  document.getElementById('sidebar-nodes').innerHTML=PVE.nodeStatuses.map(n=>{
-    const online=n.status==='online'||(n.statusData&&Object.keys(n.statusData).length>0);
-    return `<div class="nav-item" onclick="switchView('nodes')">
-      <span style="width:7px;height:7px;border-radius:50%;background:${online?'var(--green)':'var(--red)'};flex-shrink:0"></span>
-      ${n.node}
-    </div>`;
-  }).join('');
+  // Nodes section removed from sidebar — now only shown in main Nodes view
+}
+
+// ── COLLAPSIBLE SIDEBAR SECTIONS ──────────────────────────
+
+function toggleSidebarSection(labelEl) {
+  const section = labelEl.closest('.sidebar-section');
+  if (!section) return;
+  section.classList.toggle('collapsed');
+  const id = section.dataset.section;
+  if (id) {
+    if (section.classList.contains('collapsed')) localStorage.setItem('sc-'+id,'1');
+    else localStorage.removeItem('sc-'+id);
+  }
+}
+
+function restoreSidebarSections() {
+  document.querySelectorAll('.sidebar-section[data-section]').forEach(s => {
+    if (localStorage.getItem('sc-'+s.dataset.section)) s.classList.add('collapsed');
+  });
+}
+
+function expandSidebarSection(view) {
+  // Auto-expand the section containing the nav item for this view
+  const item = document.querySelector(`.nav-item[data-view="${view}"]`);
+  if (!item) return;
+  const section = item.closest('.sidebar-section[data-section]');
+  if (section && section.classList.contains('collapsed')) {
+    section.classList.remove('collapsed');
+    const id = section.dataset.section;
+    if (id) localStorage.removeItem('sc-'+id);
+  }
 }
 
 function renderTasks(){
