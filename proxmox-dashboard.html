@@ -641,6 +641,7 @@
       <div class="section-header">
         <span class="section-title">Cluster Tasks</span>
         <div style="display:flex;gap:6px">
+          <select class="conn-sel" id="tasks-conn" style="width:140px;padding:5px 8px;font-size:13px" onchange="loadTasks()"><option value="">Primary</option></select>
           <select id="task-filter" style="width:120px;padding:5px 8px;font-size:13px" onchange="renderTasks()">
             <option value="">All</option>
             <option value="OK">OK</option>
@@ -663,6 +664,7 @@
       <div class="section-header">
         <span class="section-title">System Log</span>
         <div style="display:flex;gap:6px;align-items:center">
+          <select class="conn-sel" id="syslog-conn" style="width:140px;padding:5px 8px;font-size:13px" onchange="loadSyslog()"><option value="">Primary</option></select>
           <select id="syslog-node" style="width:140px;padding:5px 8px;font-size:13px" onchange="loadSyslog()"></select>
           <input id="syslog-search" type="text" placeholder="Filter…" style="width:150px;padding:5px 10px;font-size:13px" oninput="filterSyslog()" />
           <button class="btn small" onclick="loadSyslog()">Refresh</button>
@@ -681,6 +683,7 @@
       <div class="section-header">
         <span class="section-title">Storage</span>
         <div style="display:flex;gap:6px;align-items:center">
+          <select class="conn-sel" id="storage-conn" style="width:140px;padding:5px 8px;font-size:13px" onchange="loadStorage()"><option value="">Primary</option></select>
           <select id="storage-node-filter" style="width:140px;padding:5px 8px;font-size:13px" onchange="renderStorage()">
             <option value="">All Nodes</option>
           </select>
@@ -701,6 +704,7 @@
       <div class="section-header">
         <span class="section-title">Network Interfaces</span>
         <div style="display:flex;gap:6px;align-items:center">
+          <select class="conn-sel" id="network-conn" style="width:140px;padding:5px 8px;font-size:13px" onchange="loadNetwork()"><option value="">Primary</option></select>
           <select id="network-node-select" style="width:160px;padding:5px 8px;font-size:13px" onchange="loadNetwork()"></select>
           <button class="btn small" onclick="loadNetwork()">Refresh</button>
         </div>
@@ -747,6 +751,7 @@
       <div class="section-header">
         <span class="section-title">Software Defined Networking</span>
         <div style="display:flex;gap:6px">
+          <select class="conn-sel" id="sdn-conn" style="width:140px;padding:5px 8px;font-size:13px" onchange="loadSDN()"><option value="">Primary</option></select>
           <button class="btn small warning" id="sdn-apply-btn" onclick="applySDN()" style="display:none">⚡ Apply Pending Changes</button>
           <button class="btn small primary" onclick="openCreateZoneModal()">+ Zone</button>
           <button class="btn small primary" onclick="openCreateVNetModal()">+ VNet</button>
@@ -774,7 +779,10 @@
     <div id="view-ceph" style="display:none">
       <div class="section-header">
         <span class="section-title">Ceph Cluster Status</span>
-        <button class="btn small" onclick="loadCeph()">Refresh</button>
+        <div style="display:flex;gap:6px">
+          <select class="conn-sel" id="ceph-conn" style="width:140px;padding:5px 8px;font-size:13px" onchange="loadCeph()"><option value="">Primary</option></select>
+          <button class="btn small" onclick="loadCeph()">Refresh</button>
+        </div>
       </div>
       <div id="ceph-content"><div class="empty">Loading…</div></div>
     </div>
@@ -783,7 +791,10 @@
     <div id="view-ha" style="display:none">
       <div class="section-header">
         <span class="section-title">High Availability</span>
-        <button class="btn small" onclick="loadHA()">Refresh</button>
+        <div style="display:flex;gap:6px">
+          <select class="conn-sel" id="ha-conn" style="width:140px;padding:5px 8px;font-size:13px" onchange="loadHA()"><option value="">Primary</option></select>
+          <button class="btn small" onclick="loadHA()">Refresh</button>
+        </div>
       </div>
       <div id="ha-content"><div class="empty">Loading…</div></div>
     </div>
@@ -793,6 +804,7 @@
       <div class="section-header">
         <span class="section-title">Firewall Rules</span>
         <div style="display:flex;gap:6px;align-items:center">
+          <select class="conn-sel" id="fw-conn" style="width:140px;padding:5px 8px;font-size:13px" onchange="loadFirewall()"><option value="">Primary</option></select>
           <select id="fw-scope" style="width:180px;padding:5px 8px;font-size:13px" onchange="loadFirewall()">
             <option value="_cluster">Cluster-wide</option>
           </select>
@@ -806,7 +818,10 @@
     <div id="view-backups" style="display:none">
       <div class="section-header">
         <span class="section-title">Backup Jobs &amp; Schedules</span>
-        <button class="btn small" onclick="loadBackups()">Refresh</button>
+        <div style="display:flex;gap:6px">
+          <select class="conn-sel" id="backups-conn" style="width:140px;padding:5px 8px;font-size:13px" onchange="loadBackups()"><option value="">Primary</option></select>
+          <button class="btn small" onclick="loadBackups()">Refresh</button>
+        </div>
       </div>
       <div id="backups-content"><div class="empty">Loading…</div></div>
     </div>
@@ -815,7 +830,10 @@
     <div id="view-users" style="display:none">
       <div class="section-header">
         <span class="section-title">Users, Roles &amp; Permissions</span>
-        <button class="btn small" onclick="loadUsers()">Refresh</button>
+        <div style="display:flex;gap:6px">
+          <select class="conn-sel" id="users-conn" style="width:140px;padding:5px 8px;font-size:13px" onchange="loadUsers()"><option value="">Primary</option></select>
+          <button class="btn small" onclick="loadUsers()">Refresh</button>
+        </div>
       </div>
       <div id="users-content"><div class="empty">Loading…</div></div>
     </div>
@@ -824,7 +842,10 @@
     <div id="view-certs" style="display:none">
       <div class="section-header">
         <span class="section-title">TLS Certificates</span>
-        <button class="btn small" onclick="loadCerts()">Refresh</button>
+        <div style="display:flex;gap:6px">
+          <select class="conn-sel" id="certs-conn" style="width:140px;padding:5px 8px;font-size:13px" onchange="loadCerts()"><option value="">Primary</option></select>
+          <button class="btn small" onclick="loadCerts()">Refresh</button>
+        </div>
       </div>
       <div id="certs-content"><div class="empty">Loading…</div></div>
     </div>
@@ -834,6 +855,7 @@
       <div class="section-header">
         <span class="section-title">Audit Log</span>
         <div style="display:flex;gap:6px;align-items:center">
+          <select class="conn-sel" id="audit-conn" style="width:140px;padding:4px 7px;font-size:12px" onchange="loadAudit()"><option value="">Primary</option></select>
           <input id="audit-search" placeholder="Filter user, type, ID…" style="width:180px;padding:4px 9px;font-size:12px" oninput="filterAudit()"/>
           <select id="audit-node-filter" style="width:130px;padding:4px 7px;font-size:12px" onchange="filterAudit()">
             <option value="">All Nodes</option>
@@ -901,6 +923,7 @@
       <div class="section-header">
         <span class="section-title">Cluster-wide Resource Graphs</span>
         <div style="display:flex;gap:4px">
+          <select class="conn-sel" id="cg-conn" style="width:140px;padding:5px 8px;font-size:13px" onchange="loadClusterGraphs()"><option value="">Primary</option></select>
           <button class="tf-btn active" id="cg-tf-hour"   onclick="setCGTimeframe('hour')">HOUR</button>
           <button class="tf-btn"        id="cg-tf-day"    onclick="setCGTimeframe('day')">DAY</button>
           <button class="tf-btn"        id="cg-tf-week"   onclick="setCGTimeframe('week')">WEEK</button>
@@ -1182,6 +1205,27 @@ async function detailDelete(path) {
   return res.json();
 }
 
+// ── CONNECTION SELECTOR HELPERS ──────────────────────────
+// Every per-cluster view has a .conn-sel <select> in its header.
+// populateConnSelectors() keeps them all in sync when connections change.
+
+function getViewConn(selId) {
+  const el = document.getElementById(selId);
+  return (el && el.value) ? resolveConn(el.value) : null;
+}
+
+function _connSelectOpts(selectedId) {
+  return '<option value=""' + (!selectedId?' selected':'') + '>Primary</option>' +
+    extraConns.map(c=>`<option value="${c.id}"${c.id===selectedId?' selected':''}>${escHtml(c.name||c.host)}</option>`).join('');
+}
+
+function populateConnSelectors() {
+  document.querySelectorAll('select.conn-sel').forEach(el => {
+    const cur = el.value;
+    el.innerHTML = _connSelectOpts(cur);
+  });
+}
+
 // Aggregate helpers
 function allVMs()   { return [...PVE.vms,       ...extraConns.flatMap(c=>c.vms||[])]; }
 function allCTs()   { return [...PVE.containers, ...extraConns.flatMap(c=>c.containers||[])]; }
@@ -1253,30 +1297,43 @@ async function refreshAll() {
 }
 
 async function loadTasks() {
+  const conn = getViewConn('tasks-conn');
+  const get = conn ? (p=>connGet(conn,p)) : pveGet;
+  const nodes = conn ? (conn.nodes||[]) : PVE.nodes;
   try {
-    // GET /api2/json/nodes/{node}/tasks — collect from all nodes
     const all = [];
-    await Promise.all(PVE.nodes.map(async n=>{
-      const d = await pveGet(`/api2/json/nodes/${n.node}/tasks?limit=100`).catch(()=>({data:[]}));
+    await Promise.all(nodes.map(async n=>{
+      const d = await get(`/api2/json/nodes/${n.node}/tasks?limit=100`).catch(()=>({data:[]}));
       (d.data||[]).forEach(t=>all.push({...t,node:n.node}));
     }));
     all.sort((a,b)=>b.starttime-a.starttime);
-    PVE.tasks = all.slice(0,200);
-    const errCount = PVE.tasks.filter(t=>t.status&&t.status!=='OK'&&t.status!=='running'&&t.status!=='').length;
-    const badge = document.getElementById('task-err-badge');
-    if (errCount>0){badge.textContent=errCount;badge.style.display='';}
-    else{badge.style.display='none';}
-  } catch(e) { PVE.tasks=[]; }
+    if (conn) {
+      // Render directly for extra connections — don't overwrite PVE.tasks
+      const tbody = document.getElementById('tasks-body');
+      if (tbody) tbody.innerHTML = all.slice(0,200).map(t=>taskRow(t,true)).join('') || '<tr><td colspan="7" class="empty">No tasks</td></tr>';
+    } else {
+      PVE.tasks = all.slice(0,200);
+      const errCount = PVE.tasks.filter(t=>t.status&&t.status!=='OK'&&t.status!=='running'&&t.status!=='').length;
+      const badge = document.getElementById('task-err-badge');
+      if (errCount>0){badge.textContent=errCount;badge.style.display='';}
+      else{badge.style.display='none';}
+    }
+  } catch(e) { if(!conn) PVE.tasks=[]; }
 }
 
 async function loadSyslog() {
+  const conn = getViewConn('syslog-conn');
+  const get = conn ? (p=>connGet(conn,p)) : pveGet;
+  const nodes = conn ? (conn.nodes||[]) : PVE.nodes;
+  // Repopulate node selector
   const nodeEl = document.getElementById('syslog-node');
-  const node = nodeEl.value || (PVE.nodes[0]&&PVE.nodes[0].node);
+  if (nodeEl) nodeEl.innerHTML = nodes.map(n=>`<option value="${n.node}">${n.node}</option>`).join('');
+  const node = (nodeEl&&nodeEl.value) || (nodes[0]&&nodes[0].node);
   if (!node) return;
   document.getElementById('syslog-body').innerHTML='<tr><td colspan="2" class="empty"><span class="loading"></span> Loading…</td></tr>';
   try {
     // GET /api2/json/nodes/{node}/syslog
-    const d = await pveGet(`/api2/json/nodes/${node}/syslog?limit=500`);
+    const d = await get(`/api2/json/nodes/${node}/syslog?limit=500`);
     rawSyslog = d.data||[];
     filterSyslog();
   } catch(e) {
@@ -2249,30 +2306,35 @@ async function loadStorageBackground() {
 // ── STORAGE ───────────────────────────────────────────────
 
 async function loadStorage() {
-  // GET /api2/json/nodes/{node}/storage — per node
-  // GET /api2/json/nodes/{node}/storage/{storage}/status — usage stats
-  // Official docs: https://pve.proxmox.com/pve-docs/api-viewer/#/nodes/{node}/storage
+  const conn = getViewConn('storage-conn');
+  const get = conn ? (p=>connGet(conn,p)) : pveGet;
+  const nodes = conn ? (conn.nodes||[]) : PVE.nodes;
+  // Repopulate node filter
+  const nf = document.getElementById('storage-node-filter');
+  if (nf) nf.innerHTML = '<option value="">All Nodes</option>' + nodes.map(n=>`<option value="${n.node}">${n.node}</option>`).join('');
   try {
     const all = [];
-    await Promise.all(PVE.nodes.map(async n => {
-      const d = await pveGet(`/api2/json/nodes/${n.node}/storage`).catch(()=>({data:[]}));
+    await Promise.all(nodes.map(async n => {
+      const d = await get(`/api2/json/nodes/${n.node}/storage`).catch(()=>({data:[]}));
       const stores = d.data||[];
-      // Enrich each with status (used/total/avail)
       await Promise.all(stores.map(async s => {
-        const st = await pveGet(`/api2/json/nodes/${n.node}/storage/${s.storage}/status`).catch(()=>({data:{}}));
+        const st = await get(`/api2/json/nodes/${n.node}/storage/${s.storage}/status`).catch(()=>({data:{}}));
         all.push({...s, ...st.data, node: n.node});
       }));
     }));
-    PVE.storage = all;
-    renderStorage();
+    if (!conn) PVE.storage = all;
+    else (conn.storage = all);
+    renderStorage(all);
   } catch(e) {
     toast('Storage load failed: '+e.message, 'error');
   }
 }
 
-function renderStorage() {
+function renderStorage(overrideData) {
+  const conn = getViewConn('storage-conn');
+  const source = overrideData || (conn ? (conn.storage||[]) : PVE.storage);
   const nodeFilter = document.getElementById('storage-node-filter').value;
-  const stores = nodeFilter ? PVE.storage.filter(s=>s.node===nodeFilter) : PVE.storage;
+  const stores = nodeFilter ? source.filter(s=>s.node===nodeFilter) : source;
 
   // Summary cards
   const totalBytes = stores.reduce((a,s)=>a+(s.total||0),0);
@@ -2319,14 +2381,17 @@ function renderStorage() {
 // ── NETWORK ───────────────────────────────────────────────
 
 async function loadNetwork() {
-  // GET /api2/json/nodes/{node}/network
-  // Official docs: https://pve.proxmox.com/pve-docs/api-viewer/#/nodes/{node}/network
-  const node = document.getElementById('network-node-select').value || (PVE.nodes[0]&&PVE.nodes[0].node);
+  const conn = getViewConn('network-conn');
+  const get = conn ? (p=>connGet(conn,p)) : pveGet;
+  const nodes = conn ? (conn.nodes||[]) : PVE.nodes;
+  const nSel = document.getElementById('network-node-select');
+  if (nSel) nSel.innerHTML = nodes.map(n=>`<option value="${n.node}">${n.node}</option>`).join('');
+  const node = (nSel&&nSel.value) || (nodes[0]&&nodes[0].node);
   if (!node) return;
   document.getElementById('network-body').innerHTML='<tr><td colspan="8" class="empty"><span class="loading"></span> Loading…</td></tr>';
   document.getElementById('network-summary').innerHTML='';
   try {
-    const d = await pveGet(`/api2/json/nodes/${node}/network`);
+    const d = await get(`/api2/json/nodes/${node}/network`);
     const ifaces = (d.data||[]).sort((a,b)=>(a.iface||'').localeCompare(b.iface||''));
     PVE.network = ifaces.map(i=>({...i,node}));
     renderNetwork();
@@ -2663,15 +2728,18 @@ function checkAlerts() {
 // GET /api2/json/nodes/{node}/ceph/osd
 // GET /api2/json/nodes/{node}/ceph/pools
 async function loadCeph() {
+  const conn = getViewConn('ceph-conn');
+  const get = conn ? (p=>connGet(conn,p)) : pveGet;
+  const nodes = conn ? (conn.nodes||[]) : PVE.nodes;
   const el = document.getElementById('ceph-content');
   el.innerHTML = '<div class="empty"><span class="loading"></span> Loading Ceph status…</div>';
-  const node = PVE.nodes[0] && PVE.nodes[0].node;
+  const node = nodes[0] && nodes[0].node;
   if (!node) { el.innerHTML = '<div class="empty">No nodes available.</div>'; return; }
   try {
     const [statusRes, osdRes, poolRes] = await Promise.all([
-      pveGet(`/api2/json/nodes/${node}/ceph/status`).catch(() => null),
-      pveGet(`/api2/json/nodes/${node}/ceph/osd`).catch(() => null),
-      pveGet(`/api2/json/nodes/${node}/ceph/pools`).catch(() => null)
+      get(`/api2/json/nodes/${node}/ceph/status`).catch(() => null),
+      get(`/api2/json/nodes/${node}/ceph/osd`).catch(() => null),
+      get(`/api2/json/nodes/${node}/ceph/pools`).catch(() => null)
     ]);
 
     if (!statusRes) {
@@ -2801,13 +2869,15 @@ async function loadCeph() {
 // GET /api2/json/cluster/ha/resources
 // GET /api2/json/cluster/ha/groups
 async function loadHA() {
+  const conn = getViewConn('ha-conn');
+  const get = conn ? (p=>connGet(conn,p)) : pveGet;
   const el = document.getElementById('ha-content');
   el.innerHTML = '<div class="empty"><span class="loading"></span> Loading HA status…</div>';
   try {
     const [statusRes, resourcesRes, groupsRes] = await Promise.all([
-      pveGet('/api2/json/cluster/ha/status/current').catch(() => null),
-      pveGet('/api2/json/cluster/ha/resources').catch(() => null),
-      pveGet('/api2/json/cluster/ha/groups').catch(() => null)
+      get('/api2/json/cluster/ha/status/current').catch(() => null),
+      get('/api2/json/cluster/ha/resources').catch(() => null),
+      get('/api2/json/cluster/ha/groups').catch(() => null)
     ]);
 
     if (!statusRes) {
@@ -2900,9 +2970,16 @@ async function loadHA() {
 // GET /api2/json/nodes/{node}/firewall/rules  - node rules
 // Official: https://pve.proxmox.com/pve-docs/api-viewer/#/cluster/firewall/rules
 async function loadFirewall() {
+  const conn = getViewConn('fw-conn');
+  const get = conn ? (p=>connGet(conn,p)) : pveGet;
+  const nodes = conn ? (conn.nodes||[]) : PVE.nodes;
+  // Repopulate scope selector
+  const scopeSel = document.getElementById('fw-scope');
+  if (scopeSel) scopeSel.innerHTML = '<option value="_cluster">Cluster-wide</option>' +
+    nodes.map(n=>`<option value="node:${n.node}">${n.node} (node)</option>`).join('');
   const el = document.getElementById('fw-content');
   el.innerHTML = '<div class="empty"><span class="loading"></span> Loading firewall rules…</div>';
-  const scope = document.getElementById('fw-scope').value;
+  const scope = scopeSel ? scopeSel.value : '_cluster';
   try {
     let path, title;
     if (scope === '_cluster') {
@@ -2915,8 +2992,8 @@ async function loadFirewall() {
     }
 
     const [rulesRes, optionsRes] = await Promise.all([
-      pveGet(path).catch(() => ({ data: [] })),
-      pveGet(path.replace('/rules', '/options')).catch(() => ({ data: {} }))
+      get(path).catch(() => ({ data: [] })),
+      get(path.replace('/rules', '/options')).catch(() => ({ data: {} }))
     ]);
 
     const rules = rulesRes.data || [];
@@ -2986,16 +3063,18 @@ async function loadFirewall() {
 // GET /api2/json/nodes/{node}/tasks  — filter for vzdump tasks (recent runs)
 // Official: https://pve.proxmox.com/pve-docs/api-viewer/#/cluster/backup
 async function loadBackups() {
+  const conn = getViewConn('backups-conn');
+  const get = conn ? (p=>connGet(conn,p)) : pveGet;
+  const nodes = conn ? (conn.nodes||[]) : PVE.nodes;
   const el = document.getElementById('backups-content');
   el.innerHTML = '<div class="empty"><span class="loading"></span> Loading backup jobs…</div>';
   try {
-    const schedulesRes = await pveGet('/api2/json/cluster/backup').catch(() => ({ data: [] }));
+    const schedulesRes = await get('/api2/json/cluster/backup').catch(() => ({ data: [] }));
     const jobs = schedulesRes.data || [];
 
-    // Collect recent vzdump (backup) tasks from all nodes
     const recentTasks = [];
-    await Promise.all(PVE.nodes.map(async n => {
-      const d = await pveGet(`/api2/json/nodes/${n.node}/tasks?typefilter=vzdump&limit=20`).catch(() => ({ data: [] }));
+    await Promise.all(nodes.map(async n => {
+      const d = await get(`/api2/json/nodes/${n.node}/tasks?typefilter=vzdump&limit=20`).catch(() => ({ data: [] }));
       (d.data || []).forEach(t => recentTasks.push({ ...t, node: n.node }));
     }));
     recentTasks.sort((a, b) => b.starttime - a.starttime);
@@ -3087,13 +3166,15 @@ async function loadBackups() {
 // GET /api2/json/access/roles          - all roles and their privileges
 // GET /api2/json/access/acl            - all ACL entries (path + user + role)
 async function loadUsers() {
+  const conn = getViewConn('users-conn');
+  const get = conn ? (p=>connGet(conn,p)) : pveGet;
   const el = document.getElementById('users-content');
   el.innerHTML = '<div class="empty"><span class="loading"></span> Loading users…</div>';
   try {
     const [uRes, rRes, aRes] = await Promise.all([
-      pveGet('/api2/json/access/users?full=1').catch(() => ({ data: [] })),
-      pveGet('/api2/json/access/roles').catch(() => ({ data: [] })),
-      pveGet('/api2/json/access/acl').catch(() => ({ data: [] }))
+      get('/api2/json/access/users?full=1').catch(() => ({ data: [] })),
+      get('/api2/json/access/roles').catch(() => ({ data: [] })),
+      get('/api2/json/access/acl').catch(() => ({ data: [] }))
     ]);
     const users = uRes.data || [];
     const roles = rRes.data || [];
@@ -3189,13 +3270,16 @@ async function loadUsers() {
 // GET /api2/json/nodes/{node}/certificates/info
 // Official: https://pve.proxmox.com/pve-docs/api-viewer/#/nodes/{node}/certificates
 async function loadCerts() {
+  const conn = getViewConn('certs-conn');
+  const get = conn ? (p=>connGet(conn,p)) : pveGet;
+  const nodes = conn ? (conn.nodes||[]) : PVE.nodes;
   const el = document.getElementById('certs-content');
   el.innerHTML = '<div class="empty"><span class="loading"></span> Loading certificates…</div>';
   const now = Date.now();
   try {
     const allCerts = [];
-    await Promise.all(PVE.nodes.map(async n => {
-      const d = await pveGet(`/api2/json/nodes/${n.node}/certificates/info`).catch(() => ({ data: [] }));
+    await Promise.all(nodes.map(async n => {
+      const d = await get(`/api2/json/nodes/${n.node}/certificates/info`).catch(() => ({ data: [] }));
       (d.data || []).forEach(c => allCerts.push({ ...c, node: n.node }));
     }));
 
@@ -3235,7 +3319,7 @@ async function loadCerts() {
         <div class="stat-card">
           <div class="label">Total Certs</div>
           <div class="value" style="color:var(--blue)">${allCerts.length}</div>
-          <div class="sub">across ${PVE.nodes.length} node(s)</div>
+          <div class="sub">across ${nodes.length} node(s)</div>
         </div>
         <div class="stat-card">
           <div class="label">Expiring Soon</div>
@@ -3302,12 +3386,25 @@ function openCreateVMWizard(preISO) {
   wizRender();
 }
 
+function ctWizConnChanged() {
+  const connId = (document.getElementById('wiz-conn')||{}).value || '';
+  const conn = resolveConn(connId);
+  wiz.cd.connId = connId;
+  wiz.tmplLoaded = false;
+  const nl = conn ? (conn.nodes||[]) : PVE.nodes;
+  wiz.cd.node = nl[0] ? nl[0].node : '';
+  const sl = conn ? (conn.storage||[]) : PVE.storage;
+  wiz.cd.storage = (sl.find(s=>(s.content||'').includes('rootdir'))||(sl.find(s=>(s.content||'').includes('images')))||{}).storage||'local-lvm';
+  const nodeEl = document.getElementById('wiz-node');
+  if (nodeEl) nodeEl.innerHTML = nl.map(n=>`<option value="${n.node}">${n.node}</option>`).join('');
+}
+
 function openCreateCTWizard() {
   wiz.type = 'ct'; wiz.step = 1; wiz.tmplLoaded = false; wiz.tmpl = []; wiz._selTmpl = '';
   const usedIDs = new Set([...PVE.vms,...PVE.containers].map(x=>x.vmid));
   let nextID = 100; while(usedIDs.has(nextID)) nextID++;
   const defStor = (PVE.storage.find(s => (s.content||'').includes('rootdir')||(s.content||'').includes('images')) || {}).storage || 'local-lvm';
-  wiz.cd = { node:PVE.nodes[0]&&PVE.nodes[0].node||'', vmid:String(nextID), hostname:'', password:'', password2:'',
+  wiz.cd = { connId:'', node:PVE.nodes[0]&&PVE.nodes[0].node||'', vmid:String(nextID), hostname:'', password:'', password2:'',
     unprivileged:true, pool:'', tmpl:'',
     disk:'8', storage:defStor, memory:'512', swap:'512', cores:'1',
     bridge:'vmbr0', ipmode:'dhcp', ip:'', gw:'', firewall:true, start:false,
@@ -3319,6 +3416,20 @@ function openCreateCTWizard() {
 
 function openCreateVMModal() { openCreateVMWizard(); }
 
+function wizConnChanged() {
+  const connId = (document.getElementById('wiz-conn')||{}).value || '';
+  const conn = resolveConn(connId);
+  wiz.d.connId = connId;
+  wiz.isoLoaded = false; wiz.tmplLoaded = false;
+  const nodeList = conn ? (conn.nodes||[]) : PVE.nodes;
+  wiz.d.node = nodeList[0] ? nodeList[0].node : '';
+  const storList = conn ? (conn.storage||[]) : PVE.storage;
+  wiz.d.storage = (storList.find(s=>(s.content||'').includes('images'))||{}).storage || 'local-lvm';
+  // Re-render just the node dropdown
+  const nodeEl = document.getElementById('wiz-node');
+  if (nodeEl) nodeEl.innerHTML = nodeList.map(n=>`<option value="${n.node}">${n.node}</option>`).join('');
+}
+
 function closeWizard(e) {
   if (e && e.target !== document.getElementById('wizard-bg')) return;
   document.getElementById('wizard-bg').classList.remove('open');
@@ -3328,14 +3439,14 @@ function wizSave() {
   const g = (id, fb) => { const el=document.getElementById(id); if(!el) return fb; return el.type==='checkbox'?el.checked:el.value; };
   if (wiz.type === 'vm') {
     const d = wiz.d;
-    if (wiz.step===1) { d.node=g('wiz-node',d.node); d.vmid=g('wiz-vmid',d.vmid); d.name=g('wiz-name',d.name); d.pool=g('wiz-pool',d.pool); }
+    if (wiz.step===1) { d.connId=g('wiz-conn',d.connId)||''; d.node=g('wiz-node',d.node); d.vmid=g('wiz-vmid',d.vmid); d.name=g('wiz-name',d.name); d.pool=g('wiz-pool',d.pool); }
     else if (wiz.step===2) { d.ostype=g('wiz-ostype',d.ostype); d.iso=wiz._selISO; }
     else if (wiz.step===3) { d.cores=g('wiz-cores',d.cores); d.sockets=g('wiz-sockets',d.sockets); d.memory=g('wiz-mem',d.memory); d.bios=g('wiz-bios',d.bios); d.machine=g('wiz-machine',d.machine); d.kvm=g('wiz-kvm',d.kvm); }
     else if (wiz.step===4) { d.disk=g('wiz-disk',d.disk); d.storage=g('wiz-storage',d.storage); d.disktype=g('wiz-disktype',d.disktype); d.scsihw=g('wiz-scsihw',d.scsihw); d.discard=g('wiz-discard',d.discard); }
     else if (wiz.step===5) { d.bridge=g('wiz-bridge',d.bridge); d.netmodel=g('wiz-netmodel',d.netmodel); d.vlan=g('wiz-vlan',d.vlan); d.mac=g('wiz-mac',d.mac); d.firewall=g('wiz-fw',d.firewall); d.start=g('wiz-start',d.start); }
   } else {
     const c = wiz.cd;
-    if (wiz.step===1) { c.node=g('wiz-node',c.node); c.vmid=g('wiz-vmid',c.vmid); c.hostname=g('wiz-hostname',c.hostname); c.password=g('wiz-pw',c.password); c.password2=g('wiz-pw2',c.password2); c.unprivileged=g('wiz-unpriv',c.unprivileged); c.pool=g('wiz-pool',c.pool); }
+    if (wiz.step===1) { c.connId=g('wiz-conn',c.connId)||''; c.node=g('wiz-node',c.node); c.vmid=g('wiz-vmid',c.vmid); c.hostname=g('wiz-hostname',c.hostname); c.password=g('wiz-pw',c.password); c.password2=g('wiz-pw2',c.password2); c.unprivileged=g('wiz-unpriv',c.unprivileged); c.pool=g('wiz-pool',c.pool); }
     else if (wiz.step===2) { c.tmpl=wiz._selTmpl; }
     else if (wiz.step===3) { c.storage=g('wiz-storage',c.storage); c.disk=g('wiz-disk',c.disk); }
     else if (wiz.step===4) { c.cores=g('wiz-cores',c.cores); c.memory=g('wiz-mem',c.memory); c.swap=g('wiz-swap',c.swap); }
@@ -3391,8 +3502,18 @@ function wizRender() {
   const el = document.getElementById('wiz-body');
   const d = wiz.d;
   if (wiz.step===1) {
-    const nodeOpts = PVE.nodes.map(n=>`<option value="${n.node}"${n.node===d.node?' selected':''}>${n.node}</option>`).join('');
+    const wizConn = resolveConn(d.connId);
+    const nodeList = wizConn ? (wizConn.nodes||[]) : PVE.nodes;
+    const nodeOpts = nodeList.map(n=>`<option value="${n.node}"${n.node===d.node?' selected':''}>${n.node}</option>`).join('');
+    const connOpts = extraConns.length
+      ? `<div class="form-group"><label>CLUSTER / HOST</label>
+          <select id="wiz-conn" onchange="wizConnChanged()">
+            <option value=""${!d.connId?' selected':''}>Primary</option>
+            ${extraConns.map(c=>`<option value="${c.id}"${c.id===d.connId?' selected':''}>${escHtml(c.name||c.host)}</option>`).join('')}
+          </select>
+        </div>` : '';
     el.innerHTML = `
+      ${connOpts}
       <div class="form-group"><label>NODE — where the VM will run</label><select id="wiz-node">${nodeOpts}</select></div>
       <div class="create-vm-grid">
         <div class="form-group"><label>VM ID (≥ 100)</label><input id="wiz-vmid" type="number" value="${escHtml(d.vmid)}" min="100" max="999999"/></div>
@@ -3440,7 +3561,9 @@ function wizRender() {
       </label>`;
   } else if (wiz.step===4) {
     const node = d.node || (PVE.nodes[0]&&PVE.nodes[0].node);
-    const storOpts = PVE.storage
+    const wizConn4 = resolveConn(d.connId);
+    const storList4 = wizConn4 ? (wizConn4.storage||[]) : PVE.storage;
+    const storOpts = storList4
       .filter(s=>(!node||s.node===node)&&((s.content||'').includes('images')||(s.content||'').includes('rootdir')))
       .map(s=>`<option value="${s.storage}"${s.storage===d.storage?' selected':''}>${s.storage} [${s.type||'?'}]${s.avail?' ('+fmtBytes(s.avail)+' free)':''}</option>`)
       .join('') || `<option value="${d.storage||'local-lvm'}">${d.storage||'local-lvm'}</option>`;
@@ -3528,10 +3651,14 @@ async function wizLoadISOs() {
   if (!wiz.isoLoaded) {
     try {
       const all = [];
-      await Promise.all(PVE.nodes.map(async n => {
-        const stores = PVE.storage.filter(s => s.node===n.node && (s.content||'').includes('iso'));
+      const isoConn = resolveConn(wiz.d.connId);
+      const isoGet = isoConn ? (p=>connGet(isoConn,p)) : pveGet;
+      const isoNodes = isoConn ? (isoConn.nodes||[]) : PVE.nodes;
+      const isoStorage = isoConn ? (isoConn.storage||[]) : PVE.storage;
+      await Promise.all(isoNodes.map(async n => {
+        const stores = isoStorage.filter(s => s.node===n.node && (s.content||'').includes('iso'));
         await Promise.all(stores.map(async s => {
-          const d = await pveGet(`/api2/json/nodes/${n.node}/storage/${s.storage}/content?content=iso`).catch(()=>({data:[]}));
+          const d = await isoGet(`/api2/json/nodes/${n.node}/storage/${s.storage}/content?content=iso`).catch(()=>({data:[]}));
           (d.data||[]).forEach(item => all.push({ volid:item.volid, node:n.node, storage:s.storage, name:(item.volid||'').split('/').pop(), size:item.size||0 }));
         }));
       }));
@@ -3589,7 +3716,10 @@ async function wizSubmitVM() {
   if (d.pool) params.pool = d.pool;
 
   try {
-    const res = await pvePost(`/api2/json/nodes/${d.node}/qemu`, params);
+    const vmConn = resolveConn(d.connId);
+    const res = vmConn
+      ? await connPost(vmConn, `/api2/json/nodes/${d.node}/qemu`, params)
+      : await pvePost(`/api2/json/nodes/${d.node}/qemu`, params);
     const upid = res && res.data;
     toast(`VM ${d.vmid} (${d.name}) creation started on ${d.node}`, 'success');
     if (upid && typeof upid === 'string') tmRegister(upid, d.node, `Create VM ${d.vmid} (${d.name})`);
@@ -3609,8 +3739,18 @@ function wizRenderCT() {
   const el = document.getElementById('wiz-body');
   const c = wiz.cd;
   if (wiz.step===1) {
-    const nodeOpts = PVE.nodes.map(n=>`<option value="${n.node}"${n.node===c.node?' selected':''}>${n.node}</option>`).join('');
+    const ctWizConn = resolveConn(c.connId);
+    const ctNodeList = ctWizConn ? (ctWizConn.nodes||[]) : PVE.nodes;
+    const nodeOpts = ctNodeList.map(n=>`<option value="${n.node}"${n.node===c.node?' selected':''}>${n.node}</option>`).join('');
+    const ctConnOpts = extraConns.length
+      ? `<div class="form-group"><label>CLUSTER / HOST</label>
+          <select id="wiz-conn" onchange="ctWizConnChanged()">
+            <option value=""${!c.connId?' selected':''}>Primary</option>
+            ${extraConns.map(co=>`<option value="${co.id}"${co.id===c.connId?' selected':''}>${escHtml(co.name||co.host)}</option>`).join('')}
+          </select>
+        </div>` : '';
     el.innerHTML = `
+      ${ctConnOpts}
       <div class="form-group"><label>NODE — where the container will run</label><select id="wiz-node">${nodeOpts}</select></div>
       <div class="create-vm-grid">
         <div class="form-group"><label>CT ID (≥ 100)</label><input id="wiz-vmid" type="number" value="${escHtml(c.vmid)}" min="100" max="999999"/></div>
@@ -3639,7 +3779,9 @@ function wizRenderCT() {
     ctLoadTemplates();
   } else if (wiz.step===3) {
     const node = c.node || (PVE.nodes[0]&&PVE.nodes[0].node);
-    const storOpts = PVE.storage
+    const ctConn3 = resolveConn(c.connId);
+    const ctStorList = ctConn3 ? (ctConn3.storage||[]) : PVE.storage;
+    const storOpts = ctStorList
       .filter(s=>(!node||s.node===node)&&((s.content||'').includes('rootdir')||(s.content||'').includes('images')))
       .map(s=>`<option value="${s.storage}"${s.storage===c.storage?' selected':''}>${s.storage} [${s.type||'?'}]${s.avail?' ('+fmtBytes(s.avail)+' free)':''}</option>`)
       .join('') || `<option value="${c.storage||'local-lvm'}">${c.storage||'local-lvm'}</option>`;
@@ -3737,11 +3879,14 @@ async function ctLoadTemplates() {
   if (!wiz.tmplLoaded) {
     try {
       const all = [];
-      await Promise.all(PVE.nodes.map(async n => {
-        const storRes = await pveGet(`/api2/json/nodes/${n.node}/storage`).catch(()=>({data:[]}));
+      const tmplConn = resolveConn(wiz.cd.connId);
+      const tmplGet = tmplConn ? (p=>connGet(tmplConn,p)) : pveGet;
+      const tmplNodes = tmplConn ? (tmplConn.nodes||[]) : PVE.nodes;
+      await Promise.all(tmplNodes.map(async n => {
+        const storRes = await tmplGet(`/api2/json/nodes/${n.node}/storage`).catch(()=>({data:[]}));
         const stores = storRes.data || [];
         await Promise.all(stores.map(async s => {
-          const d = await pveGet(`/api2/json/nodes/${n.node}/storage/${s.storage}/content`).catch(()=>({data:[]}));
+          const d = await tmplGet(`/api2/json/nodes/${n.node}/storage/${s.storage}/content`).catch(()=>({data:[]}));
           (d.data||[]).filter(i=>i.content==='vztmpl').forEach(item => all.push({ volid:item.volid, node:n.node, storage:s.storage, name:(item.volid||'').split('/').pop(), size:item.size||0 }));
         }));
       }));
@@ -3809,7 +3954,10 @@ async function wizSubmitCT() {
   if (c.searchdomain) params.searchdomain = c.searchdomain;
 
   try {
-    const res = await pvePost(`/api2/json/nodes/${c.node}/lxc`, params);
+    const ctSubmitConn = resolveConn(c.connId);
+    const res = ctSubmitConn
+      ? await connPost(ctSubmitConn, `/api2/json/nodes/${c.node}/lxc`, params)
+      : await pvePost(`/api2/json/nodes/${c.node}/lxc`, params);
     const upid = res && res.data;
     toast(`CT ${c.vmid} (${c.hostname||c.vmid}) creation started on ${c.node}`, 'success');
     if (upid && typeof upid === 'string') tmRegister(upid, c.node, `Create CT ${c.vmid} (${c.hostname||c.vmid})`);
@@ -3910,13 +4058,16 @@ function updateTopbarUptime() {
 let rawAuditTasks = [];
 
 async function loadAudit() {
+  const conn = getViewConn('audit-conn');
+  const get = conn ? (p=>connGet(conn,p)) : pveGet;
+  const nodes = conn ? (conn.nodes||[]) : PVE.nodes;
   const tbody = document.getElementById('audit-body');
   tbody.innerHTML = '<tr><td colspan="7" class="empty"><span class="loading"></span> Loading audit log…</td></tr>';
 
   try {
     const all = [];
-    await Promise.all(PVE.nodes.map(async n => {
-      const d = await pveGet(`/api2/json/nodes/${n.node}/tasks?limit=200`).catch(() => ({ data: [] }));
+    await Promise.all(nodes.map(async n => {
+      const d = await get(`/api2/json/nodes/${n.node}/tasks?limit=200`).catch(() => ({ data: [] }));
       (d.data || []).forEach(t => all.push({ ...t, node: n.node }));
     }));
     all.sort((a, b) => b.starttime - a.starttime);
@@ -4012,18 +4163,19 @@ let cgTimeframe = 'hour';
 let cgSelectedNode = 'all';
 
 async function loadClusterGraphs() {
+  const conn = getViewConn('cg-conn');
+  const get = conn ? (p=>connGet(conn,p)) : pveGet;
+  const nodes = conn ? (conn.nodes||[]) : PVE.nodes;
   const el = document.getElementById('cg-content');
   el.innerHTML = '<div class="empty"><span class="loading"></span> Loading cluster graph data…</div>';
 
-  // Destroy old charts
   Object.values(cgCharts).forEach(ch => { try { ch.destroy(); } catch(e) {} });
   cgCharts = {};
 
   try {
-    // Fetch RRD from all nodes in parallel
     const nodeData = {};
-    await Promise.all(PVE.nodes.map(async n => {
-      const d = await pveGet(`/api2/json/nodes/${n.node}/rrddata?timeframe=${cgTimeframe}&cf=AVERAGE`).catch(() => ({ data: [] }));
+    await Promise.all(nodes.map(async n => {
+      const d = await get(`/api2/json/nodes/${n.node}/rrddata?timeframe=${cgTimeframe}&cf=AVERAGE`).catch(() => ({ data: [] }));
       if (d.data && d.data.length) nodeData[n.node] = d.data;
     }));
 
@@ -4701,16 +4853,18 @@ function renderISOLibrary() {
 let sdnData = { zones:[], vnets:[], subnets:{}, controllers:[], ipams:[], dns:[] };
 
 async function loadSDN() {
+  const conn = getViewConn('sdn-conn');
+  const get = conn ? (p=>connGet(conn,p)) : pveGet;
   const el = document.getElementById('sdn-content');
   el.innerHTML = '<div class="empty"><span class="loading"></span> Loading SDN configuration…</div>';
 
   try {
     const [zonesRes, vnetsRes, ctrlRes, ipamRes, dnsRes] = await Promise.all([
-      pveGet('/api2/json/cluster/sdn/zones').catch(()=>({data:[]})),
-      pveGet('/api2/json/cluster/sdn/vnets').catch(()=>({data:[]})),
-      pveGet('/api2/json/cluster/sdn/controllers').catch(()=>({data:[]})),
-      pveGet('/api2/json/cluster/sdn/ipams').catch(()=>({data:[]})),
-      pveGet('/api2/json/cluster/sdn/dns').catch(()=>({data:[]})),
+      get('/api2/json/cluster/sdn/zones').catch(()=>({data:[]})),
+      get('/api2/json/cluster/sdn/vnets').catch(()=>({data:[]})),
+      get('/api2/json/cluster/sdn/controllers').catch(()=>({data:[]})),
+      get('/api2/json/cluster/sdn/ipams').catch(()=>({data:[]})),
+      get('/api2/json/cluster/sdn/dns').catch(()=>({data:[]})),
     ]);
 
     sdnData.zones       = zonesRes.data || [];
@@ -4721,7 +4875,7 @@ async function loadSDN() {
 
     // Subnets per VNet
     await Promise.all(sdnData.vnets.map(async v => {
-      const d = await pveGet(`/api2/json/cluster/sdn/vnets/${v.vnet}/subnets`).catch(()=>({data:[]}));
+      const d = await get(`/api2/json/cluster/sdn/vnets/${v.vnet}/subnets`).catch(()=>({data:[]}));
       sdnData.subnets[v.vnet] = d.data || [];
     }));
 
@@ -4911,8 +5065,11 @@ function renderSDN(pending) {
 }
 
 async function applySDN() {
+  const conn = getViewConn('sdn-conn');
   try {
-    const res = await pvePut('/api2/json/cluster/sdn');
+    const res = conn
+      ? await (async()=>{ const h=connHeaders(conn,{'Content-Type':'application/x-www-form-urlencoded'}); const r=await fetch(conn.host+'/api2/json/cluster/sdn',{method:'PUT',headers:h,body:''}); if(!r.ok){const t=await r.text();throw new Error(`HTTP ${r.status}: ${t}`);}return r.json(); })()
+      : await pvePut('/api2/json/cluster/sdn');
     const upid = res && res.data;
     if (upid && typeof upid === 'string') tmRegister(upid, PVE.nodes[0]&&PVE.nodes[0].node, 'Apply SDN changes');
     toast('SDN apply task started', 'success');
@@ -5461,6 +5618,7 @@ function removeConn(connId) {
   if (!conn) return;
   const idx = extraConns.indexOf(conn);
   if (idx >= 0) extraConns.splice(idx, 1);
+  populateConnSelectors();
   toast(`Disconnected from "${conn.name||conn.host}"`, 'info');
   renderConnections();
   renderCurrentView();
@@ -5532,6 +5690,7 @@ function openAddConnectionModal() {
       document.getElementById('modal-bg').classList.remove('open');
       btn.onclick=confirmModal; btn.textContent='Confirm'; btn.disabled=false;
       toast(`Connected to "${conn.name}" — ${conn.nodes.length} node(s), ${conn.vms.length} VM(s)`, 'success');
+      populateConnSelectors();
       renderConnections();
       renderCurrentView();
     } catch(e) {
