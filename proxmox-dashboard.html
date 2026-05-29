@@ -304,15 +304,19 @@
     th.sort-asc .sort-icon,th.sort-desc .sort-icon{opacity:1;color:var(--accent);}
     /* ── SIDEBAR COLLAPSE ── */
     #sidebar{transition:width .2s;}
-    .sidebar-collapsed{width:54px!important;}
-    .sidebar-collapsed .sidebar-section{padding:0 5px!important;}
-    .sidebar-collapsed .nav-item{padding:9px!important;gap:0!important;justify-content:center!important;width:auto!important;}
-    .sidebar-collapsed .nav-item>*:not(svg):not(.nav-badge){display:none!important;}
-    .sidebar-collapsed .nav-item svg{flex-shrink:0!important;width:18px!important;height:18px!important;}
+    .sidebar-collapsed{width:56px!important;}
+    .sidebar-collapsed .sidebar-section{padding:0 6px!important;}
+    .sidebar-collapsed .sidebar-section .nav-item{padding:9px 0!important;gap:0!important;justify-content:center!important;overflow:hidden!important;}
+    .sidebar-collapsed .sidebar-section .nav-item svg{flex-shrink:0!important;width:18px!important;height:18px!important;min-width:18px;}
     .sidebar-collapsed .sidebar-label{display:none!important;}
     .sidebar-collapsed #saved-views-nav{display:none!important;}
-    .sidebar-toggle-btn{background:none;border:none;color:var(--muted);cursor:pointer;padding:5px;border-radius:var(--radius);transition:all .15s;display:flex;align-items:center;flex-shrink:0;}
+    .sidebar-collapsed #sidebar-home-area{padding:6px 0!important;justify-content:center!important;}
+    .sidebar-collapsed #sidebar-home-area .nav-item{padding:8px 0!important;gap:0!important;justify-content:center!important;flex:none!important;overflow:hidden!important;width:36px!important;}
+    .sidebar-collapsed #sidebar-home-area .nav-item svg{flex-shrink:0;width:18px!important;height:18px!important;}
+    .sidebar-toggle-btn{background:none;border:none;color:var(--muted);cursor:pointer;padding:5px;border-radius:var(--radius);transition:all .15s;display:flex;align-items:center;justify-content:center;flex-shrink:0;}
     .sidebar-toggle-btn:hover{color:var(--text);background:var(--bg3);}
+    #sidebar-toggle-row{display:flex;justify-content:flex-end;padding:5px 8px;border-bottom:1px solid var(--border);}
+    .sidebar-collapsed #sidebar-toggle-row{justify-content:center;}
     /* ── CARD VIEW ── */
     .vm-card-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:10px;margin-bottom:22px;}
     .vm-card{background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);padding:13px;transition:border-color .15s;cursor:pointer;}
@@ -424,15 +428,18 @@
 
 <div id="app">
   <nav id="sidebar">
-    <!-- Pinned home item — always visible above sections -->
-    <div style="padding:8px 10px 6px;border-bottom:1px solid var(--border);margin-bottom:8px;display:flex;align-items:center;gap:6px">
+    <!-- Collapse toggle — always visible at top -->
+    <div id="sidebar-toggle-row">
+      <button class="sidebar-toggle-btn" onclick="toggleSidebar()" id="sidebar-toggle-btn" title="Collapse sidebar">
+        <svg id="sidebar-toggle-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:16px;height:16px"><polyline points="15 18 9 12 15 6"/></svg>
+      </button>
+    </div>
+    <!-- Pinned home item -->
+    <div id="sidebar-home-area" style="padding:4px 10px 6px;border-bottom:1px solid var(--border);margin-bottom:8px;display:flex;align-items:center">
       <div class="nav-item active" data-view="overview" onclick="switchView('overview')" style="font-size:14px;font-weight:600;flex:1">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
         Overview
       </div>
-      <button class="sidebar-toggle-btn" onclick="toggleSidebar()" id="sidebar-toggle-btn" title="Collapse sidebar">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:15px;height:15px"><polyline points="15 18 9 12 15 6"/></svg>
-      </button>
     </div>
     <div class="sidebar-section" data-section="views">
       <div class="sidebar-label" onclick="toggleSidebarSection(this)">
@@ -1294,24 +1301,23 @@ function _renderVMCards(items) {
 
 // ── SIDEBAR COLLAPSE ──────────────────────────────────
 function toggleSidebar() {
-  const sidebar = document.getElementById('sidebar');
-  const app     = document.getElementById('app');
-  const btn     = document.getElementById('sidebar-toggle-btn');
+  const sidebar   = document.getElementById('sidebar');
+  const app       = document.getElementById('app');
+  const icon      = document.getElementById('sidebar-toggle-icon');
   const collapsed = sidebar.classList.toggle('sidebar-collapsed');
-  app.style.gridTemplateColumns = collapsed ? '54px 1fr' : '230px 1fr';
-  if (btn) btn.innerHTML = collapsed
-    ? `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:15px;height:15px"><polyline points="9 18 15 12 9 6"/></svg>`
-    : `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:15px;height:15px"><polyline points="15 18 9 12 15 6"/></svg>`;
-  localStorage.setItem('sidebar-collapsed', collapsed?'1':'');
+  app.style.gridTemplateColumns = collapsed ? '56px 1fr' : '230px 1fr';
+  // Flip the chevron: left = expanded, right = collapsed
+  if (icon) icon.setAttribute('points', collapsed ? '9 18 15 12 9 6' : '15 18 9 12 15 6');
+  localStorage.setItem('sidebar-collapsed', collapsed ? '1' : '');
 }
 function restoreSidebarCollapse() {
   if (localStorage.getItem('sidebar-collapsed')) {
     const sidebar = document.getElementById('sidebar');
     const app     = document.getElementById('app');
-    const btn     = document.getElementById('sidebar-toggle-btn');
+    const icon    = document.getElementById('sidebar-toggle-icon');
     sidebar.classList.add('sidebar-collapsed');
-    app.style.gridTemplateColumns = '54px 1fr';
-    if (btn) btn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:15px;height:15px"><polyline points="9 18 15 12 9 6"/></svg>`;
+    app.style.gridTemplateColumns = '56px 1fr';
+    if (icon) icon.setAttribute('points', '9 18 15 12 9 6');
   }
 }
 
