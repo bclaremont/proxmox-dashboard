@@ -292,6 +292,42 @@
     .iso-item input[type=radio]{accent-color:var(--accent);flex-shrink:0;width:auto;height:auto;padding:0;margin:0;}
     .iso-name{font-size:13px;font-weight:600;}
     .iso-meta{font-size:11px;color:var(--muted);}
+    /* ── SKELETON LOADING ── */
+    .skeleton{background:linear-gradient(90deg,var(--bg3) 25%,rgba(255,255,255,.06) 50%,var(--bg3) 75%);background-size:400% 100%;animation:shimmer 1.5s ease infinite;border-radius:3px;display:inline-block;width:80%;height:13px;}
+    @keyframes shimmer{0%{background-position:100% 0}100%{background-position:-100% 0}}
+    /* ── STICKY TABLE HEADERS ── */
+    .table-wrap table thead th{position:sticky;top:0;z-index:5;background:var(--bg3);}
+    /* ── SORTABLE COLUMNS ── */
+    th.sortable{cursor:pointer;user-select:none;white-space:nowrap;}
+    th.sortable:hover{color:var(--text);}
+    .sort-icon{margin-left:4px;opacity:.3;font-size:9px;}
+    th.sort-asc .sort-icon,th.sort-desc .sort-icon{opacity:1;color:var(--accent);}
+    /* ── SIDEBAR COLLAPSE ── */
+    #sidebar{transition:width .2s;}
+    .sidebar-collapsed{width:54px!important;}
+    .sidebar-collapsed .sidebar-section{padding:0 5px!important;}
+    .sidebar-collapsed .nav-item{padding:9px!important;gap:0!important;justify-content:center!important;width:auto!important;}
+    .sidebar-collapsed .nav-item>*:not(svg):not(.nav-badge){display:none!important;}
+    .sidebar-collapsed .nav-item svg{flex-shrink:0!important;width:18px!important;height:18px!important;}
+    .sidebar-collapsed .sidebar-label{display:none!important;}
+    .sidebar-collapsed #saved-views-nav{display:none!important;}
+    .sidebar-toggle-btn{background:none;border:none;color:var(--muted);cursor:pointer;padding:5px;border-radius:var(--radius);transition:all .15s;display:flex;align-items:center;flex-shrink:0;}
+    .sidebar-toggle-btn:hover{color:var(--text);background:var(--bg3);}
+    /* ── CARD VIEW ── */
+    .vm-card-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:10px;margin-bottom:22px;}
+    .vm-card{background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);padding:13px;transition:border-color .15s;cursor:pointer;}
+    .vm-card:hover{border-color:rgba(249,115,22,.3);}
+    .vm-card.running{border-top:2px solid var(--green);}
+    .vm-card.stopped{border-top:2px solid var(--red);}
+    .view-toggle{display:flex;gap:2px;background:var(--bg3);padding:2px;border-radius:6px;}
+    .view-toggle-btn{padding:4px 9px;border-radius:4px;border:none;background:none;color:var(--muted);cursor:pointer;font-size:12px;transition:all .15s;font-family:var(--font);}
+    .view-toggle-btn.active{background:var(--bg2);color:var(--text);box-shadow:0 1px 3px rgba(0,0,0,.2);}
+    /* ── KEYBOARD SHORTCUT MODAL ── */
+    .kbd-grid{display:grid;grid-template-columns:1fr 1fr;gap:6px 20px;}
+    .kbd-row{display:flex;align-items:center;justify-content:space-between;padding:4px 0;border-bottom:1px solid var(--border);font-size:13px;}
+    .kbd{display:inline-block;background:var(--bg3);border:1px solid var(--border);border-radius:4px;padding:1px 6px;font-size:10px;color:var(--muted);font-family:var(--font);}
+    /* ── TOPBAR QUICK STATS ── */
+    #topbar-stats{display:none;align-items:center;gap:8px;font-size:12px;padding:4px 10px;background:var(--bg3);border:1px solid var(--border);border-radius:20px;}
 
     /* BATCH 4 */
     .audit-user{color:var(--accent);font-weight:600;}
@@ -366,6 +402,11 @@
     <span id="search-kbd">Ctrl K</span>
     <div id="search-results"></div>
   </div>
+  <div id="topbar-stats">
+    <span id="ts-running" style="color:var(--green);font-weight:600"></span>
+    <span id="ts-alerts" style="color:var(--red);display:none"></span>
+  </div>
+  <button class="btn small" onclick="showKeyboardShortcuts()" title="Keyboard shortcuts (?)">?</button>
   <button class="btn small" onclick="toggleTheme()" title="Toggle light/dark mode">◐</button>
   <button class="btn small" id="notif-btn" onclick="toggleNotifPanel()" title="Notifications" style="position:relative">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:14px;height:14px"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
@@ -384,11 +425,14 @@
 <div id="app">
   <nav id="sidebar">
     <!-- Pinned home item — always visible above sections -->
-    <div style="padding:10px 10px 6px;border-bottom:1px solid var(--border);margin-bottom:8px">
-      <div class="nav-item active" data-view="overview" onclick="switchView('overview')" style="font-size:14px;font-weight:600">
+    <div style="padding:8px 10px 6px;border-bottom:1px solid var(--border);margin-bottom:8px;display:flex;align-items:center;gap:6px">
+      <div class="nav-item active" data-view="overview" onclick="switchView('overview')" style="font-size:14px;font-weight:600;flex:1">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
         Overview
       </div>
+      <button class="sidebar-toggle-btn" onclick="toggleSidebar()" id="sidebar-toggle-btn" title="Collapse sidebar">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:15px;height:15px"><polyline points="15 18 9 12 15 6"/></svg>
+      </button>
     </div>
     <div class="sidebar-section" data-section="views">
       <div class="sidebar-label" onclick="toggleSidebarSection(this)">
@@ -671,16 +715,22 @@
     <div id="view-vms" style="display:none">
       <div class="section-header">
         <span class="section-title">Virtual Machines (QEMU/KVM)</span>
-        <div style="display:flex;gap:6px">
+        <div style="display:flex;gap:6px;align-items:center">
+          <div class="view-toggle">
+            <button class="view-toggle-btn active" id="vms-view-table" onclick="setVMView('table')" title="Table view">≡</button>
+            <button class="view-toggle-btn" id="vms-view-cards" onclick="setVMView('cards')" title="Card view">⊞</button>
+          </div>
           <button class="btn small primary" onclick="openCreateVMModal()">+ Create VM</button>
           <button class="btn small" onclick="refreshAll()">Refresh</button>
         </div>
       </div>
-      <div class="table-wrap">
-        <table>
-          <thead><tr><th>VMID</th><th>Name</th><th>Node</th><th>Status</th><th>CPU</th><th>Memory</th><th>Disk</th><th>Uptime</th><th>Actions</th></tr></thead>
-          <tbody id="vm-table-body"></tbody>
-        </table>
+      <div id="vms-content">
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th class="sortable" onclick="sortVMTable('vmid')">ID<span class="sort-icon">↕</span></th><th class="sortable" onclick="sortVMTable('name')">Name<span class="sort-icon">↕</span></th><th class="sortable" onclick="sortVMTable('node')">Node<span class="sort-icon">↕</span></th><th class="sortable" onclick="sortVMTable('status')">Status<span class="sort-icon">↕</span></th><th class="sortable" onclick="sortVMTable('cpu')">CPU<span class="sort-icon">↕</span></th><th class="sortable" onclick="sortVMTable('mem')">Memory<span class="sort-icon">↕</span></th><th>Disk</th><th class="sortable" onclick="sortVMTable('uptime')">Uptime<span class="sort-icon">↕</span></th><th>Actions</th></tr></thead>
+            <tbody id="vm-table-body"></tbody>
+          </table>
+        </div>
       </div>
     </div>
 
@@ -688,17 +738,23 @@
     <div id="view-containers" style="display:none">
       <div class="section-header">
         <span class="section-title">LXC Containers</span>
-        <div style="display:flex;gap:6px">
+        <div style="display:flex;gap:6px;align-items:center">
+          <div class="view-toggle">
+            <button class="view-toggle-btn active" id="cts-view-table" onclick="setCTView('table')" title="Table view">≡</button>
+            <button class="view-toggle-btn" id="cts-view-cards" onclick="setCTView('cards')" title="Card view">⊞</button>
+          </div>
           <button class="btn small primary" onclick="openCreateCTWizard()">+ Create CT</button>
           <button class="btn small success" onclick="openDownloadTemplatesModal()">↓ Download Templates</button>
           <button class="btn small" onclick="refreshAll()">Refresh</button>
         </div>
       </div>
-      <div class="table-wrap">
-        <table>
-          <thead><tr><th>CTID</th><th>Name</th><th>Node</th><th>Status</th><th>CPU</th><th>Memory</th><th>Disk</th><th>Uptime</th><th>Actions</th></tr></thead>
-          <tbody id="ct-table-body"></tbody>
-        </table>
+      <div id="cts-content">
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th class="sortable" onclick="sortCTTable('vmid')">ID<span class="sort-icon">↕</span></th><th class="sortable" onclick="sortCTTable('name')">Name<span class="sort-icon">↕</span></th><th class="sortable" onclick="sortCTTable('node')">Node<span class="sort-icon">↕</span></th><th class="sortable" onclick="sortCTTable('status')">Status<span class="sort-icon">↕</span></th><th class="sortable" onclick="sortCTTable('cpu')">CPU<span class="sort-icon">↕</span></th><th class="sortable" onclick="sortCTTable('mem')">Memory<span class="sort-icon">↕</span></th><th>Disk</th><th class="sortable" onclick="sortCTTable('uptime')">Uptime<span class="sort-icon">↕</span></th><th>Actions</th></tr></thead>
+            <tbody id="ct-table-body"></tbody>
+          </table>
+        </div>
       </div>
     </div>
 
@@ -1125,6 +1181,243 @@ let detailCharts = {};
 let currentDetail = null;
 let rawSyslog = [];
 
+// ════════════════════════════════════════════════════════
+// UI ENHANCEMENTS
+// ════════════════════════════════════════════════════════
+
+// ── SKELETON LOADING ──────────────────────────────────
+function skeletonRows(cols=8, count=5) {
+  const cell = `<td><div class="skeleton"></div></td>`;
+  return Array(count).fill(`<tr>${Array(cols).fill(cell).join('')}</tr>`).join('');
+}
+
+// ── SORTABLE TABLES ───────────────────────────────────
+let vmSort  = { col:'name', dir:1 };
+let ctSort  = { col:'name', dir:1 };
+let allSort = { col:'name', dir:1 };
+
+function _sortItems(items, col, dir) {
+  return [...items].sort((a,b) => {
+    let va, vb;
+    switch(col) {
+      case 'vmid':   va=+a.vmid||0;           vb=+b.vmid||0; break;
+      case 'name':   va=(a.name||String(a.vmid||''));   vb=(b.name||String(b.vmid||'')); break;
+      case 'node':   va=a.node||'';            vb=b.node||''; break;
+      case 'status': va=a.status||'';          vb=b.status||''; break;
+      case 'cpu':    va=a.cpu||0;              vb=b.cpu||0; break;
+      case 'mem':    va=a.mem&&a.maxmem?a.mem/a.maxmem:0; vb=b.mem&&b.maxmem?b.mem/b.maxmem:0; break;
+      case 'uptime': va=a.uptime||0;           vb=b.uptime||0; break;
+      default:       va=a[col]||'';            vb=b[col]||'';
+    }
+    if (typeof va==='string') return va.localeCompare(vb)*dir;
+    return (va-vb)*dir;
+  });
+}
+
+function _updateSortIcons(tableSelector, col, dir) {
+  document.querySelectorAll(`${tableSelector} th.sortable`).forEach(th => {
+    th.classList.remove('sort-asc','sort-desc');
+    const icon = th.querySelector('.sort-icon');
+    if (icon) icon.textContent = '↕';
+  });
+  // Find the th with the matching onclick col
+  const ths = document.querySelectorAll(`${tableSelector} th.sortable`);
+  ths.forEach(th => {
+    const fn = th.getAttribute('onclick')||'';
+    if (fn.includes(`'${col}'`)) {
+      th.classList.add(dir===1?'sort-asc':'sort-desc');
+      const icon = th.querySelector('.sort-icon');
+      if (icon) icon.textContent = dir===1?'▲':'▼';
+    }
+  });
+}
+
+function sortVMTable(col) {
+  if (vmSort.col===col) vmSort.dir*=-1; else { vmSort.col=col; vmSort.dir=1; }
+  renderVMTable();
+}
+function sortCTTable(col) {
+  if (ctSort.col===col) ctSort.dir*=-1; else { ctSort.col=col; ctSort.dir=1; }
+  renderCTTable();
+}
+
+// ── CARD VIEW ─────────────────────────────────────────
+let vmViewMode = localStorage.getItem('pve-vm-view')||'table';
+let ctViewMode = localStorage.getItem('pve-ct-view')||'table';
+
+function setVMView(mode) {
+  vmViewMode = mode;
+  localStorage.setItem('pve-vm-view', mode);
+  document.getElementById('vms-view-table')?.classList.toggle('active', mode==='table');
+  document.getElementById('vms-view-cards')?.classList.toggle('active', mode==='cards');
+  renderVMTable();
+}
+function setCTView(mode) {
+  ctViewMode = mode;
+  localStorage.setItem('pve-ct-view', mode);
+  document.getElementById('cts-view-table')?.classList.toggle('active', mode==='table');
+  document.getElementById('cts-view-cards')?.classList.toggle('active', mode==='cards');
+  renderCTTable();
+}
+
+function _renderVMCards(items) {
+  if (!items.length) return '<div class="empty">No VMs found</div>';
+  return `<div class="vm-card-grid">${items.map(x => {
+    const cpuPct = x.cpu?(x.cpu*100).toFixed(1):0;
+    const memPct = x.mem&&x.maxmem?((x.mem/x.maxmem)*100).toFixed(0):0;
+    const running = x.status==='running';
+    const cid = x.connId||'';
+    const since = x.uptime ? new Date(Date.now()-x.uptime*1000).toLocaleString() : '';
+    return `<div class="vm-card ${running?'running':'stopped'}" onclick="openDetail(${JSON.stringify(x).replace(/"/g,'&quot;')})">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+        <div>
+          <div style="font-weight:700;font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:130px">${escHtml(x.name||String(x.vmid))}</div>
+          <div style="font-size:11px;color:var(--muted)">${x.type.toUpperCase()} ${x.vmid} · ${x.node}${cid?` · ${escHtml(getConnName(cid))}`:''}</div>
+        </div>
+        ${statusBadge(x.status)}
+      </div>
+      <div style="font-size:11px;color:var(--muted);margin-bottom:2px">CPU ${cpuPct}%</div>
+      <div class="gauge-bar" style="margin-bottom:7px"><div class="gauge-fill ${gaugeClass(+cpuPct)}" style="width:${Math.min(+cpuPct,100)}%"></div></div>
+      <div style="font-size:11px;color:var(--muted);margin-bottom:2px">RAM ${memPct}%</div>
+      <div class="gauge-bar" style="margin-bottom:9px"><div class="gauge-fill ${gaugeClass(+memPct)}" style="width:${Math.min(+memPct,100)}%"></div></div>
+      <div class="actions-row" onclick="event.stopPropagation()">
+        ${running
+          ? `<button class="btn small warning" onclick="confirmAction('${x.node}','${x.vmid}','${x.type}','shutdown','${cid}')" title="Shutdown">⏻</button>
+             <button class="btn small danger" onclick="confirmAction('${x.node}','${x.vmid}','${x.type}','stop','${cid}')" title="Force stop">■</button>`
+          : `<button class="btn small success" onclick="vmAction('${x.node}','${x.vmid}','${x.type}','start','${cid}')" title="Start">▶</button>`}
+        ${running?`<button class="btn small" onclick="openConsole('${x.node}','${x.vmid}','${x.type}')" title="Console">⌨</button>`:''}
+      </div>
+      ${since?`<div style="font-size:10px;color:var(--muted);margin-top:5px" title="Running since ${since}">⬆ ${fmtUptime(x.uptime)}</div>`:''}
+    </div>`;
+  }).join('')}</div>`;
+}
+
+// ── SIDEBAR COLLAPSE ──────────────────────────────────
+function toggleSidebar() {
+  const sidebar = document.getElementById('sidebar');
+  const app     = document.getElementById('app');
+  const btn     = document.getElementById('sidebar-toggle-btn');
+  const collapsed = sidebar.classList.toggle('sidebar-collapsed');
+  app.style.gridTemplateColumns = collapsed ? '54px 1fr' : '230px 1fr';
+  if (btn) btn.innerHTML = collapsed
+    ? `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:15px;height:15px"><polyline points="9 18 15 12 9 6"/></svg>`
+    : `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:15px;height:15px"><polyline points="15 18 9 12 15 6"/></svg>`;
+  localStorage.setItem('sidebar-collapsed', collapsed?'1':'');
+}
+function restoreSidebarCollapse() {
+  if (localStorage.getItem('sidebar-collapsed')) {
+    const sidebar = document.getElementById('sidebar');
+    const app     = document.getElementById('app');
+    const btn     = document.getElementById('sidebar-toggle-btn');
+    sidebar.classList.add('sidebar-collapsed');
+    app.style.gridTemplateColumns = '54px 1fr';
+    if (btn) btn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:15px;height:15px"><polyline points="9 18 15 12 9 6"/></svg>`;
+  }
+}
+
+// ── QUICK STATS TOPBAR ────────────────────────────────
+function updateTopbarStats() {
+  const all     = allVMs().concat(allCTs());
+  const running = all.filter(x=>x.status==='running').length;
+  const alertCount = typeof notifications!=='undefined'
+    ? notifications.filter(n=>!n.read&&(n.severity==='error'||n.severity==='warning')).length : 0;
+  const el = document.getElementById('topbar-stats');
+  if (!el) return;
+  el.style.display = 'flex';
+  const runEl = document.getElementById('ts-running');
+  if (runEl) runEl.textContent = `● ${running} running`;
+  const altEl = document.getElementById('ts-alerts');
+  if (altEl) { altEl.textContent = `⚠ ${alertCount}`; altEl.style.display = alertCount?'':'none'; }
+  updateFaviconBadge(alertCount);
+}
+
+// ── FAVICON BADGE ─────────────────────────────────────
+function updateFaviconBadge(count) {
+  try {
+    const c = document.createElement('canvas');
+    c.width = 32; c.height = 32;
+    const ctx = c.getContext('2d');
+    ctx.fillStyle = '#f97316';
+    if (ctx.roundRect) ctx.roundRect(2,2,28,28,6); else ctx.rect(2,2,28,28);
+    ctx.fill();
+    ctx.fillStyle = '#fff';
+    ctx.font = 'bold 20px Arial';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('P', 16, 17);
+    if (count > 0) {
+      ctx.fillStyle = '#f85149';
+      ctx.beginPath(); ctx.arc(26,7,7,0,Math.PI*2); ctx.fill();
+      ctx.fillStyle = '#fff';
+      ctx.font = 'bold 8px Arial';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(count>9?'9+':String(count), 26, 7);
+    }
+    let link = document.querySelector('link[rel~="icon"]');
+    if (!link) { link = document.createElement('link'); link.rel='icon'; document.head.appendChild(link); }
+    link.href = c.toDataURL();
+  } catch(e) {}
+}
+
+// ── KEYBOARD SHORTCUTS ────────────────────────────────
+const KB_SHORTCUTS = [
+  {key:'Ctrl K',   desc:'Focus search'},
+  {key:'Esc',      desc:'Dismiss / close'},
+  {key:'?',        desc:'Show this help'},
+  {key:'G → O',   desc:'Go to Overview'},
+  {key:'G → V',   desc:'Go to VMs'},
+  {key:'G → C',   desc:'Go to Containers'},
+  {key:'G → N',   desc:'Go to Nodes'},
+  {key:'G → S',   desc:'Go to Storage'},
+  {key:'G → T',   desc:'Go to Tasks'},
+  {key:'G → A',   desc:'Go to Audit Log'},
+  {key:'G → H',   desc:'Go to Heatmap'},
+  {key:'G → F',   desc:'Go to Firewall'},
+  {key:'G → U',   desc:'Go to Updates'},
+  {key:'G → B',   desc:'Go to Backups'},
+];
+let _kbPending = false, _kbTimer = null;
+
+document.addEventListener('keydown', e => {
+  const tag = (e.target.tagName||'').toUpperCase();
+  const inInput = tag==='INPUT'||tag==='TEXTAREA'||tag==='SELECT';
+  if (inInput && e.key!=='Escape') return;
+
+  if (e.key==='?' && !inInput) { showKeyboardShortcuts(); return; }
+
+  if ((e.key==='g'||e.key==='G') && !inInput) {
+    _kbPending = true;
+    clearTimeout(_kbTimer);
+    _kbTimer = setTimeout(()=>_kbPending=false, 1500);
+    return;
+  }
+  if (_kbPending && !inInput) {
+    _kbPending = false; clearTimeout(_kbTimer);
+    const map = {v:'vms',c:'containers',o:'overview',n:'nodes',s:'storage',t:'tasks',a:'audit',h:'heatmap',f:'firewall',u:'updates',b:'backups'};
+    const dest = map[e.key.toLowerCase()];
+    if (dest && PVE.host) switchView(dest);
+    return;
+  }
+  if (e.key==='Escape') { hideSearch(); closeNotifPanel(); closeModal(); }
+});
+
+function showKeyboardShortcuts() {
+  document.getElementById('modal-title').textContent = 'Keyboard Shortcuts';
+  const half = Math.ceil(KB_SHORTCUTS.length/2);
+  const col1 = KB_SHORTCUTS.slice(0,half);
+  const col2 = KB_SHORTCUTS.slice(half);
+  document.getElementById('modal-body').innerHTML = `
+    <div class="kbd-grid">
+      <div>${col1.map(s=>`<div class="kbd-row"><span style="color:var(--muted)">${s.desc}</span><span class="kbd">${s.key}</span></div>`).join('')}</div>
+      <div>${col2.map(s=>`<div class="kbd-row"><span style="color:var(--muted)">${s.desc}</span><span class="kbd">${s.key}</span></div>`).join('')}</div>
+    </div>`;
+  const btn = document.getElementById('modal-confirm-btn');
+  btn.style.display = 'none';
+  document.querySelector('#modal .btn:not(.primary)').textContent = 'Close';
+  document.getElementById('modal-bg').classList.add('open');
+}
+
 // ── AUTH ──────────────────────────────────────────────────
 
 function toggleAuthMethod() {
@@ -1169,6 +1462,12 @@ async function connect() {
     tmStart();
     renderSavedViewsSidebar();
     restoreSidebarSections();
+    restoreSidebarCollapse();
+    // Restore card view toggle buttons
+    document.getElementById('vms-view-table')?.classList.toggle('active', vmViewMode==='table');
+    document.getElementById('vms-view-cards')?.classList.toggle('active', vmViewMode==='cards');
+    document.getElementById('cts-view-table')?.classList.toggle('active', ctViewMode==='table');
+    document.getElementById('cts-view-cards')?.classList.toggle('active', ctViewMode==='cards');
     loadStoredNotifs();
     updateNotifBadge();
     switchView('overview');
@@ -1370,6 +1669,7 @@ async function refreshAll() {
     renderCurrentView();
     renderSidebarNodes();
     checkAndFireAlerts();
+    updateTopbarStats();
     document.getElementById('last-refresh').textContent='Updated '+new Date().toLocaleTimeString();
   } catch(e) {
     toast('Refresh failed: '+e.message,'error');
@@ -2235,17 +2535,29 @@ function renderAllTable() { _renderAllTableBody(); }
 function filterAll(){ _renderAllTableBody(); }
 
 function renderVMTable(){
-  const vms=allVMs();
-  document.getElementById('vm-table-body').innerHTML=vms.length
-    ?vms.map(v=>vmRow(v)).join('')
-    :`<tr><td colspan="9" class="empty">No VMs found</td></tr>`;
+  const sorted = _sortItems(allVMs(), vmSort.col, vmSort.dir);
+  _updateSortIcons('#vms-content table', vmSort.col, vmSort.dir);
+  if (vmViewMode==='cards') {
+    const c = document.getElementById('vms-content');
+    if (c) c.innerHTML = _renderVMCards(sorted);
+    return;
+  }
+  document.getElementById('vm-table-body').innerHTML = sorted.length
+    ? sorted.map(v=>vmRow(v)).join('')
+    : `<tr><td colspan="9" class="empty">No VMs found</td></tr>`;
 }
 
 function renderCTTable(){
-  const cts=allCTs();
-  document.getElementById('ct-table-body').innerHTML=cts.length
-    ?cts.map(c=>vmRow(c)).join('')
-    :`<tr><td colspan="9" class="empty">No containers found</td></tr>`;
+  const sorted = _sortItems(allCTs(), ctSort.col, ctSort.dir);
+  _updateSortIcons('#cts-content table', ctSort.col, ctSort.dir);
+  if (ctViewMode==='cards') {
+    const c = document.getElementById('cts-content');
+    if (c) c.innerHTML = _renderVMCards(sorted);
+    return;
+  }
+  document.getElementById('ct-table-body').innerHTML = sorted.length
+    ? sorted.map(c=>vmRow(c)).join('')
+    : `<tr><td colspan="9" class="empty">No containers found</td></tr>`;
 }
 
 function vmRow(x,showType=false){
@@ -2278,7 +2590,7 @@ function vmRow(x,showType=false){
       <div style="font-size:11px;color:var(--muted)">${memStr}</div>
     </td>
     <td style="font-size:12px;color:var(--muted)">${diskStr}</td>
-    <td style="font-size:12px;color:var(--muted)">${uptime}</td>
+    <td style="font-size:12px;color:var(--muted)">${x.uptime?`<span title="Running since ${new Date(Date.now()-x.uptime*1000).toLocaleString()}">${uptime}</span>`:uptime}</td>
     <td onclick="event.stopPropagation()">
       <div class="actions-row">
         ${running
@@ -2603,10 +2915,8 @@ function confirmModal(){
 function closeModal(e){
   if(e&&e.target!==document.getElementById('modal-bg'))return;
   document.getElementById('modal-bg').classList.remove('open');
-  // Always restore the confirm button so stale handlers from one modal
-  // (e.g. "Connect", "Create VNet") don't bleed into the next modal
   const btn = document.getElementById('modal-confirm-btn');
-  if(btn){btn.onclick=confirmModal;btn.textContent='Confirm';btn.disabled=false;}
+  if(btn){btn.onclick=confirmModal;btn.textContent='Confirm';btn.disabled=false;btn.style.display='';}
   modalCallback=null;
 }
 
