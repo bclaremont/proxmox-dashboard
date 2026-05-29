@@ -373,6 +373,13 @@
 
 <div id="app">
   <nav id="sidebar">
+    <!-- Pinned home item — always visible above sections -->
+    <div style="padding:10px 10px 6px;border-bottom:1px solid var(--border);margin-bottom:8px">
+      <div class="nav-item active" data-view="overview" onclick="switchView('overview')" style="font-size:14px;font-weight:600">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+        Overview
+      </div>
+    </div>
     <div class="sidebar-section" data-section="views">
       <div class="sidebar-label" onclick="toggleSidebarSection(this)"><span>Views</span><span class="sidebar-chevron">▾</span></div>
       <div class="nav-item" data-view="connections" onclick="switchView('connections')">
@@ -383,10 +390,6 @@
       <div class="nav-item" data-view="worldmap" onclick="switchView('worldmap')">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
         World Map
-      </div>
-      <div class="nav-item active" data-view="overview" onclick="switchView('overview')">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
-        Overview
       </div>
       <div class="nav-item" data-view="vms" onclick="switchView('vms')">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
@@ -639,24 +642,7 @@
 
     <!-- OVERVIEW -->
     <div id="view-overview" style="display:none">
-      <div class="stats-grid" id="overview-stats"></div>
-      <div class="section-header">
-        <span class="section-title">All VMs &amp; Containers</span>
-        <div style="display:flex;gap:6px;align-items:center">
-          <input id="search-all" type="text" placeholder="Search…" style="width:150px;padding:5px 10px;font-size:13px" oninput="filterAll()" />
-          <select id="filter-status" style="width:110px;padding:5px 8px;font-size:13px" onchange="filterAll()">
-            <option value="">All</option>
-            <option value="running">Running</option>
-            <option value="stopped">Stopped</option>
-          </select>
-        </div>
-      </div>
-      <div class="table-wrap">
-        <table>
-          <thead><tr><th>ID</th><th>Name</th><th>Type</th><th>Node</th><th>Status</th><th>CPU</th><th>Memory</th><th>Uptime</th><th>Actions</th></tr></thead>
-          <tbody id="all-table-body"></tbody>
-        </table>
-      </div>
+      <div id="overview-content"></div>
     </div>
 
     <!-- VMs -->
@@ -2031,38 +2017,195 @@ function renderCurrentView() {
   else if(currentView==='savedview') renderSavedView();
 }
 
-function renderOverview() {
-  const all=allVMs().concat(allCTs());
-  const running=all.filter(x=>x.status==='running').length;
-  const stopped=all.filter(x=>x.status==='stopped').length;
-  const totalNodes=allNodes().length;
-  const errTasks=PVE.tasks.filter(t=>t.status&&t.status!=='OK'&&t.status!=='running'&&t.status!=='').length;
-  const connCount = 1 + extraConns.filter(c=>c.status==='connected').length;
-  document.getElementById('overview-stats').innerHTML=`
-    <div class="stat-card accent-green"><div class="label">Running</div><div class="value">${running}</div><div class="sub">${stopped} stopped</div></div>
-    <div class="stat-card accent-blue"><div class="label">VMs</div><div class="value">${allVMs().length}</div><div class="sub">QEMU/KVM</div></div>
-    <div class="stat-card accent-purple"><div class="label">Containers</div><div class="value">${allCTs().length}</div><div class="sub">LXC</div></div>
-    <div class="stat-card accent-orange"><div class="label">Nodes</div><div class="value">${totalNodes}</div><div class="sub">${connCount} cluster${connCount!==1?'s':''}/host${connCount!==1?'s':''}</div></div>
-    <div class="stat-card accent-yellow"><div class="label">Task Errors</div><div class="value" style="color:${errTasks>0?'var(--red)':'var(--green)'}">${errTasks}</div><div class="sub">recent</div></div>
-    <div class="stat-card"><div class="label">Storage</div><div class="value" style="color:var(--teal)">${PVE.storage.length}</div><div class="sub">pools (primary)</div></div>`;
-  renderAllTable();
+function _timeAgo(ts) {
+  const d = Date.now() - ts;
+  if (d < 60000)     return 'just now';
+  if (d < 3600000)   return Math.floor(d/60000)+'m ago';
+  if (d < 86400000)  return Math.floor(d/3600000)+'h ago';
+  return Math.floor(d/86400000)+'d ago';
 }
 
-function renderAllTable() {
-  const all=allVMs().concat(allCTs());
-  const q=(document.getElementById('search-all').value||'').toLowerCase();
-  const sf=(document.getElementById('filter-status').value||'');
-  const filtered=all.filter(x=>{
-    const match=!q||(x.name||'').toLowerCase().includes(q)||String(x.vmid).includes(q);
-    const statMatch=!sf||x.status===sf;
+function renderOverview() {
+  const el = document.getElementById('overview-content');
+  if (!el) return;
+
+  const all      = allVMs().concat(allCTs());
+  const running  = all.filter(x=>x.status==='running').length;
+  const stopped  = all.filter(x=>x.status==='stopped').length;
+  const nodes    = allNodes();
+  const errTasks = PVE.tasks.filter(t=>t.status&&t.status!=='OK'&&t.status!=='running'&&t.status!=='').length;
+  const connCount= 1 + extraConns.filter(c=>c.status==='connected').length;
+
+  // ── Aggregate resource stats ──────────────────────────────
+  const liveNodes = PVE.nodeStatuses.filter(n=>n.statusData&&Object.keys(n.statusData).length);
+  const avgCpu   = liveNodes.length
+    ? (liveNodes.reduce((a,n)=>a+(n.statusData.cpu||0),0) / liveNodes.length * 100) : 0;
+  const totMemUsed  = liveNodes.reduce((a,n)=>a+(n.statusData.memory?.used||0),0);
+  const totMemTotal = liveNodes.reduce((a,n)=>a+(n.statusData.memory?.total||0),0);
+  const memPct   = totMemTotal>0 ? (totMemUsed/totMemTotal*100) : 0;
+  const storUsed = PVE.storage.reduce((a,s)=>a+(s.used||0),0);
+  const storTot  = PVE.storage.reduce((a,s)=>a+(s.total||0),0);
+  const storPct  = storTot>0 ? (storUsed/storTot*100) : 0;
+
+  // ── Recent tasks (last 6) ─────────────────────────────────
+  const recentTasks = PVE.tasks.slice(0,6);
+
+  // ── Active alerts from notification store ─────────────────
+  const alerts = (typeof notifications!=='undefined'
+    ? notifications.filter(n=>n.severity==='error'||n.severity==='warning').slice(0,5)
+    : []);
+
+  // ── Big gauge card ────────────────────────────────────────
+  const gaugeCard = (label, pct, sub, accent) => {
+    const p = Math.min(pct,100).toFixed(0);
+    const col = pct>90?'var(--red)':pct>75?'var(--yellow)':accent;
+    const cls = gaugeClass(pct);
+    return `<div class="stat-card" style="text-align:center">
+      <div class="label">${label}</div>
+      <div style="font-size:40px;font-weight:700;color:${col};line-height:1;margin:8px 0">${p}<span style="font-size:20px">%</span></div>
+      <div class="gauge-bar" style="height:8px;border-radius:4px;margin:0 0 8px"><div class="gauge-fill ${cls}" style="width:${p}%;height:100%"></div></div>
+      <div class="sub">${sub}</div>
+    </div>`;
+  };
+
+  // ── Node health cards ─────────────────────────────────────
+  const nodeCards = nodes.map(n => {
+    const s       = n.statusData||{};
+    const online  = n.status==='online'||(s&&Object.keys(s).length>0);
+    const cpu     = s.cpu?(s.cpu*100).toFixed(0):(n.cpu?(n.cpu*100).toFixed(0):'—');
+    const mem     = s.memory?((s.memory.used/s.memory.total)*100).toFixed(0):'—';
+    const bc      = online ? 'var(--green)' : 'var(--red)';
+    const connLabel = n.connId ? `<span style="font-size:10px;color:var(--blue)">${escHtml(getConnName(n.connId))}</span>` : '';
+    return `<div style="background:var(--bg2);border:1px solid var(--border);border-top:2px solid ${bc};border-radius:var(--radius);padding:10px 12px;cursor:pointer" onclick="switchView('nodes')">
+      <div style="display:flex;align-items:center;gap:7px;margin-bottom:8px">
+        <span style="width:7px;height:7px;border-radius:50%;background:${bc};flex-shrink:0"></span>
+        <strong style="font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1">${escHtml(n.node)}</strong>
+        ${connLabel}
+      </div>
+      <div style="font-size:11px;color:var(--muted)">CPU&nbsp;${cpu}%</div>
+      <div class="gauge-bar" style="margin:3px 0 7px"><div class="gauge-fill ${gaugeClass(+cpu||0)}" style="width:${Math.min(+cpu||0,100)}%"></div></div>
+      <div style="font-size:11px;color:var(--muted)">RAM&nbsp;${mem}%</div>
+      <div class="gauge-bar" style="margin:3px 0 5px"><div class="gauge-fill ${gaugeClass(+mem||0)}" style="width:${Math.min(+mem||0,100)}%"></div></div>
+      ${s.uptime?`<div style="font-size:10px;color:var(--muted);margin-top:4px">⬆ ${fmtUptime(s.uptime)}</div>`:''}
+    </div>`;
+  }).join('');
+
+  // ── Assemble ──────────────────────────────────────────────
+  el.innerHTML = `
+    <!-- Stats row -->
+    <div class="stats-grid" style="margin-bottom:20px">
+      <div class="stat-card accent-green"><div class="label">Running</div><div class="value">${running}</div><div class="sub">${stopped} stopped</div></div>
+      <div class="stat-card accent-blue"><div class="label">VMs</div><div class="value">${allVMs().length}</div><div class="sub">QEMU/KVM</div></div>
+      <div class="stat-card accent-purple"><div class="label">Containers</div><div class="value">${allCTs().length}</div><div class="sub">LXC</div></div>
+      <div class="stat-card accent-orange"><div class="label">Nodes</div><div class="value">${nodes.length}</div><div class="sub">${connCount} cluster${connCount!==1?'s':''}/host${connCount!==1?'s':''}</div></div>
+      <div class="stat-card accent-yellow"><div class="label">Task Errors</div><div class="value" style="color:${errTasks>0?'var(--red)':'var(--green)'}">${errTasks}</div><div class="sub">recent</div></div>
+      <div class="stat-card"><div class="label">Storage Pools</div><div class="value" style="color:var(--teal)">${PVE.storage.length}</div><div class="sub">primary cluster</div></div>
+    </div>
+
+    <!-- Aggregate resource gauges -->
+    <div class="section-header" style="margin-bottom:10px"><span class="section-title">Cluster Resources (Primary)</span></div>
+    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:22px">
+      ${gaugeCard('Average CPU', avgCpu, `${liveNodes.length} node(s) reporting`, 'var(--accent)')}
+      ${gaugeCard('Total Memory', memPct, `${fmtBytes(totMemUsed)} / ${fmtBytes(totMemTotal)}`, 'var(--blue)')}
+      ${gaugeCard('Total Storage', storPct, `${fmtBytes(storUsed)} / ${fmtBytes(storTot)}`, 'var(--purple)')}
+    </div>
+
+    <!-- Node health bar -->
+    ${nodes.length ? `
+    <div class="section-header" style="margin-bottom:10px">
+      <span class="section-title">Node Health</span>
+      <button class="btn small" onclick="switchView('nodes')">All Nodes →</button>
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(155px,1fr));gap:8px;margin-bottom:22px">
+      ${nodeCards}
+    </div>` : ''}
+
+    <!-- Recent tasks + Alerts (two columns) -->
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:22px">
+      <div>
+        <div class="section-header" style="margin-bottom:10px">
+          <span class="section-title">Recent Tasks</span>
+          <button class="btn small" onclick="switchView('tasks')">All Tasks →</button>
+        </div>
+        <div class="table-wrap" style="margin:0">
+          <table>
+            <thead><tr><th>Action</th><th>Node</th><th>Status</th><th>When</th></tr></thead>
+            <tbody>${recentTasks.length ? recentTasks.map(t=>{
+              const st=t.status||'running';
+              const isOk=st==='OK', isRun=!t.status||st==='running';
+              const badge=isOk?'<span class="badge ok" style="font-size:9px"><span class="badge-dot"></span>OK</span>'
+                :isRun?'<span class="badge warning" style="font-size:9px"><span class="badge-dot"></span>running</span>'
+                :`<span class="badge stopped" style="font-size:9px"><span class="badge-dot"></span>error</span>`;
+              const when=t.starttime?_timeAgo(t.starttime*1000):'—';
+              const actionMap={qmstart:'Start VM',qmstop:'Stop VM',qmshutdown:'Shutdown',qmreboot:'Reboot',qmmigrate:'Migrate',qmclone:'Clone',qmcreate:'Create VM',qmdestroy:'Delete VM',vzdump:'Backup',vzrestore:'Restore',vzcreate:'Create CT',vzstart:'Start CT',vzstop:'Stop CT'};
+              return `<tr>
+                <td style="font-size:12px">${escHtml(actionMap[t.type]||t.type||'—')}</td>
+                <td style="font-size:11px;color:var(--muted)">${escHtml(t.node||'—')}</td>
+                <td>${badge}</td>
+                <td style="font-size:11px;color:var(--muted)">${when}</td>
+              </tr>`;
+            }).join('') : '<tr><td colspan="4" class="empty">No recent tasks</td></tr>'}</tbody>
+          </table>
+        </div>
+      </div>
+
+      <div>
+        <div class="section-header" style="margin-bottom:10px">
+          <span class="section-title">Active Alerts</span>
+          <button class="btn small" onclick="toggleNotifPanel()">All →</button>
+        </div>
+        <div style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;min-height:60px">
+          ${alerts.length ? alerts.map(a=>`
+            <div style="padding:9px 12px;border-bottom:1px solid var(--border);display:flex;gap:9px;align-items:flex-start">
+              <span style="color:${a.severity==='error'?'var(--red)':'var(--yellow)'};font-size:13px;flex-shrink:0;margin-top:1px">${a.severity==='error'?'✗':'⚠'}</span>
+              <div style="flex:1;min-width:0">
+                <div style="font-size:13px;font-weight:600">${escHtml(a.title)}</div>
+                <div style="font-size:11px;color:var(--muted)">${escHtml(a.message)} · ${_timeAgo(a.timestamp)}</div>
+              </div>
+            </div>`).join('')
+          : '<div class="empty" style="padding:18px;color:var(--green)">✓ No active alerts</div>'}
+        </div>
+      </div>
+    </div>
+
+    <!-- All VMs & CTs -->
+    <div class="section-header" style="margin-bottom:10px">
+      <span class="section-title">All VMs &amp; Containers</span>
+      <div style="display:flex;gap:6px;align-items:center">
+        <input id="search-all" type="text" placeholder="Search…" style="width:150px;padding:5px 10px;font-size:13px" oninput="filterAll()"/>
+        <select id="filter-status" style="width:110px;padding:5px 8px;font-size:13px" onchange="filterAll()">
+          <option value="">All</option><option value="running">Running</option><option value="stopped">Stopped</option>
+        </select>
+      </div>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>ID</th><th>Name</th><th>Type</th><th>Node</th><th>Status</th><th>CPU</th><th>Memory</th><th>Uptime</th><th>Actions</th></tr></thead>
+        <tbody id="all-table-body"></tbody>
+      </table>
+    </div>`;
+
+  // Populate VM/CT table
+  _renderAllTableBody();
+}
+
+function _renderAllTableBody() {
+  const all  = allVMs().concat(allCTs());
+  const q    = (document.getElementById('search-all')?.value||'').toLowerCase();
+  const sf   = document.getElementById('filter-status')?.value||'';
+  const filtered = all.filter(x=>{
+    const match    = !q||(x.name||'').toLowerCase().includes(q)||String(x.vmid).includes(q);
+    const statMatch= !sf||x.status===sf;
     return match&&statMatch;
   });
-  document.getElementById('all-table-body').innerHTML=filtered.length
-    ?filtered.map(row=>vmRow(row,true)).join('')
-    :`<tr><td colspan="9" class="empty">No VMs or Containers found</td></tr>`;
+  const tbody = document.getElementById('all-table-body');
+  if (tbody) tbody.innerHTML = filtered.length
+    ? filtered.map(row=>vmRow(row,true)).join('')
+    : `<tr><td colspan="9" class="empty">No VMs or Containers found</td></tr>`;
 }
 
-function filterAll(){renderAllTable();}
+function renderAllTable() { _renderAllTableBody(); }
+function filterAll(){ _renderAllTableBody(); }
 
 function renderVMTable(){
   const vms=allVMs();
