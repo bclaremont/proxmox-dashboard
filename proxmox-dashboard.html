@@ -1103,18 +1103,24 @@
     <button class="btn small" onclick="closeDetail()" style="margin-left:8px">✕ Close</button>
   </div>
   <div id="detail-body">
-    <div class="dtabs" id="detail-tabs">
+    <div class="dtabs" id="detail-tabs" style="flex-wrap:wrap">
       <div class="dtab active" data-tab="overview" onclick="switchDetailTab('overview')">Overview</div>
+      <div class="dtab" data-tab="hardware" onclick="switchDetailTab('hardware')">Hardware</div>
+      <div class="dtab" data-tab="options" onclick="switchDetailTab('options')">Options</div>
       <div class="dtab" data-tab="config" onclick="switchDetailTab('config')">Config</div>
       <div class="dtab" data-tab="graphs" onclick="switchDetailTab('graphs')">Graphs</div>
       <div class="dtab" data-tab="snapshots" onclick="switchDetailTab('snapshots')">Snapshots</div>
+      <div class="dtab" data-tab="backup" onclick="switchDetailTab('backup')">Backup</div>
       <div class="dtab" data-tab="tasks" onclick="switchDetailTab('tasks')">Tasks</div>
       <div class="dtab" data-tab="vmfw" onclick="switchDetailTab('vmfw')">Firewall</div>
     </div>
     <div class="dtab-content active" id="dtab-overview"></div>
+    <div class="dtab-content" id="dtab-hardware"></div>
+    <div class="dtab-content" id="dtab-options"></div>
     <div class="dtab-content" id="dtab-config"></div>
     <div class="dtab-content" id="dtab-graphs"></div>
     <div class="dtab-content" id="dtab-snapshots"></div>
+    <div class="dtab-content" id="dtab-backup"></div>
     <div class="dtab-content" id="dtab-tasks"></div>
     <div class="dtab-content" id="dtab-vmfw"></div>
   </div>
@@ -1841,9 +1847,10 @@ async function openNodeDetail(nodeData) {
   const online = nodeData.status==='online'||(nodeData.statusData&&Object.keys(nodeData.statusData).length>0);
   document.getElementById('detail-status').innerHTML = statusBadge(online?'online':'offline');
   document.getElementById('detail-actions').innerHTML = '';
-  // Hide tasks tab for nodes (use cluster tasks view instead)
+  // Hide VM-only tabs when viewing a node
   document.querySelectorAll('.dtab').forEach(t=>{
-    if(t.dataset.tab==='tasks'||t.dataset.tab==='snapshots'||t.dataset.tab==='vmfw') t.style.display='none';
+    const vmOnly=['tasks','snapshots','vmfw','hardware','options','backup'];
+    if(vmOnly.includes(t.dataset.tab)) t.style.display='none';
   });
   switchDetailTab('overview');
   loadNodeDetailOverview(nodeData);
@@ -1856,6 +1863,18 @@ function closeDetail() {
   currentDetail = null;
   // Re-show tasks tab
   document.querySelectorAll('.dtab').forEach(t=>t.style.display='');
+}
+
+async function detailPut(path, data={}) {
+  const conn = resolveConn(currentDetail && currentDetail.connId);
+  if (conn) {
+    const h=connHeaders(conn,{'Content-Type':'application/x-www-form-urlencoded'});
+    const body=Object.entries(data).filter(([,v])=>v!=null).map(([k,v])=>`${encodeURIComponent(k)}=${encodeURIComponent(v)}`).join('&');
+    const r=await fetch(conn.host+path,{method:'PUT',headers:h,body});
+    if(!r.ok){const t=await r.text();throw new Error(`HTTP ${r.status}: ${t}`);}
+    return r.json();
+  }
+  return pvePut(path, data);
 }
 
 function switchDetailTab(tab) {
@@ -1874,6 +1893,12 @@ function switchDetailTab(tab) {
     loadDetailTasks(currentDetail);
   } else if (tab==='vmfw' && !currentDetail._isNode) {
     loadDetailVMFirewall(currentDetail);
+  } else if (tab==='hardware' && !currentDetail._isNode) {
+    loadDetailHardware(currentDetail);
+  } else if (tab==='options' && !currentDetail._isNode) {
+    loadDetailOptions(currentDetail);
+  } else if (tab==='backup' && !currentDetail._isNode) {
+    loadDetailBackup(currentDetail);
   }
 }
 
@@ -6478,6 +6503,620 @@ function openFWOptionsModal() {
       toast('Firewall options saved', 'success');
       setTimeout(loadFirewall, 800);
     } catch(e) { toast('Save failed: '+e.message,'error'); }
+  };
+  document.getElementById('modal-bg').classList.add('open');
+}
+
+// ── VM HARDWARE TAB ───────────────────────────────────────
+// Parses qemu config to show disks, network, CPU, memory with management actions
+// PUT /nodes/{n}/qemu/{vmid}/config       — update config
+// PUT /nodes/{n}/qemu/{vmid}/resize       — resize disk
+// Official: https://pve.proxmox.com/pve-docs/api-viewer/#/nodes/{node}/qemu/{vmid}
+
+function _parseVMHardware(cfg) {
+  const disks=[], nics=[], cdroms=[];
+  const diskIfaces=['scsi','virtio','ide','sata'];
+  const diskMax={scsi:30,virtio:15,ide:3,sata:5};
+  diskIfaces.forEach(iface=>{
+    for(let i=0;i<=diskMax[iface];i++){
+      const key=`${iface}${i}`, val=cfg[key];
+      if(!val) continue;
+      if(val.includes('media=cdrom')||val.includes('none')){
+        cdroms.push({key,val});
+      } else {
+        const size=val.match(/size=(\w+)/)?.[1]||'—';
+        const storage=val.split(':')[0]||'—';
+        const discard=val.includes('discard=on');
+        const ssd=val.includes('ssd=1');
+        const backup=!val.includes('backup=0');
+        disks.push({key,val,size,storage,iface,index:i,discard,ssd,backup});
+      }
+    }
+  });
+  for(let i=0;i<=31;i++){
+    const key=`net${i}`, val=cfg[key];
+    if(!val) continue;
+    const parts=val.split(',');
+    const modelPart=parts[0]||'';
+    const model=modelPart.includes('=')?modelPart.split('=')[0]:modelPart;
+    const mac=modelPart.includes('=')?modelPart.split('=')[1]:'—';
+    const bridge=val.match(/bridge=([^,]+)/)?.[1]||'—';
+    const vlan=val.match(/tag=(\d+)/)?.[1]||'—';
+    const fw=val.includes('firewall=1');
+    nics.push({key,val,model,mac,bridge,vlan,fw,index:i});
+  }
+  return {disks,nics,cdroms};
+}
+
+async function loadDetailHardware(item) {
+  const el = document.getElementById('dtab-hardware');
+  el.innerHTML = '<div class="empty"><span class="loading"></span> Loading hardware…</div>';
+  const running = item.status==='running';
+  const ep = item.type==='vm'?'qemu':'lxc';
+  try {
+    const cfg = await loadConfig(item.node, item.type, item.vmid, detailGet);
+    const hw  = _parseVMHardware(cfg);
+    const path= `/api2/json/nodes/${item.node}/${ep}/${item.vmid}`;
+
+    el.innerHTML = `
+      <!-- CPU & Memory -->
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px">
+        <div style="background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius);padding:12px">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+            <strong style="font-size:13px">CPU</strong>
+            <button class="btn small" onclick="openEditVMCPUModal()">✎ Edit</button>
+          </div>
+          <div style="font-size:12px;color:var(--muted);line-height:1.8">
+            Cores: <strong style="color:var(--text)">${cfg.cores||1} × ${cfg.sockets||1} socket(s)</strong><br>
+            Type: <strong style="color:var(--text)">${cfg.cpu||'kvm64'}</strong><br>
+            Total vCPUs: <strong style="color:var(--text)">${(cfg.cores||1)*(cfg.sockets||1)}</strong>
+            ${cfg.vcpus?`<br>Hotplug max: <strong style="color:var(--text)">${cfg.vcpus}</strong>`:''}
+          </div>
+        </div>
+        <div style="background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius);padding:12px">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+            <strong style="font-size:13px">Memory</strong>
+            <button class="btn small" onclick="openEditVMMemModal()">✎ Edit</button>
+          </div>
+          <div style="font-size:12px;color:var(--muted);line-height:1.8">
+            RAM: <strong style="color:var(--text)">${cfg.memory||512} MiB</strong><br>
+            Ballooning: <strong style="color:var(--text)">${cfg.balloon!==undefined?cfg.balloon+' MiB min':'Disabled'}</strong>
+          </div>
+        </div>
+      </div>
+
+      <!-- Disks -->
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+        <span class="section-title" style="font-size:11px">Hard Disks (${hw.disks.length})</span>
+        <button class="btn small primary" onclick="openAddDiskModal()">+ Add Disk</button>
+      </div>
+      ${hw.disks.length?`
+      <div class="table-wrap" style="margin-bottom:14px"><table>
+        <thead><tr><th>Interface</th><th>Storage</th><th>Size</th><th>Options</th><th>Actions</th></tr></thead>
+        <tbody>${hw.disks.map(d=>`<tr>
+          <td><strong>${d.key}</strong></td>
+          <td style="color:var(--muted)">${escHtml(d.storage)}</td>
+          <td><strong>${escHtml(d.size)}</strong></td>
+          <td style="font-size:11px;color:var(--muted)">${[d.discard?'discard':'',d.ssd?'SSD':'',d.backup?'':'no-backup'].filter(Boolean).join(', ')||'—'}</td>
+          <td onclick="event.stopPropagation()"><div class="actions-row">
+            <button class="btn small" onclick="openResizeDiskModal('${d.key}','${escHtml(d.size)}')">⤢ Resize</button>
+            <button class="btn small danger" onclick="confirmDetachDisk('${d.key}')" ${running?'title="Stop VM first for safe removal"':''}>Detach</button>
+          </div></td>
+        </tr>`).join('')}</tbody>
+      </table></div>`:'<div class="empty" style="margin-bottom:14px">No disks</div>'}
+
+      <!-- CD/DVD -->
+      ${hw.cdroms.length?`
+      <div class="section-title" style="font-size:11px;margin-bottom:6px">CD/DVD Drives (${hw.cdroms.length})</div>
+      <div class="table-wrap" style="margin-bottom:14px"><table>
+        <thead><tr><th>Drive</th><th>Media</th><th>Actions</th></tr></thead>
+        <tbody>${hw.cdroms.map(c=>`<tr>
+          <td><strong>${c.key}</strong></td>
+          <td style="font-size:12px;color:var(--muted)">${escHtml(c.val.split(',')[0])}</td>
+          <td onclick="event.stopPropagation()">
+            <button class="btn small" onclick="openChangeISOModal('${c.key}')">⏏ Change ISO</button>
+            <button class="btn small warning" onclick="ejectISO('${c.key}')">Eject</button>
+          </td>
+        </tr>`).join('')}</tbody>
+      </table></div>`:''}
+
+      <!-- Network -->
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+        <span class="section-title" style="font-size:11px">Network Adapters (${hw.nics.length})</span>
+        <button class="btn small primary" onclick="openAddNICModal()">+ Add NIC</button>
+      </div>
+      ${hw.nics.length?`
+      <div class="table-wrap"><table>
+        <thead><tr><th>Interface</th><th>Model</th><th>Bridge</th><th>VLAN</th><th>MAC</th><th>Firewall</th><th>Actions</th></tr></thead>
+        <tbody>${hw.nics.map(n=>`<tr>
+          <td><strong>${n.key}</strong></td>
+          <td><span class="type-chip vm">${escHtml(n.model)}</span></td>
+          <td style="color:var(--muted)">${escHtml(n.bridge)}</td>
+          <td style="color:var(--muted)">${n.vlan!=='—'?n.vlan:'—'}</td>
+          <td style="font-family:monospace;font-size:11px;color:var(--muted)">${escHtml(n.mac)}</td>
+          <td>${n.fw?'<span class="badge ok" style="font-size:9px">on</span>':'<span style="font-size:11px;color:var(--muted)">off</span>'}</td>
+          <td onclick="event.stopPropagation()"><div class="actions-row">
+            <button class="btn small" onclick="openEditNICModal('${n.key}','${escHtml(n.val)}')">✎</button>
+            <button class="btn small danger" onclick="confirmRemoveNIC('${n.key}')">Remove</button>
+          </div></td>
+        </tr>`).join('')}</tbody>
+      </table></div>`:'<div class="empty">No network adapters</div>'}
+
+      ${running?`<div style="margin-top:12px;padding:8px 12px;background:rgba(210,153,34,.1);border:1px solid rgba(210,153,34,.3);border-radius:var(--radius);font-size:12px;color:var(--yellow)">⚠ Some hardware changes require the VM to be stopped to take effect.</div>`:''}`;
+  } catch(e) {
+    el.innerHTML = `<div class="empty">Failed to load hardware: ${e.message}</div>`;
+  }
+}
+
+// Hardware action modals
+function openEditVMCPUModal() {
+  const item=currentDetail; if(!item) return;
+  const ep=item.type==='vm'?'qemu':'lxc';
+  loadConfig(item.node,item.type,item.vmid,detailGet).then(cfg=>{
+    document.getElementById('modal-title').textContent='Edit CPU';
+    document.getElementById('modal-body').innerHTML=`
+      <div class="create-vm-grid">
+        <div class="form-group"><label>CORES PER SOCKET</label><input id="hc-cores" type="number" value="${cfg.cores||1}" min="1" max="128"/></div>
+        <div class="form-group"><label>SOCKETS</label><input id="hc-sockets" type="number" value="${cfg.sockets||1}" min="1" max="4"/></div>
+      </div>
+      <div class="form-group"><label>CPU TYPE</label>
+        <select id="hc-cpu">
+          ${['kvm64','x86-64-v2-AES','host','max','qemu64','kvm32'].map(t=>`<option value="${t}"${(cfg.cpu||'kvm64')===t?' selected':''}>${t}</option>`).join('')}
+        </select>
+      </div>`;
+    modalCallback=async()=>{
+      const params={cores:parseInt(document.getElementById('hc-cores')?.value||'1'),sockets:parseInt(document.getElementById('hc-sockets')?.value||'1'),cpu:document.getElementById('hc-cpu')?.value};
+      try{await detailPut(`/api2/json/nodes/${item.node}/${ep}/${item.vmid}/config`,params);toast('CPU updated','success');setTimeout(()=>loadDetailHardware(item),800);}catch(e){toast('Update failed: '+e.message,'error');}
+    };
+    document.getElementById('modal-bg').classList.add('open');
+  }).catch(e=>toast('Load failed: '+e.message,'error'));
+}
+
+function openEditVMMemModal() {
+  const item=currentDetail; if(!item) return;
+  const ep=item.type==='vm'?'qemu':'lxc';
+  loadConfig(item.node,item.type,item.vmid,detailGet).then(cfg=>{
+    document.getElementById('modal-title').textContent='Edit Memory';
+    document.getElementById('modal-body').innerHTML=`
+      <div class="form-group"><label>MEMORY (MiB)</label>
+        <input id="hm-mem" type="number" value="${cfg.memory||512}" min="16"/>
+        <div style="margin-top:5px;display:flex;gap:5px;flex-wrap:wrap">
+          ${[512,1024,2048,4096,8192,16384].map(v=>`<button type="button" class="btn small" onclick="document.getElementById('hm-mem').value=${v}">${v<1024?v+'M':(v/1024)+'G'}</button>`).join('')}
+        </div>
+      </div>
+      <div class="form-group"><label>BALLOON MINIMUM (MiB, 0 = disable)</label><input id="hm-balloon" type="number" value="${cfg.balloon||0}" min="0"/></div>`;
+    modalCallback=async()=>{
+      const params={memory:parseInt(document.getElementById('hm-mem')?.value||'512')};
+      const bal=parseInt(document.getElementById('hm-balloon')?.value||'0');
+      if(bal>=0)params.balloon=bal;
+      try{await detailPut(`/api2/json/nodes/${item.node}/${ep}/${item.vmid}/config`,params);toast('Memory updated','success');setTimeout(()=>loadDetailHardware(item),800);}catch(e){toast('Update failed: '+e.message,'error');}
+    };
+    document.getElementById('modal-bg').classList.add('open');
+  }).catch(e=>toast('Load failed: '+e.message,'error'));
+}
+
+function openResizeDiskModal(diskKey, currentSize) {
+  const item=currentDetail; if(!item) return;
+  document.getElementById('modal-title').textContent=`Resize Disk — ${diskKey}`;
+  document.getElementById('modal-body').innerHTML=`
+    <p style="color:var(--muted);font-size:13px;margin-bottom:12px">Current size: <strong>${escHtml(currentSize)}</strong>. Disks can only be <strong>grown</strong>, not shrunk.</p>
+    <div class="form-group"><label>SIZE INCREMENT (e.g. +10G, +5G, +1T)</label>
+      <input id="rd-size" placeholder="+10G" value="+10G"/>
+    </div>`;
+  modalCallback=async()=>{
+    const size=(document.getElementById('rd-size')?.value||'').trim();
+    if(!size||!size.startsWith('+'))return toast('Size must start with + (e.g. +10G)','error');
+    const ep=item.type==='vm'?'qemu':'lxc';
+    try{await detailPut(`/api2/json/nodes/${item.node}/${ep}/${item.vmid}/resize`,{disk:diskKey,size});toast(`${diskKey} resized`,'success');setTimeout(()=>loadDetailHardware(item),800);}catch(e){toast('Resize failed: '+e.message,'error');}
+  };
+  document.getElementById('modal-bg').classList.add('open');
+}
+
+function confirmDetachDisk(diskKey) {
+  const item=currentDetail; if(!item) return;
+  document.getElementById('modal-title').textContent=`Detach Disk — ${diskKey}`;
+  document.getElementById('modal-body').innerHTML=`
+    <p style="color:var(--muted)">Detach disk <strong style="color:var(--red)">${escHtml(diskKey)}</strong>?</p>
+    <p style="color:var(--yellow);font-size:12px;margin-top:8px">⚠ The disk is detached but NOT deleted. It moves to unused<N> in the config.</p>`;
+  modalCallback=async()=>{
+    const ep=item.type==='vm'?'qemu':'lxc';
+    try{await detailPut(`/api2/json/nodes/${item.node}/${ep}/${item.vmid}/config`,{delete:diskKey});toast(`${diskKey} detached`,'success');setTimeout(()=>loadDetailHardware(item),800);}catch(e){toast('Detach failed: '+e.message,'error');}
+  };
+  document.getElementById('modal-bg').classList.add('open');
+}
+
+function openAddDiskModal() {
+  const item=currentDetail; if(!item) return;
+  const storOpts=(PVE.storage.filter(s=>s.node===item.node&&((s.content||'').includes('images')||(s.content||'').includes('rootdir')))||PVE.storage).map(s=>`<option value="${s.storage}">${s.storage} [${s.type||'?'}]${s.avail?' ('+fmtBytes(s.avail)+' free)':''}</option>`).join('');
+  document.getElementById('modal-title').textContent='Add Hard Disk';
+  document.getElementById('modal-body').innerHTML=`
+    <div class="create-vm-grid">
+      <div class="form-group"><label>BUS/DEVICE</label>
+        <select id="ad-bus">
+          <option value="scsi">SCSI (recommended)</option>
+          <option value="virtio">VirtIO Block</option>
+          <option value="sata">SATA</option>
+          <option value="ide">IDE</option>
+        </select>
+      </div>
+      <div class="form-group"><label>STORAGE POOL</label><select id="ad-stor">${storOpts}</select></div>
+    </div>
+    <div class="form-group"><label>DISK SIZE (GB)</label>
+      <input id="ad-size" type="number" value="32" min="1"/>
+      <div style="margin-top:5px;display:flex;gap:5px">
+        ${[8,16,32,64,100].map(v=>`<button type="button" class="btn small" onclick="document.getElementById('ad-size').value=${v}">${v}G</button>`).join('')}
+      </div>
+    </div>
+    <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;margin-top:8px">
+      <input type="checkbox" id="ad-discard" checked style="width:auto;height:auto;padding:0;margin:0"> Enable discard / TRIM
+    </label>`;
+  modalCallback=async()=>{
+    const bus=document.getElementById('ad-bus')?.value||'scsi';
+    const stor=document.getElementById('ad-stor')?.value;
+    const size=document.getElementById('ad-size')?.value||'32';
+    const discard=document.getElementById('ad-discard')?.checked;
+    const ep=item.type==='vm'?'qemu':'lxc';
+    // Find next free slot
+    const cfg=await loadConfig(item.node,item.type,item.vmid,detailGet);
+    let idx=0; while(cfg[`${bus}${idx}`]) idx++;
+    const diskKey=`${bus}${idx}`;
+    let diskVal=`${stor}:${size}`;if(discard)diskVal+=',discard=on';
+    try{await detailPut(`/api2/json/nodes/${item.node}/${ep}/${item.vmid}/config`,{[diskKey]:diskVal});toast(`Disk ${diskKey} added`,'success');setTimeout(()=>loadDetailHardware(item),800);}catch(e){toast('Add failed: '+e.message,'error');}
+  };
+  document.getElementById('modal-bg').classList.add('open');
+}
+
+function openAddNICModal() {
+  const item=currentDetail; if(!item) return;
+  const netNodes=(PVE.nodeStatuses||[]).concat(extraConns.flatMap(c=>c.nodeStatuses||[]));
+  document.getElementById('modal-title').textContent='Add Network Adapter';
+  document.getElementById('modal-body').innerHTML=`
+    <div class="create-vm-grid">
+      <div class="form-group"><label>MODEL</label>
+        <select id="an-model">
+          <option value="virtio">VirtIO (recommended)</option>
+          <option value="e1000">Intel E1000</option>
+          <option value="vmxnet3">VMware vmxnet3</option>
+          <option value="rtl8139">Realtek 8139</option>
+        </select>
+      </div>
+      <div class="form-group"><label>BRIDGE</label><input id="an-bridge" value="vmbr0" placeholder="vmbr0"/></div>
+    </div>
+    <div class="create-vm-grid">
+      <div class="form-group"><label>VLAN TAG (optional)</label><input id="an-vlan" type="number" placeholder="untagged"/></div>
+      <div class="form-group" style="display:flex;align-items:center;padding-top:22px">
+        <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer">
+          <input type="checkbox" id="an-fw" checked style="width:auto;height:auto;padding:0;margin:0"> Enable firewall
+        </label>
+      </div>
+    </div>`;
+  modalCallback=async()=>{
+    const model=document.getElementById('an-model')?.value||'virtio';
+    const bridge=document.getElementById('an-bridge')?.value||'vmbr0';
+    const vlan=document.getElementById('an-vlan')?.value;
+    const fw=document.getElementById('an-fw')?.checked;
+    const ep=item.type==='vm'?'qemu':'lxc';
+    const cfg=await loadConfig(item.node,item.type,item.vmid,detailGet);
+    let idx=0; while(cfg[`net${idx}`]) idx++;
+    let val=`${model},bridge=${bridge}`;if(vlan)val+=`,tag=${vlan}`;if(fw)val+=',firewall=1';
+    try{await detailPut(`/api2/json/nodes/${item.node}/${ep}/${item.vmid}/config`,{[`net${idx}`]:val});toast(`NIC net${idx} added`,'success');setTimeout(()=>loadDetailHardware(item),800);}catch(e){toast('Add failed: '+e.message,'error');}
+  };
+  document.getElementById('modal-bg').classList.add('open');
+}
+
+function openEditNICModal(nicKey, currentVal) {
+  const item=currentDetail; if(!item) return;
+  const bridge=currentVal.match(/bridge=([^,]+)/)?.[1]||'vmbr0';
+  const vlan=currentVal.match(/tag=(\d+)/)?.[1]||'';
+  const fw=currentVal.includes('firewall=1');
+  document.getElementById('modal-title').textContent=`Edit NIC — ${nicKey}`;
+  document.getElementById('modal-body').innerHTML=`
+    <div class="create-vm-grid">
+      <div class="form-group"><label>BRIDGE</label><input id="en-bridge" value="${escHtml(bridge)}"/></div>
+      <div class="form-group"><label>VLAN TAG</label><input id="en-vlan" type="number" value="${vlan}" placeholder="untagged"/></div>
+    </div>
+    <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;margin-top:8px">
+      <input type="checkbox" id="en-fw"${fw?' checked':''} style="width:auto;height:auto;padding:0;margin:0"> Enable firewall
+    </label>`;
+  modalCallback=async()=>{
+    const bridge2=document.getElementById('en-bridge')?.value||'vmbr0';
+    const vlan2=document.getElementById('en-vlan')?.value;
+    const fw2=document.getElementById('en-fw')?.checked;
+    // Keep existing model/MAC but update bridge/vlan/firewall
+    const modelPart=currentVal.split(',')[0];
+    let newVal=`${modelPart},bridge=${bridge2}`;if(vlan2)newVal+=`,tag=${vlan2}`;if(fw2)newVal+=',firewall=1';
+    const ep=item.type==='vm'?'qemu':'lxc';
+    try{await detailPut(`/api2/json/nodes/${item.node}/${ep}/${item.vmid}/config`,{[nicKey]:newVal});toast(`${nicKey} updated`,'success');setTimeout(()=>loadDetailHardware(item),800);}catch(e){toast('Update failed: '+e.message,'error');}
+  };
+  document.getElementById('modal-bg').classList.add('open');
+}
+
+function confirmRemoveNIC(nicKey) {
+  const item=currentDetail; if(!item) return;
+  document.getElementById('modal-title').textContent=`Remove NIC — ${nicKey}`;
+  document.getElementById('modal-body').innerHTML=`<p style="color:var(--muted)">Remove network adapter <strong style="color:var(--red)">${escHtml(nicKey)}</strong>?</p>`;
+  modalCallback=async()=>{
+    const ep=item.type==='vm'?'qemu':'lxc';
+    try{await detailPut(`/api2/json/nodes/${item.node}/${ep}/${item.vmid}/config`,{delete:nicKey});toast(`${nicKey} removed`,'success');setTimeout(()=>loadDetailHardware(item),800);}catch(e){toast('Remove failed: '+e.message,'error');}
+  };
+  document.getElementById('modal-bg').classList.add('open');
+}
+
+async function openChangeISOModal(driveKey) {
+  const item=currentDetail; if(!item) return;
+  // Get ISO list from storage
+  const isoOpts=['<option value="">— No media (eject) —</option>'];
+  try {
+    const storList=PVE.storage.filter(s=>s.node===item.node&&(s.content||'').includes('iso'));
+    for(const s of storList){
+      const d=await detailGet(`/api2/json/nodes/${item.node}/storage/${s.storage}/content`).catch(()=>({data:[]}));
+      (d.data||[]).filter(i=>i.content==='iso').forEach(i=>{
+        const name=(i.volid||'').split('/').pop();
+        isoOpts.push(`<option value="${escHtml(i.volid)}">${escHtml(name)} (${s.storage})</option>`);
+      });
+    }
+  } catch(e){}
+  document.getElementById('modal-title').textContent=`Change ISO — ${driveKey}`;
+  document.getElementById('modal-body').innerHTML=`
+    <div class="form-group"><label>ISO IMAGE</label><select id="ci-iso">${isoOpts.join('')}</select></div>`;
+  modalCallback=async()=>{
+    const iso=document.getElementById('ci-iso')?.value;
+    const ep=item.type==='vm'?'qemu':'lxc';
+    const val=iso?`${iso},media=cdrom`:'none,media=cdrom';
+    try{await detailPut(`/api2/json/nodes/${item.node}/${ep}/${item.vmid}/config`,{[driveKey]:val});toast(`${driveKey} updated`,'success');setTimeout(()=>loadDetailHardware(item),800);}catch(e){toast('Update failed: '+e.message,'error');}
+  };
+  document.getElementById('modal-bg').classList.add('open');
+}
+
+async function ejectISO(driveKey) {
+  const item=currentDetail; if(!item) return;
+  const ep=item.type==='vm'?'qemu':'lxc';
+  try{await detailPut(`/api2/json/nodes/${item.node}/${ep}/${item.vmid}/config`,{[driveKey]:'none,media=cdrom'});toast(`ISO ejected from ${driveKey}`,'success');setTimeout(()=>loadDetailHardware(item),800);}catch(e){toast('Eject failed: '+e.message,'error');}
+}
+
+// ── VM OPTIONS TAB ─────────────────────────────────────────
+// Shows and edits VM options: boot, protection, ACPI, keyboard, display, agent
+
+const VM_KEYBOARD_LAYOUTS=['de','de-ch','en-gb','en-us','es','fr','fr-be','fr-ch','hu','is','it','ja','lt','mk','nl','no','pl','pt','pt-br','sl','sv','tr'];
+const VM_VGA_TYPES=['std','cirrus','vmware','qxl','serial0','serial1','serial2','serial3','virtio','virtio-gl','qxl2','qxl3','qxl4','none'];
+
+async function loadDetailOptions(item) {
+  const el = document.getElementById('dtab-options');
+  el.innerHTML = '<div class="empty"><span class="loading"></span> Loading options…</div>';
+  const ep = item.type==='vm'?'qemu':'lxc';
+  try {
+    const cfg = await loadConfig(item.node, item.type, item.vmid, detailGet);
+    const path= `/api2/json/nodes/${item.node}/${ep}/${item.vmid}/config`;
+
+    // Parse boot order
+    const bootStr = cfg.boot||'';
+    const bootOrder = bootStr.replace('order=','').split(';').filter(Boolean);
+
+    const keyOpts=VM_KEYBOARD_LAYOUTS.map(k=>`<option value="${k}"${(cfg.keyboard||'en-us')===k?' selected':''}>${k}</option>`).join('');
+    const vgaOpts=VM_VGA_TYPES.map(v=>`<option value="${v}"${(cfg.vga||'std')===v?' selected':''}>${v}</option>`).join('');
+
+    el.innerHTML=`
+      <form id="vm-options-form" onsubmit="event.preventDefault();saveVMOptions()">
+        <div class="section-title" style="font-size:11px;margin-bottom:10px">General</div>
+        <div class="create-vm-grid">
+          <div class="form-group"><label>DESCRIPTION / NOTES</label>
+            <textarea id="vo-desc" rows="3" style="width:100%;background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius);color:var(--text);padding:8px;font-family:var(--font);font-size:12px">${escHtml(cfg.description||cfg.notes||'')}</textarea>
+          </div>
+          <div>
+            <div class="form-group">
+              <label><input type="checkbox" id="vo-onboot"${cfg.onboot?' checked':''} style="width:auto;height:auto;padding:0;margin-right:8px"> Start at Boot</label>
+            </div>
+            <div class="form-group">
+              <label><input type="checkbox" id="vo-protect"${cfg.protection?' checked':''} style="width:auto;height:auto;padding:0;margin-right:8px"> Protection (prevent deletion)</label>
+            </div>
+            <div class="form-group">
+              <label><input type="checkbox" id="vo-acpi"${cfg.acpi!==0?' checked':''} style="width:auto;height:auto;padding:0;margin-right:8px"> ACPI</label>
+            </div>
+            <div class="form-group">
+              <label><input type="checkbox" id="vo-kvm"${cfg.kvm!==0?' checked':''} style="width:auto;height:auto;padding:0;margin-right:8px"> KVM Hardware Virtualisation</label>
+            </div>
+          </div>
+        </div>
+
+        <div class="section-title" style="font-size:11px;margin:12px 0 8px">Boot Order</div>
+        <div style="background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius);padding:10px 12px;font-size:12px;margin-bottom:12px">
+          <div style="color:var(--muted);margin-bottom:6px">Current order: <strong style="color:var(--text)">${bootOrder.length?bootOrder.join(' → '):'default'}</strong></div>
+          <input id="vo-boot" value="${escHtml(bootStr)}" placeholder="order=scsi0;net0" style="width:100%"/>
+          <div style="font-size:11px;color:var(--muted);margin-top:4px">Format: <code>order=scsi0;net0;ide2</code></div>
+        </div>
+
+        ${item.type==='vm'?`
+        <div class="section-title" style="font-size:11px;margin-bottom:8px">Display &amp; Input</div>
+        <div class="create-vm-grid">
+          <div class="form-group"><label>VGA / DISPLAY</label><select id="vo-vga">${vgaOpts}</select></div>
+          <div class="form-group"><label>KEYBOARD LAYOUT</label><select id="vo-keyboard">${keyOpts}</select></div>
+        </div>
+        <div class="create-vm-grid">
+          <div class="form-group">
+            <label><input type="checkbox" id="vo-tablet"${cfg.tablet!==0?' checked':''} style="width:auto;height:auto;padding:0;margin-right:8px"> USB Tablet (improved mouse)</label>
+          </div>
+          <div class="form-group">
+            <label><input type="checkbox" id="vo-agent"${cfg.agent&&cfg.agent!=='0'?' checked':''} style="width:auto;height:auto;padding:0;margin-right:8px"> QEMU Guest Agent</label>
+          </div>
+        </div>
+        <div class="create-vm-grid" style="margin-top:4px">
+          <div class="form-group">
+            <label><input type="checkbox" id="vo-localtime"${cfg.localtime?' checked':''} style="width:auto;height:auto;padding:0;margin-right:8px"> Use local time (Windows)</label>
+          </div>
+          <div class="form-group">
+            <label><input type="checkbox" id="vo-freeze"${cfg.freeze?' checked':''} style="width:auto;height:auto;padding:0;margin-right:8px"> Freeze CPU at start</label>
+          </div>
+        </div>`:''}
+
+        <div style="margin-top:16px">
+          <button type="submit" class="btn primary">💾 Save Options</button>
+        </div>
+      </form>`;
+  } catch(e) {
+    el.innerHTML = `<div class="empty">Failed to load options: ${e.message}</div>`;
+  }
+}
+
+async function saveVMOptions() {
+  const item=currentDetail; if(!item) return;
+  const ep=item.type==='vm'?'qemu':'lxc';
+  const g=id=>{const el=document.getElementById(id);if(!el)return null;return el.type==='checkbox'?el.checked:(el.value.trim()||null);};
+  const params={};
+  params.onboot=g('vo-onboot')?1:0;
+  params.protection=g('vo-protect')?1:0;
+  params.acpi=g('vo-acpi')?1:0;
+  if(item.type==='vm'){
+    params.kvm=g('vo-kvm')?1:0;
+    const boot=g('vo-boot');if(boot)params.boot=boot;
+    params.tablet=g('vo-tablet')?1:0;
+    const vga=g('vo-vga');if(vga)params.vga=vga;
+    const kb=g('vo-keyboard');if(kb)params.keyboard=kb;
+    params.agent=g('vo-agent')?1:0;
+    params.localtime=g('vo-localtime')?1:0;
+    params.freeze=g('vo-freeze')?1:0;
+  }
+  const desc=g('vo-desc');if(desc!==null)params.description=desc;
+  try{
+    await detailPut(`/api2/json/nodes/${item.node}/${ep}/${item.vmid}/config`,params);
+    toast('Options saved','success');
+  }catch(e){toast('Save failed: '+e.message,'error');}
+}
+
+// ── VM BACKUP TAB ──────────────────────────────────────────
+// Lists existing backups for this VM + create backup
+// GET  /nodes/{n}/storage/{stor}/content?content=backup&vmid={id}
+// POST /nodes/{n}/vzdump   — create backup (returns UPID)
+
+async function loadDetailBackup(item) {
+  const el = document.getElementById('dtab-backup');
+  el.innerHTML = '<div class="empty"><span class="loading"></span> Loading backups…</div>';
+  try {
+    const backups = [];
+    // Search all backup-capable storage for backups of this VM
+    const conn  = resolveConn(item.connId);
+    const nodes = conn ? (conn.nodes||[]) : PVE.nodes;
+    const storList = conn ? (conn.storage||[]) : PVE.storage;
+    const backupStores = storList.filter(s=>(s.content||'').includes('backup'));
+
+    await Promise.all(backupStores.map(async s=>{
+      const d=await detailGet(`/api2/json/nodes/${s.node}/storage/${s.storage}/content?content=backup&vmid=${item.vmid}`).catch(()=>({data:[]}));
+      (d.data||[]).forEach(b=>backups.push({...b,storage:s.storage,node:s.node}));
+    }));
+    backups.sort((a,b)=>(b.ctime||0)-(a.ctime||0));
+
+    el.innerHTML=`
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
+        <div>
+          <strong style="font-size:14px">${backups.length} backup${backups.length!==1?'s':''}</strong>
+          <span style="color:var(--muted);font-size:12px;margin-left:8px">for ${item.type.toUpperCase()} ${item.vmid}</span>
+        </div>
+        <button class="btn small primary" onclick="openCreateBackupModal()">+ Create Backup</button>
+      </div>
+      ${backups.length?`
+      <div class="table-wrap"><table>
+        <thead><tr><th>Date</th><th>Storage</th><th>Node</th><th>Format</th><th>Size</th><th>Notes</th><th>Actions</th></tr></thead>
+        <tbody>${backups.map(b=>`<tr>
+          <td style="font-size:12px">${b.ctime?new Date(b.ctime*1000).toLocaleString():'—'}</td>
+          <td style="color:var(--muted)">${escHtml(b.storage)}</td>
+          <td style="color:var(--muted);font-size:12px">${escHtml(b.node||'—')}</td>
+          <td style="font-size:12px;color:var(--muted)">${escHtml(b.format||'—')}</td>
+          <td style="font-size:12px;color:var(--muted)">${fmtBytes(b.size||0)}</td>
+          <td style="font-size:11px;color:var(--muted)">${escHtml(b.notes||'—')}</td>
+          <td onclick="event.stopPropagation()"><div class="actions-row">
+            <button class="btn small success" onclick="confirmRestoreBackup('${escHtml(b.volid||'')}','${escHtml(b.node||'')}')" title="Restore this backup">↩ Restore</button>
+            <button class="btn small danger" onclick="confirmDeleteBackup('${escHtml(b.volid||'')}','${escHtml(b.storage||'')}','${escHtml(b.node||'')}')" title="Delete backup">Delete</button>
+          </div></td>
+        </tr>`).join('')}
+        </tbody></table></div>`
+      :`<div class="empty">No backups found for this VM.<br><span style="font-size:12px">Click <strong>+ Create Backup</strong> to create one.</span></div>`}`;
+  } catch(e) {
+    el.innerHTML = `<div class="empty">Failed to load backups: ${e.message}</div>`;
+  }
+}
+
+function openCreateBackupModal() {
+  const item=currentDetail; if(!item) return;
+  const storOpts=(PVE.storage.filter(s=>s.node===item.node&&(s.content||'').includes('backup'))||[]).map(s=>`<option value="${s.storage}">${s.storage}</option>`).join('');
+  document.getElementById('modal-title').textContent=`Create Backup — ${item.type.toUpperCase()} ${item.vmid}`;
+  document.getElementById('modal-body').innerHTML=`
+    <div class="create-vm-grid">
+      <div class="form-group"><label>STORAGE</label><select id="cb-stor">${storOpts||'<option value="local">local</option>'}</select></div>
+      <div class="form-group"><label>MODE</label>
+        <select id="cb-mode">
+          <option value="snapshot">Snapshot — minimal downtime</option>
+          <option value="suspend">Suspend — pause VM during backup</option>
+          <option value="stop">Stop — safest, VM is stopped</option>
+        </select>
+      </div>
+    </div>
+    <div class="create-vm-grid">
+      <div class="form-group"><label>COMPRESSION</label>
+        <select id="cb-compress">
+          <option value="zstd">zstd (fastest)</option>
+          <option value="lzo">lzo (fast)</option>
+          <option value="gzip">gzip (small)</option>
+          <option value="0">none</option>
+        </select>
+      </div>
+      <div class="form-group"><label>NOTES (optional)</label><input id="cb-notes" placeholder="manual backup"/></div>
+    </div>`;
+  modalCallback=async()=>{
+    const conn=resolveConn(item.connId);
+    const params={vmid:item.vmid,storage:document.getElementById('cb-stor')?.value,mode:document.getElementById('cb-mode')?.value,compress:document.getElementById('cb-compress')?.value};
+    const notes=document.getElementById('cb-notes')?.value?.trim();if(notes)params.notes=notes;
+    try{
+      let res;
+      if(conn)res=await connPost(conn,`/api2/json/nodes/${item.node}/vzdump`,params);
+      else res=await pvePost(`/api2/json/nodes/${item.node}/vzdump`,params);
+      const upid=res&&res.data;
+      if(upid&&typeof upid==='string')tmRegister(upid,item.node,`Backup ${item.type.toUpperCase()} ${item.vmid}`);
+      toast(`Backup started for ${item.type.toUpperCase()} ${item.vmid}`,'success');
+      setTimeout(()=>loadDetailBackup(item),3000);
+    }catch(e){toast('Backup failed: '+e.message,'error');}
+  };
+  document.getElementById('modal-bg').classList.add('open');
+}
+
+function confirmRestoreBackup(volid, backupNode) {
+  const item=currentDetail; if(!item) return;
+  document.getElementById('modal-title').textContent='Restore Backup';
+  document.getElementById('modal-body').innerHTML=`
+    <p style="color:var(--muted)">Restore <strong style="color:var(--accent)">${item.type.toUpperCase()} ${item.vmid}</strong> from this backup?</p>
+    <p style="font-size:12px;color:var(--yellow);margin-top:8px">⚠ This will overwrite the current VM disk contents. The VM will be stopped first.</p>
+    <div class="form-group" style="margin-top:12px"><label>TARGET STORAGE (for restored disks)</label>
+      <select id="rb-stor">${(PVE.storage.filter(s=>s.node===item.node)||[]).map(s=>`<option value="${s.storage}">${s.storage}</option>`).join('')}</select>
+    </div>`;
+  modalCallback=async()=>{
+    const storage=document.getElementById('rb-stor')?.value;
+    const conn=resolveConn(item.connId);
+    try{
+      let res;
+      const params={archive:volid,vmid:item.vmid,storage,force:1};
+      if(conn)res=await connPost(conn,`/api2/json/nodes/${backupNode||item.node}/qemu`,params);
+      else res=await pvePost(`/api2/json/nodes/${backupNode||item.node}/qemu`,params);
+      const upid=res&&res.data;
+      if(upid&&typeof upid==='string')tmRegister(upid,backupNode||item.node,`Restore ${item.type.toUpperCase()} ${item.vmid}`);
+      toast('Restore started','success');
+    }catch(e){toast('Restore failed: '+e.message,'error');}
+  };
+  document.getElementById('modal-bg').classList.add('open');
+}
+
+function confirmDeleteBackup(volid, storage, backupNode) {
+  document.getElementById('modal-title').textContent='Delete Backup';
+  document.getElementById('modal-body').innerHTML=`
+    <p style="color:var(--muted)">Permanently delete this backup?</p>
+    <p style="font-size:12px;color:var(--muted);margin-top:4px;font-family:monospace">${escHtml(volid)}</p>
+    <p style="color:var(--red);font-size:12px;margin-top:8px">⚠ This cannot be undone.</p>`;
+  modalCallback=async()=>{
+    const item=currentDetail;
+    const conn=resolveConn(item?.connId);
+    const path=`/api2/json/nodes/${backupNode}/storage/${storage}/content/${encodeURIComponent(volid)}`;
+    try{
+      if(conn)await connDelete(conn,path);else await pveDelete(path);
+      toast('Backup deleted','success');
+      setTimeout(()=>loadDetailBackup(item),800);
+    }catch(e){toast('Delete failed: '+e.message,'error');}
   };
   document.getElementById('modal-bg').classList.add('open');
 }
