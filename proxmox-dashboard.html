@@ -358,6 +358,10 @@
     .chart-stat strong{color:var(--text);}
     .chart-grid-v2{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px;}
 
+    /* VM TAGS */
+    .vm-tag{display:inline-flex;align-items:center;gap:3px;border-radius:12px;padding:2px 8px;font-size:10px;font-weight:700;margin:1px;cursor:pointer;transition:opacity .15s;white-space:nowrap;}
+    .vm-tag:hover{opacity:.75;}
+    .tag-dot{width:6px;height:6px;border-radius:50%;flex-shrink:0;}
     /* TASK MONITOR */
     .tm-item{padding:8px 14px;border-bottom:1px solid var(--border);font-size:12px;display:flex;flex-direction:column;gap:3px;}
     .tm-item:last-child{border-bottom:none;}
@@ -579,6 +583,10 @@
         Certificates
         <span class="nav-badge warn" id="cert-badge" style="display:none">!</span>
       </div>
+      <div class="nav-item" data-view="tags" onclick="switchView('tags')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>
+        Tags
+      </div>
       <div class="nav-item" data-view="tfa" onclick="switchView('tfa')">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M12 17v-2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/><circle cx="12" cy="15" r="1" fill="currentColor"/></svg>
         2FA Management
@@ -663,6 +671,19 @@
       <div id="sv-content"></div>
     </div>
 
+    <!-- TAGS MANAGEMENT -->
+    <div id="view-tags" style="display:none">
+      <div class="section-header">
+        <span class="section-title">VM / CT Tags</span>
+        <div style="display:flex;gap:6px">
+          <select class="conn-sel" id="tags-conn" style="width:140px;padding:5px 8px;font-size:13px" onchange="loadTagsView()"><option value="">Primary</option></select>
+          <button class="btn small primary" onclick="openManageAllowedTagsModal()">⚙ Manage Allowed Tags</button>
+          <button class="btn small" onclick="loadTagsView()">Refresh</button>
+        </div>
+      </div>
+      <div id="tags-content"><div class="empty">Loading…</div></div>
+    </div>
+
     <!-- 2FA MANAGEMENT -->
     <div id="view-tfa" style="display:none">
       <div class="section-header">
@@ -733,6 +754,7 @@
             <button class="view-toggle-btn active" id="vms-view-table" onclick="setVMView('table')" title="Table view">≡</button>
             <button class="view-toggle-btn" id="vms-view-cards" onclick="setVMView('cards')" title="Card view">⊞</button>
           </div>
+          <select id="vms-tag-filter" style="width:120px;padding:5px 8px;font-size:13px" onchange="renderVMTable()"><option value="">All Tags</option></select>
           <button class="btn small primary" onclick="openCreateVMModal()">+ Create VM</button>
           <button class="btn small" onclick="refreshAll()">Refresh</button>
         </div>
@@ -740,7 +762,7 @@
       <div id="vms-content">
         <div class="table-wrap">
           <table>
-            <thead><tr><th class="sortable" onclick="sortVMTable('vmid')">ID<span class="sort-icon">↕</span></th><th class="sortable" onclick="sortVMTable('name')">Name<span class="sort-icon">↕</span></th><th class="sortable" onclick="sortVMTable('node')">Node<span class="sort-icon">↕</span></th><th class="sortable" onclick="sortVMTable('status')">Status<span class="sort-icon">↕</span></th><th class="sortable" onclick="sortVMTable('cpu')">CPU<span class="sort-icon">↕</span></th><th class="sortable" onclick="sortVMTable('mem')">Memory<span class="sort-icon">↕</span></th><th>Disk</th><th class="sortable" onclick="sortVMTable('uptime')">Uptime<span class="sort-icon">↕</span></th><th>Actions</th></tr></thead>
+            <thead><tr><th class="sortable" onclick="sortVMTable('vmid')">ID<span class="sort-icon">↕</span></th><th class="sortable" onclick="sortVMTable('name')">Name<span class="sort-icon">↕</span></th><th class="sortable" onclick="sortVMTable('node')">Node<span class="sort-icon">↕</span></th><th class="sortable" onclick="sortVMTable('status')">Status<span class="sort-icon">↕</span></th><th class="sortable" onclick="sortVMTable('cpu')">CPU<span class="sort-icon">↕</span></th><th class="sortable" onclick="sortVMTable('mem')">Memory<span class="sort-icon">↕</span></th><th>Disk</th><th class="sortable" onclick="sortVMTable('uptime')">Uptime<span class="sort-icon">↕</span></th><th>Tags</th><th>Actions</th></tr></thead>
             <tbody id="vm-table-body"></tbody>
           </table>
         </div>
@@ -756,6 +778,7 @@
             <button class="view-toggle-btn active" id="cts-view-table" onclick="setCTView('table')" title="Table view">≡</button>
             <button class="view-toggle-btn" id="cts-view-cards" onclick="setCTView('cards')" title="Card view">⊞</button>
           </div>
+          <select id="cts-tag-filter" style="width:120px;padding:5px 8px;font-size:13px" onchange="renderCTTable()"><option value="">All Tags</option></select>
           <button class="btn small primary" onclick="openCreateCTWizard()">+ Create CT</button>
           <button class="btn small success" onclick="openDownloadTemplatesModal()">↓ Download Templates</button>
           <button class="btn small" onclick="refreshAll()">Refresh</button>
@@ -764,7 +787,7 @@
       <div id="cts-content">
         <div class="table-wrap">
           <table>
-            <thead><tr><th class="sortable" onclick="sortCTTable('vmid')">ID<span class="sort-icon">↕</span></th><th class="sortable" onclick="sortCTTable('name')">Name<span class="sort-icon">↕</span></th><th class="sortable" onclick="sortCTTable('node')">Node<span class="sort-icon">↕</span></th><th class="sortable" onclick="sortCTTable('status')">Status<span class="sort-icon">↕</span></th><th class="sortable" onclick="sortCTTable('cpu')">CPU<span class="sort-icon">↕</span></th><th class="sortable" onclick="sortCTTable('mem')">Memory<span class="sort-icon">↕</span></th><th>Disk</th><th class="sortable" onclick="sortCTTable('uptime')">Uptime<span class="sort-icon">↕</span></th><th>Actions</th></tr></thead>
+            <thead><tr><th class="sortable" onclick="sortCTTable('vmid')">ID<span class="sort-icon">↕</span></th><th class="sortable" onclick="sortCTTable('name')">Name<span class="sort-icon">↕</span></th><th class="sortable" onclick="sortCTTable('node')">Node<span class="sort-icon">↕</span></th><th class="sortable" onclick="sortCTTable('status')">Status<span class="sort-icon">↕</span></th><th class="sortable" onclick="sortCTTable('cpu')">CPU<span class="sort-icon">↕</span></th><th class="sortable" onclick="sortCTTable('mem')">Memory<span class="sort-icon">↕</span></th><th>Disk</th><th class="sortable" onclick="sortCTTable('uptime')">Uptime<span class="sort-icon">↕</span></th><th>Tags</th><th>Actions</th></tr></thead>
             <tbody id="ct-table-body"></tbody>
           </table>
         </div>
@@ -1743,6 +1766,7 @@ async function refreshAll() {
     renderSidebarNodes();
     checkAndFireAlerts();
     updateTopbarStats();
+    populateTagFilters();
     document.getElementById('last-refresh').textContent='Updated '+new Date().toLocaleTimeString();
   } catch(e) {
     toast('Refresh failed: '+e.message,'error');
@@ -2391,7 +2415,7 @@ async function migrateVM(node, vmid, type, targetNode, online=false, withLocal=f
 
 function switchView(view) {
   expandSidebarSection(view); // auto-expand collapsed section if needed
-  const views=['connect','connections','worldmap','savedview','overview','vms','containers','nodes','tasks','syslog','storage','network','heatmap','isolib','sdn','drs','datacenter','pools','ceph','ha','firewall','backups','users','certs','audit','clustergraphs','tfa','subscriptions','updates','pbs'];
+  const views=['connect','connections','worldmap','savedview','overview','vms','containers','nodes','tasks','syslog','storage','network','heatmap','isolib','sdn','drs','datacenter','pools','ceph','ha','firewall','backups','users','certs','audit','clustergraphs','tags','tfa','subscriptions','updates','pbs'];
   views.forEach(v=>{
     const el=document.getElementById('view-'+v);
     if(el) el.style.display=v===view?'':'none';
@@ -2439,6 +2463,7 @@ function switchView(view) {
   if(view==='worldmap') { initWorldMap(); renderWorldMap(); }
   if(view==='subscriptions') loadSubscriptions();
   if(view==='tfa') loadTFA();
+  if(view==='tags') loadTagsView();
   if(view==='savedview') renderSavedView();
   if(view==='pools') loadPools();
   if(view==='datacenter') loadDatacenter();
@@ -2648,7 +2673,8 @@ function renderAllTable() { _renderAllTableBody(); }
 function filterAll(){ _renderAllTableBody(); }
 
 function renderVMTable(){
-  const sorted = _sortItems(allVMs(), vmSort.col, vmSort.dir);
+  const tagF = document.getElementById('vms-tag-filter')?.value||'';
+  const sorted = _sortItems(allVMs().filter(x=>!tagF||parseTags(x.tags||'').includes(tagF)), vmSort.col, vmSort.dir);
   _updateSortIcons('#vms-content table', vmSort.col, vmSort.dir);
   if (vmViewMode==='cards') {
     const c = document.getElementById('vms-content');
@@ -2661,7 +2687,8 @@ function renderVMTable(){
 }
 
 function renderCTTable(){
-  const sorted = _sortItems(allCTs(), ctSort.col, ctSort.dir);
+  const tagF = document.getElementById('cts-tag-filter')?.value||'';
+  const sorted = _sortItems(allCTs().filter(x=>!tagF||parseTags(x.tags||'').includes(tagF)), ctSort.col, ctSort.dir);
   _updateSortIcons('#cts-content table', ctSort.col, ctSort.dir);
   if (ctViewMode==='cards') {
     const c = document.getElementById('cts-content');
@@ -2704,6 +2731,7 @@ function vmRow(x,showType=false){
     </td>
     <td style="font-size:12px;color:var(--muted)">${diskStr}</td>
     <td style="font-size:12px;color:var(--muted)">${x.uptime?`<span title="Running since ${new Date(Date.now()-x.uptime*1000).toLocaleString()}">${uptime}</span>`:uptime}</td>
+    <td onclick="event.stopPropagation()" style="max-width:140px">${renderTagChips(parseTags(x.tags||''))}</td>
     <td onclick="event.stopPropagation()">
       <div class="actions-row">
         ${running
@@ -7409,6 +7437,7 @@ async function saveVMOptions() {
     params.freeze=g('vo-freeze')?1:0;
   }
   const desc=g('vo-desc');if(desc!==null)params.description=desc;
+  const tagsRaw=g('vo-tags'); if(tagsRaw!==null) params.tags=parseTags(tagsRaw).join(';');
   try{
     await detailPut(`/api2/json/nodes/${item.node}/${ep}/${item.vmid}/config`,params);
     toast('Options saved','success');
@@ -10049,8 +10078,21 @@ function _renderDCTab() {
           </div>
         </div>
 
+        <div class="section-title" style="font-size:11px;margin:14px 0 8px">Tags</div>
+        <div class="form-group">
+          <label>TAGS (semicolon-separated)</label>
+          <input id="vo-tags" value="${escHtml(cfg.tags||'')}" placeholder="production;web;critical"/>
+          <div style="margin-top:6px;display:flex;flex-wrap:wrap;gap:4px" id="vo-tags-preview">${renderTagChips(parseTags(cfg.tags||''),false)}</div>
+        </div>
+
         <button type="submit" class="btn primary" style="margin-top:16px">💾 Save Options</button>
       </form>`;
+    // Live tag preview
+    setTimeout(()=>{
+      const inp=document.getElementById('vo-tags');
+      const prev=document.getElementById('vo-tags-preview');
+      if(inp&&prev) inp.addEventListener('input',()=>{prev.innerHTML=renderTagChips(parseTags(inp.value||''),false);});
+    },50);
   }
 
   // ── REPLICATION TAB ────────────────────────────────────
@@ -10755,6 +10797,281 @@ async function requestNotifPermission() {
   if (!('Notification' in window)) return toast('Browser notifications not supported in this browser', 'error');
   const perm = await Notification.requestPermission();
   toast(perm==='granted' ? '✓ Browser notifications enabled' : 'Browser notifications denied — check browser settings', perm==='granted'?'success':'error');
+}
+
+// ── VM / CT TAGS ──────────────────────────────────────────
+// Tags are semicolon-separated in VM config (e.g. "production;web;critical")
+// Allowed tags managed at cluster level via GET/PUT /cluster/options
+// PUT /nodes/{n}/qemu/{vmid}/config   {tags: "tag1;tag2"}
+// PUT /nodes/{n}/lxc/{vmid}/config    {tags: "tag1;tag2"}
+
+// Deterministic colour per tag name (consistent across sessions)
+const _TAG_PALETTE = [
+  '#f97316','#3fb950','#58a6ff','#bc8cff','#ff6eb4',
+  '#39d353','#d29922','#e06c75','#56b6c2','#98c379',
+  '#e5c07b','#c678dd','#61afef','#abb2bf','#be5046',
+];
+function tagColor(tag) {
+  let h=0; for(let i=0;i<tag.length;i++) h=(h*31+tag.charCodeAt(i))&0x7FFFFFFF;
+  return _TAG_PALETTE[h%_TAG_PALETTE.length];
+}
+
+// Parse VM tags (semicolon or comma separated)
+function parseTags(raw) {
+  if(!raw) return [];
+  return raw.split(/[;,]/).map(t=>t.trim().toLowerCase()).filter(Boolean);
+}
+
+// Render tag chips HTML
+function renderTagChips(tags, clickable=true) {
+  if(!tags||!tags.length) return '';
+  return tags.map(t=>{
+    const col=tagColor(t);
+    return `<span class="vm-tag" style="background:${col}22;color:${col};border:1px solid ${col}44"
+      ${clickable?`onclick="event.stopPropagation();filterByTag('${escHtml(t)}')" title="Filter by tag: ${escHtml(t)}"`:''}>
+      <span class="tag-dot" style="background:${col}"></span>${escHtml(t)}</span>`;
+  }).join('');
+}
+
+// Filter VMs/CTs by tag (sets the tag filter dropdown and re-renders)
+function filterByTag(tag) {
+  ['vms-tag-filter','cts-tag-filter'].forEach(id=>{
+    const el=document.getElementById(id); if(el) el.value=tag;
+  });
+  if(currentView==='vms') renderVMTable();
+  else if(currentView==='containers') renderCTTable();
+  else switchView('vms');
+}
+
+// Populate tag filter dropdowns from current VM/CT data
+function populateTagFilters() {
+  const allTags=[...new Set(
+    allVMs().concat(allCTs())
+      .flatMap(x=>parseTags(x.tags||''))
+  )].sort();
+  ['vms-tag-filter','cts-tag-filter'].forEach(id=>{
+    const el=document.getElementById(id); if(!el) return;
+    const cur=el.value;
+    el.innerHTML='<option value="">All Tags</option>'+allTags.map(t=>`<option value="${t}"${t===cur?' selected':''}>${t}</option>`).join('');
+  });
+}
+
+// ── TAGS VIEW ─────────────────────────────────────────────
+
+async function loadTagsView() {
+  const conn=getViewConn('tags-conn');
+  const get=conn?(p=>connGet(conn,p)):pveGet;
+  const el=document.getElementById('tags-content');
+  el.innerHTML='<div class="empty"><span class="loading"></span> Loading tags…</div>';
+  try {
+    const optsRes=await get('/api2/json/cluster/options').catch(()=>({data:{}}));
+    const allowed=optsRes.data?.['allowed-tags']||[];
+    const allItems=allVMs().concat(allCTs());
+    // Build tag → VMs map
+    const tagMap={};
+    allItems.forEach(x=>{
+      parseTags(x.tags||'').forEach(t=>{
+        (tagMap[t]||(tagMap[t]=[])).push(x);
+      });
+    });
+    const tagNames=[...new Set([...Object.keys(tagMap),...(Array.isArray(allowed)?allowed:[])])].sort();
+
+    el.innerHTML=`
+      <div class="stats-grid" style="margin-bottom:16px">
+        <div class="stat-card accent-blue"><div class="label">Unique Tags</div><div class="value">${tagNames.length}</div></div>
+        <div class="stat-card accent-orange"><div class="label">Tagged VMs/CTs</div><div class="value">${allItems.filter(x=>x.tags).length}</div><div class="sub">of ${allItems.length} total</div></div>
+        <div class="stat-card accent-${allItems.filter(x=>!x.tags||!x.tags.trim()).length?'yellow':'green'}"><div class="label">Untagged</div><div class="value">${allItems.filter(x=>!x.tags||!x.tags.trim()).length}</div></div>
+        <div class="stat-card accent-purple"><div class="label">Allowed Tags</div><div class="value">${Array.isArray(allowed)?allowed.length:'—'}</div><div class="sub">cluster policy</div></div>
+      </div>
+
+      ${tagNames.length?`
+      <div class="section-header" style="margin-bottom:10px"><span class="section-title">Tags (${tagNames.length})</span></div>
+      <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:20px">
+        ${tagNames.map(t=>{
+          const col=tagColor(t);
+          const count=(tagMap[t]||[]).length;
+          const isAllowed=Array.isArray(allowed)&&allowed.includes(t);
+          return `<div style="background:var(--bg2);border:1px solid ${col}44;border-left:3px solid ${col};border-radius:var(--radius);padding:10px 14px;min-width:140px">
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+              <span class="vm-tag" style="background:${col}22;color:${col};border:1px solid ${col}44">
+                <span class="tag-dot" style="background:${col}"></span>${escHtml(t)}
+              </span>
+              ${isAllowed?'<span style="font-size:9px;color:var(--green)">✓ allowed</span>':''}
+            </div>
+            <div style="font-size:12px;color:var(--muted)">${count} VM${count!==1?'s':''}</div>
+            <div style="margin-top:8px;display:flex;gap:5px;flex-wrap:wrap">
+              <button class="btn small" onclick="filterByTag('${escHtml(t)}')" style="font-size:10px;padding:2px 7px">Filter</button>
+              <button class="btn small danger" onclick="confirmRemoveTagFromAll('${escHtml(t)}')" style="font-size:10px;padding:2px 7px">Remove all</button>
+            </div>
+          </div>`;}).join('')}
+      </div>`:`<div class="empty" style="margin-bottom:16px">No tags defined yet. Add tags to VMs via their Options tab, or click <strong>⚙ Manage Allowed Tags</strong> to define allowed tags for this cluster.</div>`}
+
+      <div class="section-header" style="margin-bottom:10px"><span class="section-title">All VMs / CTs with Tags</span></div>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Type</th><th>ID</th><th>Name</th><th>Node</th><th>Status</th><th>Tags</th><th>Actions</th></tr></thead>
+        <tbody>${allItems.map(x=>`<tr>
+          <td><span class="type-chip ${x.type==='vm'?'vm':'ct'}">${x.type.toUpperCase()}</span></td>
+          <td style="color:var(--muted);font-size:12px">${x.vmid}</td>
+          <td><strong>${escHtml(x.name||String(x.vmid))}</strong></td>
+          <td style="color:var(--muted);font-size:12px">${x.node}</td>
+          <td>${statusBadge(x.status)}</td>
+          <td>${renderTagChips(parseTags(x.tags||''))||'<span style="font-size:11px;color:var(--muted)">—</span>'}</td>
+          <td onclick="event.stopPropagation()">
+            <button class="btn small" onclick="openEditTagsModal('${x.vmid}','${x.type}','${x.node}','${x.connId||''}','${escHtml(x.tags||'')}')">✎ Tags</button>
+          </td>
+        </tr>`).join('')||'<tr><td colspan="7" class="empty">No VMs or containers</td></tr>'}
+        </tbody></table></div>`;
+  } catch(e) {
+    el.innerHTML=`<div class="empty">Failed: ${e.message}</div>`;
+  }
+}
+
+// ── TAG MODALS ────────────────────────────────────────────
+
+function openEditTagsModal(vmid, type, node, connId, currentTags) {
+  const conn=getViewConn('tags-conn')||(connId?resolveConn(connId):null);
+  const get=conn?(p=>connGet(conn,p)):pveGet;
+  // Get allowed tags + current tags for the checklist
+  get('/api2/json/cluster/options').then(d=>{
+    const allowed=d.data?.['allowed-tags']||[];
+    const current=parseTags(currentTags);
+    const allKnown=[...new Set([...allowed,...current,...parseTags((allVMs().concat(allCTs()).find(x=>x.vmid==vmid&&x.node===node)||{}).tags||'')])].sort();
+
+    document.getElementById('modal-title').textContent=`Edit Tags — ${type.toUpperCase()} ${vmid}`;
+    document.getElementById('modal-body').innerHTML=`
+      ${allKnown.length?`
+      <div class="form-group"><label>CLICK TO TOGGLE</label>
+        <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px">
+          ${allKnown.map(t=>{
+            const col=tagColor(t);
+            const on=current.includes(t);
+            return `<span class="vm-tag" id="tag-toggle-${t.replace(/[^a-z0-9]/g,'-')}" onclick="toggleTagChip('${escHtml(t)}')"
+              style="background:${on?col+'44':'var(--bg3)'};color:${on?col:'var(--muted)'};border:1px solid ${on?col+'88':'var(--border)'};cursor:pointer;font-size:12px;padding:4px 12px">
+              <span class="tag-dot" style="background:${on?col:'var(--muted)'}"></span>${escHtml(t)}
+            </span>`;}).join('')}
+        </div>
+      </div>`:''}
+      <div class="form-group"><label>ADD / EDIT TAGS (semicolon-separated)</label>
+        <input id="tag-edit-input" value="${escHtml(current.join(';'))}" placeholder="production;web;critical" oninput="syncTagChips()"/>
+        <div style="font-size:11px;color:var(--muted);margin-top:4px">Lowercase, no spaces. Separate multiple tags with semicolons.</div>
+      </div>`;
+
+    modalCallback=async()=>{
+      const raw=(document.getElementById('tag-edit-input')?.value||'').trim();
+      const tags=parseTags(raw).join(';');
+      const ep=type==='vm'?'qemu':'lxc';
+      const c=resolveConn(connId)||conn;
+      try{
+        if(c){const h=connHeaders(c,{'Content-Type':'application/x-www-form-urlencoded'});const r=await fetch(c.host+`/api2/json/nodes/${node}/${ep}/${vmid}/config`,{method:'PUT',headers:h,body:`tags=${encodeURIComponent(tags)}`});if(!r.ok){const t=await r.text();throw new Error(`HTTP ${r.status}: ${t}`);}}
+        else await pvePut(`/api2/json/nodes/${node}/${ep}/${vmid}/config`,{tags});
+        toast(`Tags updated for ${type.toUpperCase()} ${vmid}`,'success');
+        setTimeout(()=>{refreshAll();loadTagsView();},800);
+      }catch(e){toast('Update failed: '+e.message,'error');}
+    };
+    document.getElementById('modal-bg').classList.add('open');
+  }).catch(()=>{
+    // Fallback: simple text input
+    document.getElementById('modal-title').textContent=`Edit Tags — ${type.toUpperCase()} ${vmid}`;
+    document.getElementById('modal-body').innerHTML=`
+      <div class="form-group"><label>TAGS (semicolon-separated)</label>
+        <input id="tag-edit-input" value="${escHtml(currentTags)}" placeholder="production;web;critical"/>
+      </div>`;
+    modalCallback=async()=>{
+      const tags=parseTags(document.getElementById('tag-edit-input')?.value||'').join(';');
+      const ep=type==='vm'?'qemu':'lxc'; const c=resolveConn(connId);
+      try{if(c){const h=connHeaders(c,{'Content-Type':'application/x-www-form-urlencoded'});const r=await fetch(c.host+`/api2/json/nodes/${node}/${ep}/${vmid}/config`,{method:'PUT',headers:h,body:`tags=${encodeURIComponent(tags)}`});if(!r.ok){const t=await r.text();throw new Error(`HTTP ${r.status}: ${t}`);}}
+      else await pvePut(`/api2/json/nodes/${node}/${ep}/${vmid}/config`,{tags});
+      toast('Tags updated','success');setTimeout(()=>{refreshAll();loadTagsView();},800);}catch(e){toast('Update failed: '+e.message,'error');}
+    };
+    document.getElementById('modal-bg').classList.add('open');
+  });
+}
+
+function toggleTagChip(tag) {
+  const inp=document.getElementById('tag-edit-input'); if(!inp) return;
+  let tags=parseTags(inp.value);
+  const idx=tags.indexOf(tag);
+  if(idx>=0) tags.splice(idx,1); else tags.push(tag);
+  inp.value=tags.join(';');
+  syncTagChips();
+}
+
+function syncTagChips() {
+  const inp=document.getElementById('tag-edit-input'); if(!inp) return;
+  const active=parseTags(inp.value);
+  document.querySelectorAll('.vm-tag[id^="tag-toggle-"]').forEach(el=>{
+    const t=el.id.replace('tag-toggle-','').replace(/-/g,'');
+    // find matching tag
+    const match=active.find(a=>a.replace(/[^a-z0-9]/g,'-').replace(/-/g,'')=== t || a===el.textContent.trim());
+    const col=match?tagColor(match):null;
+    if(col){el.style.background=col+'44';el.style.color=col;el.style.borderColor=col+'88';el.querySelector('.tag-dot').style.background=col;}
+    else{el.style.background='var(--bg3)';el.style.color='var(--muted)';el.style.borderColor='var(--border)';el.querySelector('.tag-dot').style.background='var(--muted)';}
+  });
+}
+
+function openManageAllowedTagsModal() {
+  const conn=getViewConn('tags-conn');
+  const get=conn?(p=>connGet(conn,p)):pveGet;
+  get('/api2/json/cluster/options').then(d=>{
+    const allowed=d.data?.['allowed-tags']||[];
+    document.getElementById('modal-title').textContent='Manage Allowed Tags';
+    document.getElementById('modal-body').innerHTML=`
+      <p style="color:var(--muted);font-size:13px;margin-bottom:12px">
+        Defines which tags users are allowed to assign to VMs and CTs. Leave empty to allow any tag.
+      </p>
+      <div class="form-group"><label>ALLOWED TAGS (one per line or comma/semicolon separated)</label>
+        <textarea id="allowed-tags-input" rows="8" style="width:100%;background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius);color:var(--text);padding:8px;font-family:var(--font);font-size:13px;resize:vertical">${(Array.isArray(allowed)?allowed:[]).join('\n')}</textarea>
+        <div style="font-size:11px;color:var(--muted);margin-top:4px">Lowercase recommended. Example: production, staging, dev, critical, web, db</div>
+      </div>
+      <div style="display:flex;flex-wrap:wrap;gap:5px;margin-top:8px" id="tag-preview"></div>`;
+
+    // Live preview
+    const updatePreview=()=>{
+      const raw=document.getElementById('allowed-tags-input')?.value||'';
+      const tags=raw.split(/[\n,;]/).map(t=>t.trim().toLowerCase()).filter(Boolean);
+      document.getElementById('tag-preview').innerHTML=tags.map(t=>{
+        const col=tagColor(t);
+        return `<span class="vm-tag" style="background:${col}22;color:${col};border:1px solid ${col}44"><span class="tag-dot" style="background:${col}"></span>${escHtml(t)}</span>`;}).join('');
+    };
+    setTimeout(()=>{
+      document.getElementById('allowed-tags-input')?.addEventListener('input',updatePreview);
+      updatePreview();
+    },50);
+
+    modalCallback=async()=>{
+      const raw=document.getElementById('allowed-tags-input')?.value||'';
+      const tags=raw.split(/[\n,;]/).map(t=>t.trim().toLowerCase()).filter(Boolean);
+      const c=resolveConn(conn?(extraConns.find(x=>x===conn)||{}).id||'':'');
+      try{
+        if(c){const h=connHeaders(c,{'Content-Type':'application/x-www-form-urlencoded'});const body=`allowed-tags=${encodeURIComponent(JSON.stringify(tags))}`;const r=await fetch(c.host+'/api2/json/cluster/options',{method:'PUT',headers:h,body});if(!r.ok){const t=await r.text();throw new Error(`HTTP ${r.status}: ${t}`);}}
+        else await pvePut('/api2/json/cluster/options',{'allowed-tags':JSON.stringify(tags)});
+        toast(`${tags.length} allowed tags saved`,'success');
+        setTimeout(loadTagsView,800);
+      }catch(e){toast('Save failed: '+e.message,'error');}
+    };
+    document.getElementById('modal-bg').classList.add('open');
+  }).catch(e=>toast('Load failed: '+e.message,'error'));
+}
+
+async function confirmRemoveTagFromAll(tag) {
+  document.getElementById('modal-title').textContent=`Remove Tag "${tag}" from All VMs`;
+  document.getElementById('modal-body').innerHTML=`
+    <p style="color:var(--muted)">Remove tag <strong style="color:var(--red)">${escHtml(tag)}</strong> from all ${allVMs().concat(allCTs()).filter(x=>parseTags(x.tags||'').includes(tag)).length} VM(s)/CT(s)?</p>`;
+  modalCallback=async()=>{
+    const items=allVMs().concat(allCTs()).filter(x=>parseTags(x.tags||'').includes(tag));
+    let done=0;
+    for(const x of items){
+      const newTags=parseTags(x.tags||'').filter(t=>t!==tag).join(';');
+      const ep=x.type==='vm'?'qemu':'lxc';
+      const c=resolveConn(x.connId||'');
+      try{if(c){const h=connHeaders(c,{'Content-Type':'application/x-www-form-urlencoded'});const r=await fetch(c.host+`/api2/json/nodes/${x.node}/${ep}/${x.vmid}/config`,{method:'PUT',headers:h,body:`tags=${encodeURIComponent(newTags)}`});if(!r.ok) continue;}
+      else await pvePut(`/api2/json/nodes/${x.node}/${ep}/${x.vmid}/config`,{tags:newTags});
+      done++;}catch(e){}
+    }
+    toast(`Removed "${tag}" from ${done} item(s)`,'success');
+    setTimeout(()=>{refreshAll();loadTagsView();},800);
+  };
+  document.getElementById('modal-bg').classList.add('open');
 }
 
 // ── CUSTOM SAVED VIEWS ───────────────────────────────────
