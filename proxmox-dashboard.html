@@ -82,7 +82,7 @@
     .nav-item{display:flex;align-items:center;gap:9px;padding:8px 10px;border-radius:var(--radius);cursor:pointer;color:var(--muted);transition:all .15s;border:1px solid transparent;font-size:14px;}
     .sidebar-section .nav-item{padding-left:18px;}
     .nav-item:hover{background:var(--bg3);color:var(--text);}
-    .nav-item.active{background:rgba(249,115,22,.12);border-color:rgba(249,115,22,.3);color:var(--accent);}
+    .nav-item.active{background:rgba(249,115,22,.12);border-color:rgba(249,115,22,.3);color:var(--accent);border-left:3px solid var(--accent);padding-left:15px;}
     .nav-item svg{width:15px;height:15px;flex-shrink:0;}
     .nav-badge{margin-left:auto;background:var(--red);color:#fff;font-size:10px;padding:1px 6px;border-radius:10px;font-weight:700;}
     /* MAIN */
@@ -396,9 +396,28 @@
     .notif-msg{font-size:12px;color:var(--muted);margin-top:2px;}
     .notif-time{font-size:10px;color:var(--border);margin-top:4px;}
     #notif-badge{position:absolute;top:-5px;right:-5px;background:var(--red);color:#fff;font-size:9px;min-width:16px;height:16px;border-radius:8px;padding:0 3px;display:flex;align-items:center;justify-content:center;font-weight:700;pointer-events:none;}
+
+    /* ── PCC Login overlay ── */
+    #pcc-login-overlay{position:fixed;inset:0;background:var(--bg);z-index:9999;display:flex;align-items:center;justify-content:center;}
+    #pcc-login-box{background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:36px 40px;width:360px;max-width:92vw;box-shadow:0 8px 32px rgba(0,0,0,.4);}
+    #pcc-login-box h1{font-size:22px;font-weight:700;text-align:center;margin-bottom:4px;}
+    #pcc-login-box .sub{text-align:center;font-size:13px;color:var(--muted);margin-bottom:24px;}
+    #pcc-login-err{display:none;background:rgba(248,81,73,.1);border:1px solid var(--red);border-radius:var(--radius);padding:8px 12px;font-size:12px;color:var(--red);margin-bottom:12px;}
   </style>
 </head>
 <body>
+
+<!-- PCC login — shown only when a backend is detected and no valid session exists -->
+<div id="pcc-login-overlay" style="display:none">
+  <div id="pcc-login-box">
+    <h1>PCC</h1>
+    <div class="sub">Proxmox Command Center</div>
+    <div id="pcc-login-err"></div>
+    <div class="form-group"><label>USERNAME</label><input id="pcc-login-user" autocomplete="username" placeholder="admin" onkeydown="if(event.key==='Enter')pccLogin()"/></div>
+    <div class="form-group"><label>PASSWORD</label><input id="pcc-login-pw" type="password" autocomplete="current-password" placeholder="••••••••" onkeydown="if(event.key==='Enter')pccLogin()"/></div>
+    <button id="pcc-login-btn" class="btn primary" style="width:100%;margin-top:8px" onclick="pccLogin()">Sign in</button>
+  </div>
+</div>
 
 <div id="topbar">
   <div class="logo" title="Proxmox Command Center">
@@ -447,19 +466,11 @@
         Overview
       </div>
     </div>
-    <div class="sidebar-section" data-section="views">
+    <!-- MONITOR -->
+    <div class="sidebar-section" data-section="monitor">
       <div class="sidebar-label" onclick="toggleSidebarSection(this)">
         <span class="sidebar-label-inner"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>Monitor</span>
         <span class="sidebar-chevron">▾</span>
-      </div>
-      <div class="nav-item" data-view="connections" onclick="switchView('connections')">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="M8.59 13.51l6.83 3.98M15.41 6.51l-6.82 3.98"/></svg>
-        Clusters &amp; Hosts
-        <span class="nav-badge" id="conn-count-badge" style="display:none;background:var(--blue)">0</span>
-      </div>
-      <div class="nav-item" data-view="worldmap" onclick="switchView('worldmap')">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
-        World Map
       </div>
       <div class="nav-item" data-view="vms" onclick="switchView('vms')">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
@@ -486,15 +497,30 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
         System Log
       </div>
-      <div class="nav-item" data-view="audit" onclick="switchView('audit')">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
-        Audit Log
-      </div>
       <div class="nav-item" data-view="clustergraphs" onclick="switchView('clustergraphs')">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
         Cluster Graphs
       </div>
     </div>
+
+    <!-- FLEET -->
+    <div class="sidebar-section" data-section="fleet">
+      <div class="sidebar-label" onclick="toggleSidebarSection(this)">
+        <span class="sidebar-label-inner"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>Fleet</span>
+        <span class="sidebar-chevron">▾</span>
+      </div>
+      <div class="nav-item" data-view="connections" onclick="switchView('connections')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="M8.59 13.51l6.83 3.98M15.41 6.51l-6.82 3.98"/></svg>
+        Clusters &amp; Hosts
+        <span class="nav-badge" id="conn-count-badge" style="display:none;background:var(--blue)">0</span>
+      </div>
+      <div class="nav-item" data-view="worldmap" onclick="switchView('worldmap')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+        World Map
+      </div>
+    </div>
+
+    <!-- ACTIONS -->
     <div class="sidebar-section" data-section="actions">
       <div class="sidebar-label" onclick="toggleSidebarSection(this)">
         <span class="sidebar-label-inner"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>Actions</span>
@@ -521,23 +547,12 @@
         ISO &amp; Templates
       </div>
     </div>
+
+    <!-- INFRASTRUCTURE -->
     <div class="sidebar-section" data-section="infra">
       <div class="sidebar-label" onclick="toggleSidebarSection(this)">
         <span class="sidebar-label-inner"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="4" rx="1"/><rect x="2" y="10" width="20" height="4" rx="1"/><rect x="2" y="17" width="20" height="4" rx="1"/></svg>Infrastructure</span>
         <span class="sidebar-chevron">▾</span>
-      </div>
-      <div class="nav-item" data-view="capacity" onclick="switchView('capacity')">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/><path d="M2 20h20" stroke-width="1.5"/><polyline points="6 10 12 4 18 10" stroke-width="1.5" stroke-dasharray="3 2"/></svg>
-        Capacity Planning
-      </div>
-      <div class="nav-item" data-view="affinity" onclick="switchView('affinity')">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="9" cy="12" r="3"/><circle cx="15" cy="12" r="3"/><path d="M12 3v18M3 12h18"/></svg>
-        Affinity Rules
-        <span class="nav-badge warn" id="affinity-badge" style="display:none">!</span>
-      </div>
-      <div class="nav-item" data-view="drs" onclick="switchView('drs')">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="16 12 12 8 8 12"/><line x1="12" y1="16" x2="12" y2="8"/></svg>
-        DRS
       </div>
       <div class="nav-item" data-view="datacenter" onclick="switchView('datacenter')">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
@@ -577,24 +592,59 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
         Backups
       </div>
+      <div class="nav-item" data-view="pbs" onclick="switchView('pbs')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+        Backup Server
+      </div>
     </div>
+
+    <!-- AUTOMATION -->
+    <div class="sidebar-section" data-section="automation">
+      <div class="sidebar-label" onclick="toggleSidebarSection(this)">
+        <span class="sidebar-label-inner"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14M4.93 4.93a10 10 0 0 0 0 14.14"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07M8.46 8.46a5 5 0 0 0 0 7.07"/></svg>Automation</span>
+        <span class="sidebar-chevron">▾</span>
+      </div>
+      <div class="nav-item" data-view="capacity" onclick="switchView('capacity')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/><path d="M2 20h20" stroke-width="1.5"/><polyline points="6 10 12 4 18 10" stroke-width="1.5" stroke-dasharray="3 2"/></svg>
+        Capacity Planning
+      </div>
+      <div class="nav-item" data-view="drs" onclick="switchView('drs')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="16 12 12 8 8 12"/><line x1="12" y1="16" x2="12" y2="8"/></svg>
+        DRS
+      </div>
+      <div class="nav-item" data-view="affinity" onclick="switchView('affinity')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="9" cy="12" r="3"/><circle cx="15" cy="12" r="3"/><path d="M12 3v18M3 12h18"/></svg>
+        Affinity Rules
+        <span class="nav-badge warn" id="affinity-badge" style="display:none">!</span>
+      </div>
+      <div class="nav-item" data-view="hostprofiles" onclick="switchView('hostprofiles')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
+        Host Profiles
+      </div>
+    </div>
+
+    <!-- ADMIN -->
     <div class="sidebar-section" data-section="admin">
       <div class="sidebar-label" onclick="toggleSidebarSection(this)">
         <span class="sidebar-label-inner"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M12 12C8.686 12 6 14.686 6 18h12c0-3.314-2.686-6-6-6z"/><path d="M17 18v1a2 2 0 0 1-2 2H9a2 2 0 0 1-2-2v-1"/></svg>Admin</span>
         <span class="sidebar-chevron">▾</span>
       </div>
+      <div class="nav-item" id="nav-pcc-admin" data-view="pcc-admin" onclick="switchView('pcc-admin')" style="display:none">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+        PCC Admin
+      </div>
       <div class="nav-item" data-view="users" onclick="switchView('users')">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
         Users &amp; Perms
+      </div>
+      <div class="nav-item" data-view="tags" onclick="switchView('tags')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>
+        Tags
       </div>
       <div class="nav-item" data-view="certs" onclick="switchView('certs')">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
         Certificates
         <span class="nav-badge warn" id="cert-badge" style="display:none">!</span>
-      </div>
-      <div class="nav-item" data-view="tags" onclick="switchView('tags')">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>
-        Tags
       </div>
       <div class="nav-item" data-view="tfa" onclick="switchView('tfa')">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M12 17v-2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/><circle cx="12" cy="15" r="1" fill="currentColor"/></svg>
@@ -610,9 +660,9 @@
         Updates
         <span class="nav-badge warn" id="update-badge" style="display:none">0</span>
       </div>
-      <div class="nav-item" data-view="pbs" onclick="switchView('pbs')">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-        Backup Server
+      <div class="nav-item" data-view="audit" onclick="switchView('audit')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+        Audit Log
       </div>
     </div>
 
@@ -995,6 +1045,39 @@
       <div id="drs-content"><div class="empty">Click <strong>▶ Analyse</strong> to calculate cluster balance and get migration recommendations.</div></div>
     </div>
 
+    <!-- PCC ADMIN -->
+    <div id="view-pcc-admin" style="display:none">
+      <div class="section-header">
+        <span class="section-title">PCC Admin</span>
+        <div id="pcc-admin-actions"></div>
+      </div>
+      <div class="dtabs" id="pcc-admin-tabs" style="margin-bottom:14px">
+        <div class="dtab active"  onclick="switchPCCAdminTab('clusters')">Clusters</div>
+        <div class="dtab"         onclick="switchPCCAdminTab('users')">Users</div>
+        <div class="dtab"         onclick="switchPCCAdminTab('audit')">Audit Log</div>
+        <div class="dtab"         onclick="switchPCCAdminTab('account')">My Account</div>
+      </div>
+      <div id="pcc-admin-content"><div class="empty">Loading…</div></div>
+    </div>
+
+    <!-- HOST PROFILES -->
+    <div id="view-hostprofiles" style="display:none">
+      <div class="section-header">
+        <span class="section-title">Host Profiles</span>
+        <div style="display:flex;gap:6px;align-items:center">
+          <div id="hp-tab-action"></div>
+          <button class="btn small" onclick="loadHostProfiles()">Refresh</button>
+        </div>
+      </div>
+      <div class="dtabs" id="hp-tabs" style="margin-bottom:14px">
+        <div class="dtab active" onclick="switchHPTab('profiles')">Profiles</div>
+        <div class="dtab" onclick="switchHPTab('compliance')">Compliance</div>
+        <div class="dtab" onclick="switchHPTab('join')">Add Node</div>
+        <div class="dtab" onclick="switchHPTab('answerfile')">Answer File</div>
+      </div>
+      <div id="hp-content"><div class="empty">Loading…</div></div>
+    </div>
+
     <!-- DATACENTER MANAGEMENT -->
     <div id="view-datacenter" style="display:none">
       <div class="section-header">
@@ -1318,6 +1401,519 @@
 // Official API: https://pve.proxmox.com/pve-docs/api-viewer/
 // ============================================================
 
+// ── PCC BACKEND MODE ─────────────────────────────────────
+// When PCC runs as a standalone server (with Node.js backend),
+// all cluster API calls are proxied through /proxy/:clusterId/
+// and auth uses a PCC JWT instead of Proxmox tickets/tokens.
+// Falls back to direct mode transparently when no backend is detected.
+
+let PCC_BACKEND = false;
+let PCC_TOKEN   = sessionStorage.getItem('pcc-token') || null;
+let PCC_USER    = null;   // { username, role }
+
+const PCC_SHARED_KEYS = new Set([
+  'pve-affinity-rules','pve-drs-settings','pve-host-profiles',
+  'pve-saved-views','pve-alert-thresholds','pve-locations'
+]);
+
+async function pccDetectBackend() {
+  try {
+    const r = await fetch('/api/health', { signal: AbortSignal.timeout(2000) });
+    if (!r.ok) return false;
+    const d = await r.json();
+    return d.ok === true;
+  } catch { return false; }
+}
+
+async function pccVerifySession() {
+  if (!PCC_TOKEN) return false;
+  try {
+    const r = await fetch('/api/auth/me', { headers: { Authorization: 'Bearer ' + PCC_TOKEN } });
+    if (!r.ok) return false;
+    PCC_USER = await r.json();
+    return true;
+  } catch { return false; }
+}
+
+function pccShowLogin() {
+  const overlay = document.getElementById('pcc-login-overlay');
+  if (overlay) overlay.style.display = 'flex';
+  setTimeout(() => document.getElementById('pcc-login-user')?.focus(), 50);
+}
+
+function pccHideLogin() {
+  const overlay = document.getElementById('pcc-login-overlay');
+  if (overlay) overlay.style.display = 'none';
+}
+
+async function pccLogin() {
+  const btn    = document.getElementById('pcc-login-btn');
+  const errEl  = document.getElementById('pcc-login-err');
+  const user   = document.getElementById('pcc-login-user')?.value?.trim();
+  const pw     = document.getElementById('pcc-login-pw')?.value;
+  errEl.style.display = 'none';
+  if (!user || !pw) { errEl.textContent = 'Enter username and password'; errEl.style.display = ''; return; }
+  btn.disabled = true; btn.textContent = 'Signing in…';
+  try {
+    const r = await fetch('/api/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: user, password: pw })
+    });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.error || 'Login failed');
+    PCC_TOKEN = d.token;
+    PCC_USER  = { username: d.username, role: d.role };
+    sessionStorage.setItem('pcc-token', PCC_TOKEN);
+    pccHideLogin();
+    await pccPostLogin();
+  } catch(e) {
+    errEl.textContent = e.message;
+    errEl.style.display = '';
+    btn.disabled = false; btn.textContent = 'Sign in';
+  }
+}
+
+async function pccLogout() {
+  try { await fetch('/api/auth/logout', { method: 'POST', headers: { Authorization: 'Bearer ' + PCC_TOKEN } }); } catch {}
+  PCC_TOKEN = null; PCC_USER = null;
+  sessionStorage.removeItem('pcc-token');
+  // clear all cluster connections
+  clearInterval(PVE.refreshInterval);
+  PVE = { host:'', ticket:'', csrfToken:'', tokenAuth:'', useToken:false,
+          nodes:[], vms:[], containers:[], nodeStatuses:[], tasks:[], syslog:[], refreshInterval:null };
+  extraConns = [];
+  pccShowLogin();
+  document.getElementById('pcc-login-pw').value = '';
+}
+
+async function pccPostLogin() {
+  // Show PCC Admin nav item for admins
+  const adminNav = document.getElementById('nav-pcc-admin');
+  if (adminNav && PCC_USER?.role === 'admin') adminNav.style.display = '';
+
+  // Show logout option in topbar disconnect button
+  const disconnectBtn = document.getElementById('btn-disconnect');
+  if (disconnectBtn) {
+    disconnectBtn.textContent = 'Sign Out';
+    disconnectBtn.onclick = pccLogout;
+    disconnectBtn.style.display = '';
+  }
+
+  // Load shared state from backend into localStorage
+  await pccSyncSharedFromServer();
+
+  // Load and auto-connect to all configured clusters
+  await pccAutoConnect();
+}
+
+async function pccSyncSharedFromServer() {
+  for (const key of PCC_SHARED_KEYS) {
+    try {
+      const r = await fetch('/api/shared/' + encodeURIComponent(key),
+        { headers: { Authorization: 'Bearer ' + PCC_TOKEN } });
+      const d = await r.json();
+      if (d.value) localStorage.setItem(key, d.value);
+    } catch { /* use existing localStorage value */ }
+  }
+}
+
+function _syncShared(key, value) {
+  if (!PCC_BACKEND || !PCC_TOKEN || !PCC_SHARED_KEYS.has(key)) return;
+  fetch('/api/shared/' + encodeURIComponent(key), {
+    method: 'PUT',
+    headers: { 'Authorization': 'Bearer ' + PCC_TOKEN, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ value })
+  }).catch(() => {});
+}
+
+async function pccAutoConnect() {
+  let clusters;
+  try {
+    const r = await fetch('/api/clusters', { headers: { Authorization: 'Bearer ' + PCC_TOKEN } });
+    if (!r.ok) throw new Error('Failed to load clusters');
+    clusters = await r.json();
+  } catch(e) {
+    toast('Could not load clusters: ' + e.message, 'error');
+    switchView('pcc-admin');
+    return;
+  }
+
+  if (!clusters.length) {
+    toast('No clusters configured yet — add one in PCC Admin', 'info');
+    switchView('pcc-admin');
+    return;
+  }
+
+  // Cache real host URLs so openConsole can build direct noVNC URLs
+  window._pccClusterHosts = {};
+  for (const c of clusters) window._pccClusterHosts[c.id] = c.host;
+
+  // Primary cluster — route through backend proxy
+  const primary = clusters[0];
+  PVE.host = '/proxy/' + primary.id;
+
+  // Extra clusters
+  extraConns = clusters.slice(1).map(c => ({
+    id: c.id, name: c.name, host: '/proxy/' + c.id,
+    status: 'connecting', error: null,
+    nodeStatuses: [], vms: [], containers: [], storage: [], nodes: [], tasks: []
+  }));
+
+  // Connect using the existing flow
+  try {
+    await loadNodes();
+    document.getElementById('conn-status').textContent = 'connected';
+    document.getElementById('conn-status').className   = 'pill online';
+    document.getElementById('btn-refresh').disabled    = false;
+    await refreshAll();
+    PVE.refreshInterval = setInterval(refreshAll, 30000);
+    tmStart();
+    renderSavedViewsSidebar();
+    restoreSidebarSections();
+    restoreSidebarCollapse();
+    loadStoredNotifs();
+    updateNotifBadge();
+    toast('Connected to ' + clusters.length + ' cluster' + (clusters.length > 1 ? 's' : ''), 'success');
+    switchView('overview');
+  } catch(e) {
+    toast('Auto-connect failed: ' + e.message, 'error');
+    switchView('pcc-admin');
+  }
+}
+
+// Called on page load — check for backend, then show login or auto-connect
+async function pccInit() {
+  PCC_BACKEND = await pccDetectBackend();
+  if (!PCC_BACKEND) return; // direct mode — normal flow continues
+
+  const valid = await pccVerifySession();
+  if (valid) {
+    await pccPostLogin();
+  } else {
+    PCC_TOKEN = null;
+    sessionStorage.removeItem('pcc-token');
+    pccShowLogin();
+  }
+}
+
+// ── PCC ADMIN VIEW ────────────────────────────────────────
+
+let _pccAdminTab = 'clusters';
+
+function loadPCCAdmin() {
+  if (!PCC_BACKEND) {
+    document.getElementById('pcc-admin-content').innerHTML =
+      '<div class="empty">PCC Admin is only available in backend mode.</div>';
+    return;
+  }
+  switchPCCAdminTab(_pccAdminTab);
+}
+
+function switchPCCAdminTab(tab) {
+  _pccAdminTab = tab;
+  document.querySelectorAll('#pcc-admin-tabs .dtab').forEach((t, i) => {
+    t.classList.toggle('active', ['clusters','users','audit','account'][i] === tab);
+  });
+  const actEl = document.getElementById('pcc-admin-actions');
+  if (actEl) actEl.innerHTML = tab === 'clusters' && PCC_USER?.role === 'admin'
+    ? `<button class="btn small primary" onclick="openAddClusterModal()">+ Add Cluster</button>` : '';
+  _renderPCCAdminTab();
+}
+
+async function _renderPCCAdminTab() {
+  const el = document.getElementById('pcc-admin-content');
+  if (!el) return;
+  el.innerHTML = '<div class="empty"><span class="loading"></span> Loading…</div>';
+
+  const hdr = { Authorization: 'Bearer ' + PCC_TOKEN };
+
+  // ── CLUSTERS ─────────────────────────────────────────────
+  if (_pccAdminTab === 'clusters') {
+    const r = await fetch('/api/clusters', { headers: hdr }).catch(e => ({ ok:false, error:e.message }));
+    if (!r.ok) { el.innerHTML = '<div class="empty">Failed to load clusters</div>'; return; }
+    const clusters = await r.json();
+    if (!clusters.length) {
+      el.innerHTML = `<div style="text-align:center;padding:40px;color:var(--muted)">
+        <div style="font-size:15px;margin-bottom:8px">No clusters configured</div>
+        <div style="font-size:13px;margin-bottom:16px">Add your first Proxmox cluster to get started.</div>
+        ${PCC_USER?.role==='admin'?`<button class="btn primary" onclick="openAddClusterModal()">+ Add Cluster</button>`:''}
+      </div>`;
+      return;
+    }
+    el.innerHTML = `<div class="table-wrap"><table>
+      <thead><tr><th>Name</th><th>Host</th><th>Auth</th><th>Order</th>${PCC_USER?.role==='admin'?'<th>Actions</th>':''}</tr></thead>
+      <tbody>${clusters.map(c => `<tr>
+        <td><strong>${escHtml(c.name)}</strong></td>
+        <td style="font-family:monospace;font-size:12px;color:var(--muted)">${escHtml(c.host)}</td>
+        <td><span class="badge running" style="font-size:10px"><span class="badge-dot"></span>${escHtml(c.auth_type)}</span></td>
+        <td style="color:var(--muted)">${c.sort_order}</td>
+        ${PCC_USER?.role==='admin'?`<td onclick="event.stopPropagation()">
+          <button class="btn small" onclick="openEditClusterModal('${c.id}','${escHtml(c.name)}','${escHtml(c.host)}','${c.auth_type}',${c.sort_order})">✎ Edit</button>
+          <button class="btn small danger" onclick="confirmDeleteCluster('${c.id}','${escHtml(c.name)}')">Delete</button>
+        </td>`:''}
+      </tr>`).join('')}
+      </tbody></table></div>
+      <div style="margin-top:12px;padding:10px 14px;background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius);font-size:12px;color:var(--muted)">
+        ℹ Cluster order determines the primary cluster (sort order 0 first). Restart PCC after changes to reconnect.
+      </div>`;
+    return;
+  }
+
+  // ── USERS ─────────────────────────────────────────────────
+  if (_pccAdminTab === 'users') {
+    if (PCC_USER?.role !== 'admin') { el.innerHTML='<div class="empty">Admin access required.</div>'; return; }
+    const actEl = document.getElementById('pcc-admin-actions');
+    if (actEl) actEl.innerHTML = `<button class="btn small primary" onclick="openAddUserModal()">+ Add User</button>`;
+    const r = await fetch('/api/users', { headers: hdr }).catch(() => ({ ok:false }));
+    if (!r.ok) { el.innerHTML='<div class="empty">Failed to load users</div>'; return; }
+    const users = await r.json();
+    el.innerHTML = `<div class="table-wrap"><table>
+      <thead><tr><th>Username</th><th>Role</th><th>Created</th><th>Last Login</th><th>Actions</th></tr></thead>
+      <tbody>${users.map(u => `<tr>
+        <td><strong>${escHtml(u.username)}</strong>${u.username===PCC_USER?.username?' <span style="font-size:10px;color:var(--accent)">(you)</span>':''}</td>
+        <td><span class="badge ${u.role==='admin'?'warn':'running'}" style="font-size:10px"><span class="badge-dot"></span>${u.role}</span></td>
+        <td style="color:var(--muted);font-size:12px">${u.created_at?new Date(u.created_at*1000).toLocaleDateString():'—'}</td>
+        <td style="color:var(--muted);font-size:12px">${u.last_login?new Date(u.last_login*1000).toLocaleString():'Never'}</td>
+        <td onclick="event.stopPropagation()">
+          <button class="btn small" onclick="openResetPasswordModal(${u.id},'${escHtml(u.username)}')">Reset PW</button>
+          ${u.username!==PCC_USER?.username?`<button class="btn small danger" onclick="confirmDeleteUser(${u.id},'${escHtml(u.username)}')">Delete</button>`:''}
+        </td>
+      </tr>`).join('')}</tbody></table></div>`;
+    return;
+  }
+
+  // ── AUDIT LOG ─────────────────────────────────────────────
+  if (_pccAdminTab === 'audit') {
+    const r = await fetch('/api/audit?limit=200', { headers: hdr }).catch(() => ({ ok:false }));
+    if (!r.ok) { el.innerHTML='<div class="empty">Failed to load audit log</div>'; return; }
+    const rows = await r.json();
+    if (!rows.length) { el.innerHTML='<div class="empty">No audit entries yet.</div>'; return; }
+    el.innerHTML = `<div class="table-wrap"><table>
+      <thead><tr><th>Time</th><th>User</th><th>Method</th><th>Path</th><th>Cluster</th></tr></thead>
+      <tbody>${rows.map(row => `<tr>
+        <td style="font-size:11px;color:var(--muted);white-space:nowrap">${new Date(row.ts*1000).toLocaleString()}</td>
+        <td><strong>${escHtml(row.username)}</strong></td>
+        <td><span style="font-family:monospace;font-size:11px;color:${
+          row.method==='DELETE'?'var(--red)':row.method==='POST'?'var(--green)':row.method==='PUT'?'var(--teal)':'var(--muted)'
+        }">${row.method}</span></td>
+        <td style="font-family:monospace;font-size:11px;color:var(--muted)">${escHtml(row.path)}</td>
+        <td style="font-size:11px;color:var(--muted)">${row.cluster_id?escHtml(row.cluster_id):'—'}</td>
+      </tr>`).join('')}</tbody></table></div>`;
+    return;
+  }
+
+  // ── MY ACCOUNT ────────────────────────────────────────────
+  if (_pccAdminTab === 'account') {
+    const actEl = document.getElementById('pcc-admin-actions');
+    if (actEl) actEl.innerHTML = '';
+    el.innerHTML = `<div style="max-width:400px">
+      <div style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);padding:18px;margin-bottom:14px">
+        <div style="font-size:14px;font-weight:700;margin-bottom:4px">${escHtml(PCC_USER?.username||'')}</div>
+        <div style="font-size:12px;color:var(--muted)">Role: ${escHtml(PCC_USER?.role||'')}</div>
+      </div>
+      <div class="section-title" style="font-size:11px;margin-bottom:10px">CHANGE PASSWORD</div>
+      <div class="form-group"><label>CURRENT PASSWORD</label><input id="acc-cur-pw" type="password"/></div>
+      <div class="form-group"><label>NEW PASSWORD</label><input id="acc-new-pw" type="password"/></div>
+      <div class="form-group"><label>CONFIRM NEW PASSWORD</label><input id="acc-conf-pw" type="password"/></div>
+      <div id="acc-err" style="display:none;color:var(--red);font-size:12px;margin-bottom:8px"></div>
+      <button class="btn primary" onclick="changeOwnPassword()">Change Password</button>
+      <hr style="border:none;border-top:1px solid var(--border);margin:20px 0"/>
+      <button class="btn danger" onclick="pccLogout()">Sign Out</button>
+    </div>`;
+  }
+}
+
+async function changeOwnPassword() {
+  const cur  = document.getElementById('acc-cur-pw')?.value;
+  const nw   = document.getElementById('acc-new-pw')?.value;
+  const conf = document.getElementById('acc-conf-pw')?.value;
+  const errEl = document.getElementById('acc-err');
+  errEl.style.display = 'none';
+  if (!cur || !nw) { errEl.textContent = 'Fill in all fields'; errEl.style.display = ''; return; }
+  if (nw !== conf) { errEl.textContent = 'New passwords do not match'; errEl.style.display = ''; return; }
+  try {
+    const r = await fetch('/api/auth/change-password', {
+      method: 'POST',
+      headers: { Authorization: 'Bearer ' + PCC_TOKEN, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ currentPassword: cur, newPassword: nw })
+    });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.error);
+    toast('Password changed', 'success');
+    document.getElementById('acc-cur-pw').value = '';
+    document.getElementById('acc-new-pw').value = '';
+    document.getElementById('acc-conf-pw').value = '';
+  } catch(e) { errEl.textContent = e.message; errEl.style.display = ''; }
+}
+
+// ── CLUSTER CRUD ──────────────────────────────────────────
+
+function openAddClusterModal() {
+  document.getElementById('modal-title').textContent = 'Add Cluster';
+  document.getElementById('modal-body').innerHTML = `
+    <p style="font-size:13px;color:var(--muted);margin-bottom:12px">
+      Add a Proxmox VE cluster or standalone host. Use the WireGuard IP if connected via VPN.
+    </p>
+    <div class="form-group"><label>DISPLAY NAME</label><input id="ac-name" placeholder="Site A — Production"/></div>
+    <div class="form-group"><label>HOST URL</label><input id="ac-host" placeholder="https://10.99.0.2:8006"/></div>
+    <div class="form-group"><label>AUTH TYPE</label>
+      <select id="ac-authtype" onchange="document.getElementById('ac-token-help').style.display=this.value==='token'?'':'none'">
+        <option value="token">API Token (recommended)</option>
+      </select>
+    </div>
+    <div class="form-group"><label>API TOKEN</label>
+      <input id="ac-token" placeholder="PVEAPIToken=root@pam!pcc=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" style="font-family:monospace;font-size:11px"/>
+    </div>
+    <div id="ac-token-help" style="font-size:11px;color:var(--muted);margin-top:-6px;margin-bottom:10px">
+      In Proxmox: Datacenter → API Tokens → Add (User: root@pam, Token ID: pcc, Privilege Separation: No)
+    </div>
+    <div class="form-group"><label>SORT ORDER (0 = primary cluster)</label><input id="ac-order" type="number" value="10"/></div>`;
+  const btn = document.getElementById('modal-confirm-btn');
+  btn.textContent = 'Add Cluster'; btn.disabled = false;
+  btn.onclick = async () => {
+    const name = document.getElementById('ac-name')?.value?.trim();
+    const host = document.getElementById('ac-host')?.value?.trim();
+    const tok  = document.getElementById('ac-token')?.value?.trim();
+    if (!name || !host || !tok) return toast('Name, host and token are required', 'error');
+    btn.disabled = true; btn.textContent = 'Adding…';
+    try {
+      const r = await fetch('/api/clusters', {
+        method: 'POST',
+        headers: { Authorization: 'Bearer ' + PCC_TOKEN, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, host, auth_type: 'token', auth_value: tok, sort_order: parseInt(document.getElementById('ac-order')?.value)||0 })
+      });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.error);
+      document.getElementById('modal-bg').classList.remove('open');
+      btn.onclick = confirmModal; btn.textContent = 'Confirm'; btn.disabled = false;
+      toast('Cluster added — reconnect to apply', 'success');
+      switchPCCAdminTab('clusters');
+    } catch(e) { btn.disabled = false; btn.textContent = 'Add Cluster'; toast(e.message, 'error'); }
+  };
+  document.getElementById('modal-bg').classList.add('open');
+}
+
+function openEditClusterModal(id, name, host, authType, sortOrder) {
+  document.getElementById('modal-title').textContent = 'Edit Cluster';
+  document.getElementById('modal-body').innerHTML = `
+    <div class="form-group"><label>DISPLAY NAME</label><input id="ec-name" value="${escHtml(name)}"/></div>
+    <div class="form-group"><label>HOST URL</label><input id="ec-host" value="${escHtml(host)}"/></div>
+    <div class="form-group"><label>NEW API TOKEN (leave blank to keep existing)</label>
+      <input id="ec-token" placeholder="PVEAPIToken=root@pam!pcc=…" style="font-family:monospace;font-size:11px"/>
+    </div>
+    <div class="form-group"><label>SORT ORDER</label><input id="ec-order" type="number" value="${sortOrder}"/></div>`;
+  const btn = document.getElementById('modal-confirm-btn');
+  btn.textContent = 'Save'; btn.disabled = false;
+  btn.onclick = async () => {
+    const body = {
+      name:  document.getElementById('ec-name')?.value?.trim(),
+      host:  document.getElementById('ec-host')?.value?.trim(),
+      sort_order: parseInt(document.getElementById('ec-order')?.value) || 0
+    };
+    const tok = document.getElementById('ec-token')?.value?.trim();
+    if (tok) { body.auth_type = 'token'; body.auth_value = tok; }
+    btn.disabled = true; btn.textContent = 'Saving…';
+    try {
+      const r = await fetch('/api/clusters/' + id, {
+        method: 'PUT',
+        headers: { Authorization: 'Bearer ' + PCC_TOKEN, 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+      });
+      if (!r.ok) { const d=await r.json(); throw new Error(d.error); }
+      document.getElementById('modal-bg').classList.remove('open');
+      btn.onclick = confirmModal; btn.textContent = 'Confirm'; btn.disabled = false;
+      toast('Cluster updated', 'success');
+      switchPCCAdminTab('clusters');
+    } catch(e) { btn.disabled = false; btn.textContent = 'Save'; toast(e.message, 'error'); }
+  };
+  document.getElementById('modal-bg').classList.add('open');
+}
+
+function confirmDeleteCluster(id, name) {
+  document.getElementById('modal-title').textContent = 'Delete Cluster';
+  document.getElementById('modal-body').innerHTML = `<p style="color:var(--muted)">Remove cluster <strong style="color:var(--red)">${escHtml(name)}</strong> from PCC?<br><small>This only removes it from PCC — the Proxmox cluster itself is unaffected.</small></p>`;
+  modalCallback = async () => {
+    const r = await fetch('/api/clusters/' + id, { method:'DELETE', headers:{ Authorization:'Bearer '+PCC_TOKEN }});
+    if (r.ok) { toast('Cluster removed', 'info'); switchPCCAdminTab('clusters'); }
+    else { const d=await r.json(); toast(d.error,'error'); }
+  };
+  document.getElementById('modal-bg').classList.add('open');
+}
+
+// ── USER CRUD ─────────────────────────────────────────────
+
+function openAddUserModal() {
+  document.getElementById('modal-title').textContent = 'Add PCC User';
+  document.getElementById('modal-body').innerHTML = `
+    <div class="form-group"><label>USERNAME</label><input id="au-name" placeholder="alice"/></div>
+    <div class="form-group"><label>PASSWORD</label><input id="au-pw" type="password"/></div>
+    <div class="form-group"><label>ROLE</label>
+      <select id="au-role"><option value="user">User</option><option value="admin">Admin</option></select>
+    </div>`;
+  const btn = document.getElementById('modal-confirm-btn');
+  btn.textContent = 'Create User'; btn.disabled = false;
+  btn.onclick = async () => {
+    const name = document.getElementById('au-name')?.value?.trim();
+    const pw   = document.getElementById('au-pw')?.value;
+    const role = document.getElementById('au-role')?.value;
+    if (!name || !pw) return toast('Username and password required', 'error');
+    btn.disabled = true; btn.textContent = 'Creating…';
+    try {
+      const r = await fetch('/api/users', {
+        method: 'POST',
+        headers: { Authorization: 'Bearer ' + PCC_TOKEN, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: name, password: pw, role })
+      });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.error);
+      document.getElementById('modal-bg').classList.remove('open');
+      btn.onclick = confirmModal; btn.textContent = 'Confirm'; btn.disabled = false;
+      toast('User created', 'success');
+      switchPCCAdminTab('users');
+    } catch(e) { btn.disabled = false; btn.textContent = 'Create User'; toast(e.message, 'error'); }
+  };
+  document.getElementById('modal-bg').classList.add('open');
+}
+
+function openResetPasswordModal(id, username) {
+  document.getElementById('modal-title').textContent = `Reset Password — ${escHtml(username)}`;
+  document.getElementById('modal-body').innerHTML = `
+    <div class="form-group"><label>NEW PASSWORD</label><input id="rp-pw" type="password"/></div>
+    <div class="form-group"><label>CONFIRM</label><input id="rp-conf" type="password"/></div>`;
+  const btn = document.getElementById('modal-confirm-btn');
+  btn.textContent = 'Reset Password'; btn.disabled = false;
+  btn.onclick = async () => {
+    const pw = document.getElementById('rp-pw')?.value;
+    const conf = document.getElementById('rp-conf')?.value;
+    if (pw !== conf) return toast('Passwords do not match', 'error');
+    btn.disabled = true; btn.textContent = 'Resetting…';
+    try {
+      const r = await fetch('/api/users/' + id, {
+        method: 'PUT',
+        headers: { Authorization: 'Bearer ' + PCC_TOKEN, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password: pw })
+      });
+      if (!r.ok) { const d=await r.json(); throw new Error(d.error); }
+      document.getElementById('modal-bg').classList.remove('open');
+      btn.onclick = confirmModal; btn.textContent = 'Confirm'; btn.disabled = false;
+      toast('Password reset', 'success');
+    } catch(e) { btn.disabled = false; btn.textContent = 'Reset Password'; toast(e.message, 'error'); }
+  };
+  document.getElementById('modal-bg').classList.add('open');
+}
+
+function confirmDeleteUser(id, username) {
+  document.getElementById('modal-title').textContent = 'Delete User';
+  document.getElementById('modal-body').innerHTML = `<p style="color:var(--muted)">Delete PCC user <strong style="color:var(--red)">${escHtml(username)}</strong>?</p>`;
+  modalCallback = async () => {
+    const r = await fetch('/api/users/' + id, { method:'DELETE', headers:{ Authorization:'Bearer '+PCC_TOKEN }});
+    if (r.ok) { toast('User deleted', 'info'); switchPCCAdminTab('users'); }
+    else { const d=await r.json(); toast(d.error,'error'); }
+  };
+  document.getElementById('modal-bg').classList.add('open');
+}
+
 let PVE = {
   host:'', ticket:'', csrfToken:'', tokenAuth:'', useToken:false,
   nodes:[], vms:[], containers:[], nodeStatuses:[],
@@ -1639,8 +2235,11 @@ function disconnect() {
 
 function pveHeaders(extra={}) {
   const h={};
-  if (PVE.useToken) { h['Authorization']=PVE.tokenAuth; }
-  else {
+  if (PCC_BACKEND && PCC_TOKEN) {
+    h['Authorization'] = 'Bearer ' + PCC_TOKEN;  // backend proxy handles Proxmox auth
+  } else if (PVE.useToken) {
+    h['Authorization'] = PVE.tokenAuth;
+  } else {
     if (PVE.ticket) h['Authorization']=`PVEAuthCookie=${PVE.ticket}`;
     if (PVE.csrfToken) h['CSRFPreventionToken']=PVE.csrfToken;
   }
@@ -1688,8 +2287,11 @@ function getConnName(connId) {
 
 function connHeaders(conn, extra={}) {
   const h = {};
-  if (conn.useToken) h['Authorization'] = conn.tokenAuth;
-  else {
+  if (PCC_BACKEND && PCC_TOKEN) {
+    h['Authorization'] = 'Bearer ' + PCC_TOKEN;  // backend proxy handles Proxmox auth
+  } else if (conn.useToken) {
+    h['Authorization'] = conn.tokenAuth;
+  } else {
     if (conn.ticket)    h['Authorization']      = `PVEAuthCookie=${conn.ticket}`;
     if (conn.csrfToken) h['CSRFPreventionToken'] = conn.csrfToken;
   }
@@ -2468,7 +3070,7 @@ async function migrateVM(node, vmid, type, targetNode, online=false, withLocal=f
 
 function switchView(view) {
   expandSidebarSection(view); // auto-expand collapsed section if needed
-  const views=['connect','connections','worldmap','savedview','overview','vms','containers','nodes','tasks','syslog','storage','network','heatmap','isolib','sdn','capacity','affinity','drs','datacenter','pools','ceph','ha','firewall','backups','users','certs','audit','clustergraphs','tags','tfa','subscriptions','updates','pbs'];
+  const views=['connect','connections','worldmap','savedview','overview','vms','containers','nodes','tasks','syslog','storage','network','heatmap','isolib','sdn','capacity','affinity','drs','hostprofiles','pcc-admin','datacenter','pools','ceph','ha','firewall','backups','users','certs','audit','clustergraphs','tags','tfa','subscriptions','updates','pbs'];
   views.forEach(v=>{
     const el=document.getElementById('view-'+v);
     if(el) el.style.display=v===view?'':'none';
@@ -2521,6 +3123,8 @@ function switchView(view) {
   if(view==='pools') loadPools();
   if(view==='affinity') renderAffinityView();
   if(view==='capacity') runCapacityAnalysis();
+  if(view==='hostprofiles') loadHostProfiles();
+  if(view==='pcc-admin') loadPCCAdmin();
   if(view==='datacenter') loadDatacenter();
   if(view!=='connect') renderCurrentView();
 }
@@ -3969,13 +4573,60 @@ document.addEventListener('keydown', e => {
 // ── CONSOLE ──────────────────────────────────────────────
 // Opens noVNC console in a new tab via standard Proxmox VE URL
 // Official ref: https://pve.proxmox.com/wiki/Console
-function openConsole(node, vmid, type) {
-  // Strip the nginx proxy port and use the native PVE port 8006
-  const baseUrl = PVE.host.replace(/:8080$/, ':8006').replace(/^http:/, 'https:');
-  const ep = type === 'vm' ? 'qemu' : 'lxc';
-  const url = `${baseUrl}/?console=${ep}&vmid=${vmid}&node=${node}&novnc=1`;
-  window.open(url, '_blank');
-  toast(`Opening console for ${type.toUpperCase()} ${vmid}`, 'info');
+// Find which extra connection owns a node (returns null = primary cluster)
+function _findConnForNode(nodeName) {
+  for (const c of extraConns) {
+    if ((c.nodeStatuses || []).some(n => n.node === nodeName)) return c;
+  }
+  return null;
+}
+
+// Resolve the real PVE base URL for a given connection host string.
+// In direct mode the host already is a real URL (http://host:8080 → https://host:8006).
+// In backend mode the host is /proxy/<id> — look up the real host from the cache.
+function _pveBaseUrl(hostStr) {
+  if (!hostStr) hostStr = PVE.host;
+  if (hostStr.startsWith('/proxy/')) {
+    const id = hostStr.replace('/proxy/', '');
+    return (window._pccClusterHosts?.[id] || '').replace(/\/$/, '');
+  }
+  return hostStr.replace(/:8080$/, ':8006').replace(/^http:\/\//, 'https://');
+}
+
+async function openConsole(node, vmid, type, connId) {
+  // Determine which connection owns this node
+  const conn = connId ? resolveConn(connId) : _findConnForNode(node);
+  const post  = conn ? (p, d) => connPost(conn, p, d) : pvePost;
+  const hostStr = conn ? conn.host : PVE.host;
+  const pveBase = _pveBaseUrl(hostStr);
+
+  if (!pveBase) {
+    toast('Cannot determine PVE host URL for console', 'error');
+    return;
+  }
+
+  try {
+    let url;
+
+    if (type === 'node') {
+      // Node shell — termproxy gives a ticket for xterm.js
+      const res = await post(`/api2/json/nodes/${node}/termproxy`, {});
+      const d = res.data;
+      url = `${pveBase}/?console=shell&node=${encodeURIComponent(node)}&ticket=${encodeURIComponent(d.ticket)}&port=${d.port}&novnc=1`;
+
+    } else {
+      const ep = (type === 'qemu' || type === 'vm') ? 'qemu' : 'lxc';
+      const consType = ep; // 'qemu' or 'lxc' for the ?console= param
+      const res = await post(`/api2/json/nodes/${node}/${ep}/${vmid}/vncproxy`, { websocket: 1 });
+      const d = res.data;
+      url = `${pveBase}/?console=${consType}&novnc=1&vmid=${encodeURIComponent(vmid)}&node=${encodeURIComponent(node)}&ticket=${encodeURIComponent(d.ticket)}&port=${d.port}&resize=scale`;
+    }
+
+    window.open(url, '_blank', 'noopener');
+    toast('Opening console…', 'info');
+  } catch(e) {
+    toast('Console error: ' + e.message, 'error');
+  }
 }
 
 // ── SNAPSHOTS ────────────────────────────────────────────
@@ -9251,7 +9902,7 @@ function getConnLocations() {
 function saveConnLocation(connId, lat, lng, label) {
   const locs = getConnLocations();
   if (lat===null) { delete locs[connId]; } else { locs[connId] = { lat:+lat, lng:+lng, label:label||'' }; }
-  localStorage.setItem('pve-locations', JSON.stringify(locs));
+  const v=JSON.stringify(locs); localStorage.setItem('pve-locations',v); _syncShared('pve-locations',v);
 }
 
 function _mapConns() {
@@ -9870,7 +10521,7 @@ function getAffinityRules() {
   catch(e) { return []; }
 }
 function saveAffinityRules(rules) {
-  localStorage.setItem('pve-affinity-rules', JSON.stringify(rules));
+  const v=JSON.stringify(rules); localStorage.setItem('pve-affinity-rules',v); _syncShared('pve-affinity-rules',v);
 }
 
 // Check a single rule — returns {violated, detail, affectedVMs, suggestedFixes}
@@ -10181,7 +10832,7 @@ function getDRSSettings() {
   try { return {...defaults,...JSON.parse(localStorage.getItem('pve-drs-settings')||'{}')}; }
   catch(e) { return defaults; }
 }
-function saveDRSSettings(s) { localStorage.setItem('pve-drs-settings',JSON.stringify(s)); }
+function saveDRSSettings(s) { const v=JSON.stringify(s); localStorage.setItem('pve-drs-settings',v); _syncShared('pve-drs-settings',v); }
 
 function toggleDRSDryRun() {
   const s=getDRSSettings(); s.dryRun=!s.dryRun; saveDRSSettings(s);
@@ -11234,7 +11885,7 @@ function getAlertThresholds() {
   try { return { ...defaults, ...JSON.parse(localStorage.getItem('pve-alert-thresholds')||'{}') }; }
   catch(e) { return defaults; }
 }
-function saveAlertThresholds(t) { localStorage.setItem('pve-alert-thresholds', JSON.stringify(t)); }
+function saveAlertThresholds(t) { const v=JSON.stringify(t); localStorage.setItem('pve-alert-thresholds',v); _syncShared('pve-alert-thresholds',v); }
 
 function loadStoredNotifs() {
   try {
@@ -11437,6 +12088,566 @@ async function requestNotifPermission() {
   if (!('Notification' in window)) return toast('Browser notifications not supported in this browser', 'error');
   const perm = await Notification.requestPermission();
   toast(perm==='granted' ? '✓ Browser notifications enabled' : 'Browser notifications denied — check browser settings', perm==='granted'?'success':'error');
+}
+
+// ── HOST PROFILES ─────────────────────────────────────────
+// VMware-style host profile system: capture a reference node's config,
+// detect drift across all nodes, and apply settings at scale.
+// Stored in localStorage (no native PVE API for this concept).
+// Settings covered: DNS, timezone, NTP server, custom hosts entries,
+// custom apt repositories (if accessible).
+
+function getHostProfiles() {
+  try { return JSON.parse(localStorage.getItem('pve-host-profiles')||'[]'); }
+  catch(e) { return []; }
+}
+function saveHostProfiles(p) { const v=JSON.stringify(p); localStorage.setItem('pve-host-profiles',v); _syncShared('pve-host-profiles',v); }
+
+let _hpTab = 'profiles';
+
+function switchHPTab(tab) {
+  _hpTab = tab;
+  document.querySelectorAll('#hp-tabs .dtab').forEach((t,i)=>{
+    t.classList.toggle('active',['profiles','compliance','join','answerfile'][i]===tab);
+  });
+  const actEl=document.getElementById('hp-tab-action');
+  if(actEl) actEl.innerHTML = tab==='profiles'?`<button class="btn small primary" onclick="openCaptureProfileModal()">+ Capture from Node</button>`:
+    tab==='compliance'?`<button class="btn small primary" onclick="runComplianceCheck()">▶ Check All Nodes</button>`:'';
+  _renderHPTab();
+}
+
+async function loadHostProfiles() {
+  switchHPTab(_hpTab);
+}
+
+function _renderHPTab() {
+  const el=document.getElementById('hp-content'); if(!el) return;
+
+  // ── PROFILES TAB ────────────────────────────────────────
+  if(_hpTab==='profiles') {
+    const profiles=getHostProfiles();
+    const actEl=document.getElementById('hp-tab-action');
+    if(actEl) actEl.innerHTML=`<button class="btn small primary" onclick="openCaptureProfileModal()">+ Capture from Node</button>`;
+
+    if(!profiles.length) {
+      el.innerHTML=`
+        <div style="text-align:center;padding:40px 20px;color:var(--muted)">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="width:48px;height:48px;margin:0 auto 14px;display:block;opacity:.4"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+          <div style="font-size:15px;margin-bottom:8px">No host profiles yet</div>
+          <div style="font-size:13px;margin-bottom:16px">Capture a node's configuration as a reference profile,<br>then apply it to other nodes or check for drift.</div>
+          <button class="btn primary" onclick="openCaptureProfileModal()">+ Capture from Node</button>
+        </div>`;
+      return;
+    }
+
+    el.innerHTML=`
+      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px">
+        ${profiles.map(p=>`
+          <div style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);padding:14px">
+            <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:10px">
+              <div>
+                <div style="font-weight:700;font-size:14px">${escHtml(p.name)}</div>
+                ${p.description?`<div style="font-size:12px;color:var(--muted);margin-top:2px">${escHtml(p.description)}</div>`:''}
+                <div style="font-size:11px;color:var(--muted);margin-top:4px">Captured from: <strong>${escHtml(p.sourceNode||'—')}</strong> · ${p.created?new Date(p.created).toLocaleDateString():'—'}</div>
+              </div>
+            </div>
+            <div style="font-size:12px;color:var(--muted);margin-bottom:10px;line-height:1.7">
+              ${p.settings.dns?.dns1?`DNS: <strong style="color:var(--text)">${p.settings.dns.dns1}${p.settings.dns.search?' / '+p.settings.dns.search:''}</strong><br>`:''}
+              ${p.settings.timezone?`Timezone: <strong style="color:var(--text)">${p.settings.timezone}</strong><br>`:''}
+              ${p.settings.ntpServer?`NTP: <strong style="color:var(--text)">${p.settings.ntpServer}</strong><br>`:''}
+              ${p.settings.customHosts?.length?`Custom hosts: <strong style="color:var(--text)">${p.settings.customHosts.length} entries</strong>`:''}
+            </div>
+            <div style="display:flex;gap:5px;flex-wrap:wrap">
+              <button class="btn small success" onclick="openApplyProfileModal('${p.id}')">▶ Apply</button>
+              <button class="btn small" onclick="switchHPTab('compliance');setComplianceProfile('${p.id}')">📊 Compliance</button>
+              <button class="btn small" onclick="openEditProfileModal('${p.id}')">✎ Edit</button>
+              <button class="btn small danger" onclick="confirmDeleteProfile('${p.id}')">Delete</button>
+            </div>
+          </div>`).join('')}
+      </div>`;
+  }
+
+  // ── COMPLIANCE TAB ───────────────────────────────────────
+  else if(_hpTab==='compliance') {
+    const profiles=getHostProfiles();
+    const actEl=document.getElementById('hp-tab-action');
+    if(actEl) actEl.innerHTML=`<button class="btn small primary" onclick="runComplianceCheck()">▶ Check All Nodes</button>`;
+    if(!profiles.length) { el.innerHTML='<div class="empty">Create a host profile first.</div>'; return; }
+    const profileOpts=profiles.map(p=>`<option value="${p.id}">${escHtml(p.name)}</option>`).join('');
+    el.innerHTML=`
+      <div style="display:flex;gap:10px;align-items:flex-end;margin-bottom:16px;flex-wrap:wrap">
+        <div class="form-group" style="margin:0">
+          <label style="font-size:11px">REFERENCE PROFILE</label>
+          <select id="hp-comp-profile" style="width:220px;padding:5px 8px;font-size:13px">${profileOpts}</select>
+        </div>
+        <button class="btn small primary" onclick="runComplianceCheck()">▶ Check All Nodes</button>
+      </div>
+      <div id="hp-comp-result"><div class="empty" style="color:var(--muted)">Select a profile and click Check All Nodes.</div></div>`;
+  }
+
+  // ── ADD NODE TAB ─────────────────────────────────────────
+  else if(_hpTab==='join') {
+    const actEl=document.getElementById('hp-tab-action'); if(actEl) actEl.innerHTML='';
+    // Get cluster join info
+    pveGet('/api2/json/cluster/config/join').then(d=>{
+      const info=d.data||{};
+      const nodes=(info.nodelist||[]);
+      const clusterName=(info.totem?.cluster_name)||'—';
+      const firstNode=nodes[0]||{};
+      el.innerHTML=`
+        <div style="max-width:720px">
+          <div class="stats-grid" style="margin-bottom:20px">
+            <div class="stat-card accent-blue"><div class="label">Cluster</div><div class="value" style="font-size:18px">${escHtml(clusterName)}</div></div>
+            <div class="stat-card accent-green"><div class="label">Current Nodes</div><div class="value">${nodes.length}</div></div>
+          </div>
+
+          <div class="section-header" style="margin-bottom:10px"><span class="section-title">Method 1 — Join from PCC (requires API on new node)</span></div>
+          <div style="background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius);padding:14px;margin-bottom:16px">
+            <p style="color:var(--muted);font-size:13px;margin-bottom:12px">
+              If the new Proxmox node is already installed and you've added it as a connection in PCC (Clusters &amp; Hosts),
+              select it below and PCC will send the join command for you.
+            </p>
+            <div class="create-vm-grid">
+              <div class="form-group"><label>NEW NODE (select from extra connections)</label>
+                <select id="join-new-conn">
+                  <option value="">— select a connected node —</option>
+                  ${extraConns.map(c=>`<option value="${c.id}">${escHtml(c.name||c.host)}</option>`).join('')}
+                </select>
+              </div>
+              <div class="form-group"><label>NEW NODE HOSTNAME / IP</label>
+                <input id="join-new-ip" placeholder="192.168.1.30 or pve3.example.com"/>
+              </div>
+            </div>
+            <div class="create-vm-grid">
+              <div class="form-group"><label>THIS NODE'S CLUSTER ADDRESS</label>
+                <input id="join-src-ip" value="${escHtml(firstNode.ring0_addr||firstNode.pve_addr||PVE.host.replace(/https?:\/\//,'').replace(/:.*$/,''))}"/>
+              </div>
+              <div class="form-group"><label>CLUSTER FINGERPRINT</label>
+                <input id="join-fp" value="${escHtml(firstNode.pve_fp||'')}" style="font-family:monospace;font-size:11px"/>
+              </div>
+            </div>
+            <div class="create-vm-grid">
+              <div class="form-group"><label>ROOT PASSWORD (of the source node)</label>
+                <input id="join-pw" type="password" placeholder="root password for authentication"/>
+              </div>
+            </div>
+            <div id="join-err" style="display:none;margin-bottom:8px;padding:8px 12px;background:rgba(248,81,73,.1);border:1px solid var(--red);border-radius:var(--radius);font-size:12px;color:var(--red)"></div>
+            <button class="btn primary" onclick="executeClusterJoin()">⚡ Join to Cluster</button>
+          </div>
+
+          <div class="section-header" style="margin-bottom:10px"><span class="section-title">Method 2 — Manual join command</span></div>
+          <div style="background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius);padding:14px;margin-bottom:16px">
+            <p style="color:var(--muted);font-size:13px;margin-bottom:10px">Run this on the new node's shell:</p>
+            <div style="background:var(--bg);border:1px solid var(--border);border-radius:4px;padding:10px 14px;font-family:monospace;font-size:12px;color:var(--teal);overflow-x:auto;margin-bottom:8px">
+              pvecm add ${escHtml(firstNode.ring0_addr||firstNode.pve_addr||'&lt;THIS_NODE_IP&gt;')} --use_ssh
+            </div>
+            <p style="color:var(--muted);font-size:12px">After joining, the new node will appear in the Clusters &amp; Hosts view automatically on the next refresh.</p>
+          </div>
+
+          <div class="section-header" style="margin-bottom:10px"><span class="section-title">Cluster membership</span></div>
+          <div class="table-wrap"><table>
+            <thead><tr><th>Node</th><th>IP Address</th><th>Node ID</th><th>Fingerprint</th></tr></thead>
+            <tbody>${nodes.map(n=>`<tr>
+              <td><strong>${escHtml(n.name||'—')}</strong></td>
+              <td style="font-family:monospace;font-size:12px;color:var(--muted)">${escHtml(n.ring0_addr||n.pve_addr||'—')}</td>
+              <td style="color:var(--muted)">${n.nodeid||'—'}</td>
+              <td style="font-family:monospace;font-size:10px;color:var(--muted);max-width:200px;overflow:hidden;text-overflow:ellipsis">${escHtml(n.pve_fp||'—')}</td>
+            </tr>`).join('')}
+            </tbody></table></div>
+        </div>`;
+    }).catch(e=>{ el.innerHTML=`<div class="empty">Failed to load cluster info: ${e.message}</div>`; });
+  }
+
+  // ── ANSWER FILE TAB ──────────────────────────────────────
+  else if(_hpTab==='answerfile') {
+    const actEl=document.getElementById('hp-tab-action'); if(actEl) actEl.innerHTML='';
+    const profiles=getHostProfiles();
+    const profileOpts=profiles.length?profiles.map(p=>`<option value="${p.id}">${escHtml(p.name)}</option>`).join(''):
+      '<option value="">— no profiles yet (create one first to pre-fill) —</option>';
+
+    el.innerHTML=`
+      <div style="max-width:680px">
+        <div style="background:rgba(88,166,255,.08);border:1px solid rgba(88,166,255,.3);border-radius:var(--radius);padding:12px 16px;margin-bottom:16px;font-size:13px;color:var(--muted)">
+          ℹ Proxmox 8.1+ supports <strong style="color:var(--text)">unattended (answer file) installation</strong>.
+          Generate the file here, then use <code>proxmox-auto-install-assistant</code> to embed it into the Proxmox ISO.
+          The resulting ISO will install completely automatically.
+        </div>
+
+        <div class="create-vm-grid">
+          <div class="form-group"><label>PRE-FILL FROM PROFILE (optional)</label>
+            <select id="af-profile" onchange="afFillFromProfile()">${'<option value="">— manual entry —</option>'+profileOpts}</select>
+          </div>
+          <div class="form-group"><label>HOSTNAME (FQDN)</label>
+            <input id="af-fqdn" placeholder="pve3.certus.lan"/>
+          </div>
+        </div>
+        <div class="create-vm-grid">
+          <div class="form-group"><label>COUNTRY CODE</label>
+            <input id="af-country" value="gb" placeholder="gb" style="width:80px"/>
+          </div>
+          <div class="form-group"><label>KEYBOARD</label>
+            <input id="af-keyboard" value="en-gb" placeholder="en-gb"/>
+          </div>
+        </div>
+        <div class="create-vm-grid">
+          <div class="form-group"><label>TIMEZONE</label>
+            <input id="af-tz" placeholder="Europe/London"/>
+          </div>
+          <div class="form-group"><label>EMAIL (for cert alerts)</label>
+            <input id="af-email" type="email" placeholder="admin@example.com"/>
+          </div>
+        </div>
+        <div class="create-vm-grid">
+          <div class="form-group"><label>ROOT PASSWORD</label>
+            <input id="af-pw" type="password" placeholder="root password"/>
+          </div>
+          <div class="form-group"><label>INSTALL DISK</label>
+            <input id="af-disk" value="/dev/sda" placeholder="/dev/sda"/>
+          </div>
+        </div>
+        <div class="create-vm-grid">
+          <div class="form-group"><label>IP ADDRESS / PREFIX</label>
+            <input id="af-ip" placeholder="192.168.1.30/24"/>
+          </div>
+          <div class="form-group"><label>GATEWAY</label>
+            <input id="af-gw" placeholder="192.168.1.1"/>
+          </div>
+        </div>
+        <div class="create-vm-grid">
+          <div class="form-group"><label>DNS SERVER</label>
+            <input id="af-dns" placeholder="8.8.8.8"/>
+          </div>
+          <div class="form-group"><label>FS TYPE</label>
+            <select id="af-fs">
+              <option value="ext4">ext4</option>
+              <option value="xfs">xfs</option>
+              <option value="zfs (RAID0)">ZFS RAID0</option>
+            </select>
+          </div>
+        </div>
+        <button class="btn primary" style="margin-top:10px" onclick="generateAnswerFile()">⬇ Generate Answer File</button>
+        <div id="af-output" style="display:none;margin-top:14px">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
+            <span style="font-size:12px;font-weight:600">answer.toml</span>
+            <button class="btn small" onclick="downloadAnswerFile()">↓ Download</button>
+          </div>
+          <pre id="af-pre" style="background:var(--bg);border:1px solid var(--border);border-radius:var(--radius);padding:12px;font-size:11px;overflow-x:auto;color:var(--teal);max-height:300px;overflow-y:auto"></pre>
+          <div style="font-size:12px;color:var(--muted);margin-top:10px;line-height:1.7">
+            <strong style="color:var(--text)">Usage:</strong><br>
+            1. Download the Proxmox VE ISO from proxmox.com<br>
+            2. Run: <code>proxmox-auto-install-assistant prepare-iso proxmox-ve_*.iso --answer-file answer.toml</code><br>
+            3. Flash the new ISO to USB / mount as virtual media<br>
+            4. Boot the target machine — it will install automatically
+          </div>
+        </div>
+      </div>`;
+  }
+}
+
+// ── PROFILE CAPTURE ───────────────────────────────────────
+
+async function openCaptureProfileModal() {
+  const nodeOpts=allNodes().map(n=>`<option value="${n.node}">${n.node}${n.connId?' ('+getConnName(n.connId)+')':''}</option>`).join('');
+  document.getElementById('modal-title').textContent='Capture Host Profile';
+  document.getElementById('modal-body').innerHTML=`
+    <p style="color:var(--muted);font-size:13px;margin-bottom:14px">
+      Reads the current configuration of a reference node and saves it as a profile.
+      You can then apply this profile to other nodes or check for drift.
+    </p>
+    <div class="form-group"><label>PROFILE NAME</label><input id="cp-name" placeholder="e.g. Standard Node, Production Profile"/></div>
+    <div class="form-group"><label>DESCRIPTION (optional)</label><input id="cp-desc" placeholder="what this profile is for"/></div>
+    <div class="form-group"><label>CAPTURE FROM NODE</label><select id="cp-node">${nodeOpts}</select></div>
+    <div style="font-size:12px;color:var(--muted);margin-top:8px">Captures: DNS servers, search domain, timezone, custom /etc/hosts entries</div>`;
+
+  modalCallback=null;
+  const btn=document.getElementById('modal-confirm-btn');
+  btn.textContent='Capture'; btn.disabled=false;
+  btn.onclick=async()=>{
+    const name=(document.getElementById('cp-name')?.value||'').trim();
+    const node=document.getElementById('cp-node')?.value;
+    if(!name) return toast('Enter a profile name','error');
+    btn.disabled=true; btn.textContent='Capturing…';
+    const nodeData=allNodes().find(n=>n.node===node);
+    const conn=resolveConn(nodeData?.connId||'');
+    const get=conn?(p=>connGet(conn,p)):pveGet;
+    try {
+      const [dnsRes,timeRes,hostsRes]=await Promise.all([
+        get(`/api2/json/nodes/${node}/dns`).catch(()=>({data:{}})),
+        get(`/api2/json/nodes/${node}/time`).catch(()=>({data:{}})),
+        get(`/api2/json/nodes/${node}/hosts`).catch(()=>({data:{}})),
+      ]);
+      // Extract custom hosts entries (non-standard localhost/ipv6 lines)
+      const hostsRaw=hostsRes.data?.data||'';
+      const customHosts=hostsRaw.split('\n').filter(l=>{
+        const t=l.trim();
+        return t && !t.startsWith('#') &&
+          !t.includes('localhost') && !t.includes('ip6-') &&
+          !t.includes('::1') && !t.includes('fe00::') && !t.includes('ff00::');
+      });
+      // Extract timezone from time response
+      const tz=timeRes.data?.timezone||'UTC';
+      const profile={
+        id:'hp-'+Date.now(),
+        name,
+        description:(document.getElementById('cp-desc')?.value||'').trim(),
+        sourceNode:node,
+        created:Date.now(),
+        settings:{
+          dns:dnsRes.data||{},
+          timezone:tz,
+          customHosts,
+          ntpServer:'pool.ntp.org', // default; chrony config not available via API
+        }
+      };
+      const profiles=getHostProfiles(); profiles.push(profile); saveHostProfiles(profiles);
+      document.getElementById('modal-bg').classList.remove('open');
+      btn.onclick=confirmModal; btn.textContent='Confirm'; btn.disabled=false;
+      toast(`Profile "${name}" captured from ${node}`,'success');
+      loadHostProfiles();
+    } catch(e){ btn.disabled=false; btn.textContent='Capture'; toast('Capture failed: '+e.message,'error'); }
+  };
+  document.getElementById('modal-bg').classList.add('open');
+}
+
+// ── COMPLIANCE CHECK ──────────────────────────────────────
+
+let _compProfile=null;
+function setComplianceProfile(id) { _compProfile=id; runComplianceCheck(); }
+
+async function runComplianceCheck() {
+  const el=document.getElementById('hp-comp-result'); if(!el) return;
+  const pid=_compProfile||document.getElementById('hp-comp-profile')?.value;
+  const profile=getHostProfiles().find(p=>p.id===pid);
+  if(!profile){ el.innerHTML='<div class="empty">Select a profile above.</div>'; return; }
+
+  el.innerHTML='<div class="empty"><span class="loading"></span> Checking all nodes…</div>';
+  const nodes=allNodes();
+  const results=[];
+
+  for(const n of nodes) {
+    const conn=resolveConn(n.connId||'');
+    const get=conn?(p=>connGet(conn,p)):pveGet;
+    try {
+      const [dnsRes,timeRes]=await Promise.all([
+        get(`/api2/json/nodes/${n.node}/dns`).catch(()=>({data:{}})),
+        get(`/api2/json/nodes/${n.node}/time`).catch(()=>({data:{}})),
+      ]);
+      const cur={dns:dnsRes.data||{},timezone:timeRes.data?.timezone||'—'};
+      const p=profile.settings;
+      const checks=[
+        {key:'DNS Server',prof:p.dns?.dns1||'—',actual:cur.dns?.dns1||'—'},
+        {key:'DNS Search',prof:p.dns?.search||'—',actual:cur.dns?.search||'—'},
+        {key:'Timezone',prof:p.timezone||'—',actual:cur.timezone},
+      ];
+      const drift=checks.filter(c=>c.prof!=='—'&&c.prof!==c.actual);
+      results.push({node:n.node,connId:n.connId||'',checks,drift,cur});
+    } catch(e){ results.push({node:n.node,error:e.message}); }
+  }
+
+  const compliant=results.filter(r=>!r.error&&r.drift.length===0).length;
+  const drifted=results.filter(r=>!r.error&&r.drift.length>0).length;
+
+  el.innerHTML=`
+    <div class="stats-grid" style="margin-bottom:14px">
+      <div class="stat-card accent-green"><div class="label">Compliant</div><div class="value">${compliant}</div></div>
+      <div class="stat-card accent-${drifted?'red':'green'}"><div class="label">Drifted</div><div class="value" style="color:${drifted?'var(--red)':'var(--green)'}">${drifted}</div></div>
+      <div class="stat-card accent-blue"><div class="label">Profile</div><div class="value" style="font-size:14px">${escHtml(profile.name)}</div></div>
+    </div>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Node</th><th>DNS</th><th>DNS Search</th><th>Timezone</th><th>Status</th><th>Actions</th></tr></thead>
+      <tbody>${results.map(r=>{
+        if(r.error) return `<tr><td><strong>${r.node}</strong></td><td colspan="5" style="color:var(--red)">Error: ${escHtml(r.error)}</td></tr>`;
+        const mk=(c)=>{
+          const match=c.prof==='—'||c.prof===c.actual;
+          return `<span style="color:${match?'var(--green)':'var(--red)'};font-size:12px">${match?'✓ '+escHtml(c.actual):'✗ '+escHtml(c.actual)+' (expected '+escHtml(c.prof)+')'}</span>`;
+        };
+        const dns=r.checks.find(c=>c.key==='DNS Server');
+        const search=r.checks.find(c=>c.key==='DNS Search');
+        const tz=r.checks.find(c=>c.key==='Timezone');
+        return `<tr>
+          <td><strong>${r.node}</strong></td>
+          <td>${mk(dns)}</td><td>${mk(search)}</td><td>${mk(tz)}</td>
+          <td>${r.drift.length?`<span class="badge stopped" style="font-size:10px"><span class="badge-dot"></span>${r.drift.length} drift${r.drift.length!==1?'s':''}</span>`:'<span class="badge running" style="font-size:10px"><span class="badge-dot"></span>compliant</span>'}</td>
+          <td onclick="event.stopPropagation()">
+            ${r.drift.length?`<button class="btn small success" onclick="applyProfileToNode('${pid}','${r.node}','${r.connId}')">⚡ Fix</button>`:''}
+          </td>
+        </tr>`;}).join('')}
+      </tbody></table></div>`;
+}
+
+// ── APPLY PROFILE ─────────────────────────────────────────
+
+function openApplyProfileModal(profileId) {
+  const profile=getHostProfiles().find(p=>p.id===profileId);
+  if(!profile) return;
+  const nodeOpts=allNodes().map(n=>`<option value="${n.node}|${n.connId||''}">${n.node}${n.connId?' ('+getConnName(n.connId)+')':''}</option>`).join('');
+  document.getElementById('modal-title').textContent=`Apply Profile — ${profile.name}`;
+  document.getElementById('modal-body').innerHTML=`
+    <p style="color:var(--muted);font-size:13px;margin-bottom:12px">Apply profile settings to selected nodes.</p>
+    <div class="form-group"><label>TARGET NODES — hold Ctrl/Cmd for multiple</label>
+      <select id="ap-nodes" multiple size="6" style="width:100%;height:140px;background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius);color:var(--text);padding:4px;font-family:var(--font);font-size:13px">${nodeOpts}</select>
+    </div>
+    <div style="font-size:12px;color:var(--muted);margin-top:8px">Will apply: ${[
+      profile.settings.dns?.dns1?'DNS':'',
+      profile.settings.timezone?'Timezone':'',
+    ].filter(Boolean).join(', ')}</div>`;
+  modalCallback=async()=>{
+    const sel=[...document.getElementById('ap-nodes')?.selectedOptions||[]].map(o=>o.value);
+    if(!sel.length) return toast('Select at least one node','error');
+    let ok=0;
+    for(const nodeStr of sel) {
+      const [node,connId]=nodeStr.split('|');
+      await applyProfileToNode(profileId,node,connId||'',true);
+      ok++;
+    }
+    toast(`Profile applied to ${ok} node(s)`,'success');
+    setTimeout(()=>{ if(_hpTab==='compliance') runComplianceCheck(); },1000);
+  };
+  document.getElementById('modal-bg').classList.add('open');
+}
+
+async function applyProfileToNode(profileId, node, connId, silent=false) {
+  const profile=getHostProfiles().find(p=>p.id===profileId);
+  if(!profile) return;
+  const conn=resolveConn(connId);
+  const s=profile.settings;
+  try {
+    if(s.dns&&s.dns.dns1) {
+      const dp={};
+      if(s.dns.search)dp.search=s.dns.search;
+      if(s.dns.dns1)dp.dns1=s.dns.dns1;
+      if(s.dns.dns2)dp.dns2=s.dns.dns2;
+      if(conn){const h=connHeaders(conn,{'Content-Type':'application/x-www-form-urlencoded'});const body=Object.entries(dp).map(([k,v])=>`${encodeURIComponent(k)}=${encodeURIComponent(v)}`).join('&');const r=await fetch(conn.host+`/api2/json/nodes/${node}/dns`,{method:'PUT',headers:h,body});if(!r.ok){const t=await r.text();throw new Error(`DNS: HTTP ${r.status}: ${t}`);}}
+      else await pvePut(`/api2/json/nodes/${node}/dns`,dp);
+    }
+    if(s.timezone){
+      if(conn){const h=connHeaders(conn,{'Content-Type':'application/x-www-form-urlencoded'});const r=await fetch(conn.host+`/api2/json/nodes/${node}/time`,{method:'PUT',headers:h,body:`timezone=${encodeURIComponent(s.timezone)}`});if(!r.ok){const t=await r.text();throw new Error(`Timezone: HTTP ${r.status}: ${t}`);}}
+      else await pvePut(`/api2/json/nodes/${node}/time`,{timezone:s.timezone});
+    }
+    if(!silent) toast(`Profile applied to ${node}`,'success');
+  } catch(e){ toast(`Apply to ${node} failed: ${e.message}`,'error'); }
+}
+
+function openEditProfileModal(id) {
+  const profiles=getHostProfiles(); const p=profiles.find(x=>x.id===id); if(!p) return;
+  document.getElementById('modal-title').textContent=`Edit Profile — ${p.name}`;
+  document.getElementById('modal-body').innerHTML=`
+    <div class="form-group"><label>NAME</label><input id="ep-name" value="${escHtml(p.name)}"/></div>
+    <div class="form-group"><label>DESCRIPTION</label><input id="ep-desc" value="${escHtml(p.description||'')}"/></div>
+    <div class="section-title" style="font-size:11px;margin:12px 0 8px">DNS Settings</div>
+    <div class="create-vm-grid">
+      <div class="form-group"><label>PRIMARY DNS</label><input id="ep-dns1" value="${escHtml(p.settings.dns?.dns1||'')}"/></div>
+      <div class="form-group"><label>SECONDARY DNS</label><input id="ep-dns2" value="${escHtml(p.settings.dns?.dns2||'')}"/></div>
+    </div>
+    <div class="form-group"><label>SEARCH DOMAIN</label><input id="ep-search" value="${escHtml(p.settings.dns?.search||'')}"/></div>
+    <div class="form-group"><label>TIMEZONE</label><input id="ep-tz" value="${escHtml(p.settings.timezone||'')}"/></div>
+    <div class="form-group"><label>NTP SERVER</label><input id="ep-ntp" value="${escHtml(p.settings.ntpServer||'')}"/></div>`;
+  modalCallback=()=>{
+    const idx=profiles.findIndex(x=>x.id===id);
+    if(idx<0) return;
+    profiles[idx].name=(document.getElementById('ep-name')?.value||p.name).trim();
+    profiles[idx].description=(document.getElementById('ep-desc')?.value||'').trim();
+    profiles[idx].settings.dns={dns1:document.getElementById('ep-dns1')?.value?.trim()||'',dns2:document.getElementById('ep-dns2')?.value?.trim()||'',search:document.getElementById('ep-search')?.value?.trim()||''};
+    profiles[idx].settings.timezone=document.getElementById('ep-tz')?.value?.trim()||'';
+    profiles[idx].settings.ntpServer=document.getElementById('ep-ntp')?.value?.trim()||'';
+    saveHostProfiles(profiles); toast('Profile updated','success'); loadHostProfiles();
+  };
+  document.getElementById('modal-bg').classList.add('open');
+}
+
+function confirmDeleteProfile(id) {
+  const p=getHostProfiles().find(x=>x.id===id);
+  document.getElementById('modal-title').textContent='Delete Profile';
+  document.getElementById('modal-body').innerHTML=`<p style="color:var(--muted)">Delete profile <strong style="color:var(--red)">${escHtml(p?.name||id)}</strong>?</p>`;
+  modalCallback=()=>{ saveHostProfiles(getHostProfiles().filter(x=>x.id!==id)); toast('Profile deleted','info'); loadHostProfiles(); };
+  document.getElementById('modal-bg').classList.add('open');
+}
+
+// ── CLUSTER JOIN ──────────────────────────────────────────
+
+async function executeClusterJoin() {
+  const connId=document.getElementById('join-new-conn')?.value;
+  const srcIp=document.getElementById('join-src-ip')?.value?.trim();
+  const fp=document.getElementById('join-fp')?.value?.trim();
+  const pw=document.getElementById('join-pw')?.value;
+  const errEl=document.getElementById('join-err');
+  const showErr=msg=>{ if(errEl){errEl.textContent=msg;errEl.style.display='';} };
+  if(errEl) errEl.style.display='none';
+  if(!connId) return showErr('Select the new node from Extra Connections first (add it in Clusters & Hosts)');
+  if(!srcIp)  return showErr('Enter the source cluster node IP');
+  if(!pw)     return showErr('Enter the root password of the source node (for cluster key exchange)');
+  const conn=resolveConn(connId);
+  if(!conn) return showErr('Connection not found');
+  try {
+    const res=await connPost(conn,'/api2/json/cluster/config/join',{hostname:srcIp,fingerprint:fp,password:pw});
+    const upid=res&&res.data;
+    if(upid&&typeof upid==='string') tmRegister(upid,conn.nodes?.[0]?.node||'new','Cluster join');
+    toast('Cluster join task started — check Task Monitor','success');
+    setTimeout(()=>switchHPTab('join'),2000);
+  } catch(e){ showErr('Join failed: '+e.message); }
+}
+
+// ── ANSWER FILE GENERATOR ─────────────────────────────────
+
+function afFillFromProfile() {
+  const pid=document.getElementById('af-profile')?.value;
+  const p=getHostProfiles().find(x=>x.id===pid); if(!p) return;
+  if(p.settings.dns?.dns1) document.getElementById('af-dns').value=p.settings.dns.dns1;
+  if(p.settings.timezone) document.getElementById('af-tz').value=p.settings.timezone;
+}
+
+function generateAnswerFile() {
+  const g=id=>(document.getElementById(id)?.value||'').trim();
+  const fqdn=g('af-fqdn'); const country=g('af-country')||'gb';
+  const kb=g('af-keyboard')||'en-gb'; const tz=g('af-tz');
+  const email=g('af-email'); const pw=g('af-pw');
+  const disk=g('af-disk')||'/dev/sda';
+  const ip=g('af-ip'); const gw=g('af-gw'); const dns=g('af-dns');
+  const fs=g('af-fs')||'ext4';
+
+  if(!fqdn) return toast('Enter a hostname (FQDN)','error');
+  if(!pw)   return toast('Enter a root password','error');
+
+  const [ipAddr,prefix]=(ip||'dhcp/24').split('/');
+  const isStaticIP=ipAddr&&ipAddr!=='dhcp';
+
+  const content=`# Proxmox VE Unattended Install Answer File
+# Generated by PCC — Proxmox Command Center
+# Use with: proxmox-auto-install-assistant prepare-iso proxmox-ve_*.iso --answer-file answer.toml
+
+[global]
+keyboard = "${kb}"
+country = "${country}"
+fqdn = "${fqdn}"
+mailto = "${email||'admin@example.com'}"
+timezone = "${tz||'UTC'}"
+root_password = "${pw}"
+
+[network]
+source = "${isStaticIP?'from-answer':'dhcp'}"
+${isStaticIP?`cidr = "${ip}"
+gateway = "${gw||''}"
+dns = "${dns||'8.8.8.8'}"`:``}
+
+[disk-setup]
+filesystem = "${fs}"
+disk-list = ["${disk}"]
+`;
+
+  const pre=document.getElementById('af-pre');
+  const output=document.getElementById('af-output');
+  if(pre) pre.textContent=content;
+  if(output) output.style.display='';
+  output._content=content; output._filename=`pve-answer-${fqdn.split('.')[0]}.toml`;
+}
+
+function downloadAnswerFile() {
+  const output=document.getElementById('af-output'); if(!output) return;
+  const blob=new Blob([output._content||''],{type:'text/plain'});
+  const link=document.createElement('a');
+  link.download=output._filename||'answer.toml';
+  link.href=URL.createObjectURL(blob);
+  link.click(); URL.revokeObjectURL(link.href);
 }
 
 // ── MAINTENANCE MODE — NODE DRAIN ────────────────────────
@@ -11976,7 +13187,7 @@ function getSavedViews() {
   try { return JSON.parse(localStorage.getItem('pve-saved-views')||'[]'); } catch(e) { return []; }
 }
 function setSavedViews(views) {
-  localStorage.setItem('pve-saved-views', JSON.stringify(views));
+  const v=JSON.stringify(views); localStorage.setItem('pve-saved-views',v); _syncShared('pve-saved-views',v);
 }
 
 function renderSavedViewsSidebar() {
@@ -13421,6 +14632,27 @@ disconnect = function() {
   if (p) p.style.display = 'none';
   _origDisconnect();
 };
+
+// ── PAGE INIT ─────────────────────────────────────────────
+// Run backend detection first; if no backend found, show the normal connect view.
+(async () => {
+  PCC_BACKEND = await pccDetectBackend();
+  if (PCC_BACKEND) {
+    const valid = await pccVerifySession();
+    if (valid) {
+      await pccPostLogin();
+    } else {
+      PCC_TOKEN = null;
+      sessionStorage.removeItem('pcc-token');
+      pccShowLogin();
+    }
+  } else {
+    // Direct mode — show connect view as before
+    restoreSidebarSections();
+    restoreSidebarCollapse();
+    switchView('connect');
+  }
+})();
 
 </script>
 
