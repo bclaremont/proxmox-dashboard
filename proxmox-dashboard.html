@@ -2246,8 +2246,25 @@ function pveHeaders(extra={}) {
   return Object.assign(h,extra);
 }
 
+// Called whenever a Proxmox API response is 401 — session expired or token invalid.
+// Shows a one-time banner so the user knows to reconnect.
+let _authErrShown = false;
+function _handleAuthError() {
+  if (_authErrShown) return;
+  _authErrShown = true;
+  const banner = document.getElementById('alert-banner');
+  if (banner) {
+    banner.innerHTML = `<div style="background:rgba(239,68,68,.15);border-bottom:1px solid var(--red);padding:10px 18px;display:flex;align-items:center;gap:12px;font-size:13px">
+      <span style="color:var(--red);font-weight:600">⚠ Session expired</span>
+      <span style="color:var(--muted)">Your Proxmox session has ended.</span>
+      <button class="btn small danger" onclick="disconnect();_authErrShown=false;" style="margin-left:auto">Reconnect</button>
+    </div>`;
+  }
+}
+
 async function pveGet(path) {
   const res = await fetch(PVE.host+path,{headers:pveHeaders()});
+  if (res.status === 401) { _handleAuthError(); throw new Error('Session expired — please reconnect'); }
   if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText}`);
   return res.json();
 }
@@ -2386,6 +2403,7 @@ async function pvePost(path,data={},noAuth=false) {
     : pveHeaders({'Content-Type':'application/x-www-form-urlencoded'});
   const body = Object.entries(data).map(([k,v])=>`${encodeURIComponent(k)}=${encodeURIComponent(v)}`).join('&');
   const res = await fetch(PVE.host+path,{method:'POST',headers,body});
+  if (res.status === 401 && !noAuth) { _handleAuthError(); throw new Error('Session expired — please reconnect'); }
   if (!res.ok){const t=await res.text();throw new Error(`HTTP ${res.status}: ${t}`);}
   return res.json();
 }
@@ -4581,52 +4599,57 @@ function _findConnForNode(nodeName) {
   return null;
 }
 
-// Resolve the real PVE base URL for a given connection host string.
-// In direct mode the host already is a real URL (http://host:8080 → https://host:8006).
-// In backend mode the host is /proxy/<id> — look up the real host from the cache.
-function _pveBaseUrl(hostStr) {
-  if (!hostStr) hostStr = PVE.host;
-  if (hostStr.startsWith('/proxy/')) {
-    const id = hostStr.replace('/proxy/', '');
-    return (window._pccClusterHosts?.[id] || '').replace(/\/$/, '');
-  }
-  return hostStr.replace(/:8080$/, ':8006').replace(/^http:\/\//, 'https://');
-}
-
 async function openConsole(node, vmid, type, connId) {
-  // Determine which connection owns this node
-  const conn = connId ? resolveConn(connId) : _findConnForNode(node);
-  const post  = conn ? (p, d) => connPost(conn, p, d) : pvePost;
-  const hostStr = conn ? conn.host : PVE.host;
-  const pveBase = _pveBaseUrl(hostStr);
-
-  if (!pveBase) {
-    toast('Cannot determine PVE host URL for console', 'error');
-    return;
-  }
+  const conn   = connId ? resolveConn(connId) : _findConnForNode(node);
+  const post   = conn ? (p, d) => connPost(conn, p, d) : pvePost;
+  const ep     = (type === 'qemu' || type === 'vm') ? 'qemu' : (type === 'lxc' || type === 'ct') ? 'lxc' : 'node';
+  const label  = ep === 'node' ? `shell — ${node}` : `${ep.toUpperCase()} ${vmid} (${node})`;
 
   try {
-    let url;
+    let wsUrl, vncTicket;
 
-    if (type === 'node') {
-      // Node shell — termproxy gives a ticket for xterm.js
-      const res = await post(`/api2/json/nodes/${node}/termproxy`, {});
-      const d = res.data;
-      url = `${pveBase}/?console=shell&node=${encodeURIComponent(node)}&ticket=${encodeURIComponent(d.ticket)}&port=${d.port}&novnc=1`;
-
+    if (ep === 'node') {
+      const res  = await post(`/api2/json/nodes/${node}/termproxy`, {});
+      vncTicket  = res.data.ticket;
+      wsUrl = _buildVncWsUrl(conn, node, 'nodes', node, 'termproxy', res.data.port, vncTicket);
     } else {
-      const ep = (type === 'qemu' || type === 'vm') ? 'qemu' : 'lxc';
-      const consType = ep; // 'qemu' or 'lxc' for the ?console= param
-      const res = await post(`/api2/json/nodes/${node}/${ep}/${vmid}/vncproxy`, { websocket: 1 });
-      const d = res.data;
-      url = `${pveBase}/?console=${consType}&novnc=1&vmid=${encodeURIComponent(vmid)}&node=${encodeURIComponent(node)}&ticket=${encodeURIComponent(d.ticket)}&port=${d.port}&resize=scale`;
+      const res  = await post(`/api2/json/nodes/${node}/${ep}/${vmid}/vncproxy`, { websocket: 1 });
+      vncTicket  = res.data.ticket;
+      wsUrl = _buildVncWsUrl(conn, node, ep, vmid, 'vncwebsocket', res.data.port, vncTicket);
     }
 
-    window.open(url, '_blank', 'noopener');
-    toast('Opening console…', 'info');
+    const consoleUrl = `/console.html?ws=${encodeURIComponent(wsUrl)}&label=${encodeURIComponent(label)}&ep=${ep}&ticket=${encodeURIComponent(vncTicket)}`;
+    window.open(consoleUrl, `pcc-console-${vmid||node}`, 'width=1024,height=768,noopener');
   } catch(e) {
     toast('Console error: ' + e.message, 'error');
   }
+}
+
+// Build the WebSocket URL that console.html will connect to.
+// In direct mode we route through the nginx proxy on the same host (handles SSL).
+// In backend mode we use the proxy path (PCC backend handles WebSocket proxying).
+function _buildVncWsUrl(conn, node, ep, vmid, wsEndpoint, port, ticket) {
+  const wsProto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+
+  if (PCC_BACKEND) {
+    const hostStr   = conn ? conn.host : PVE.host;
+    const clusterId = hostStr.replace('/proxy/', '');
+    const base = `${wsProto}//${location.host}/vnc-ws/${clusterId}/${node}/${ep}/${vmid}`;
+    return `${base}?port=${port}&vncticket=${encodeURIComponent(ticket)}&token=${encodeURIComponent(PCC_TOKEN||'')}`;
+  }
+
+  // Direct mode: browsers cannot set custom headers on WebSocket connections.
+  // We pass PVE auth as a query param; the nginx vncwebsocket/termproxy location
+  // block reads it via $arg_pveauth and injects it as the Authorization header.
+  // IMPORTANT: nginx $arg_* variables are NOT URL-decoded, so we must NOT encode
+  // = or @ — only encode & # % which would break query string parsing.
+  const pveAuth = conn
+    ? (conn.useToken ? conn.tokenAuth : 'PVEAuthCookie=' + conn.ticket)
+    : (PVE.useToken  ? PVE.tokenAuth  : 'PVEAuthCookie=' + PVE.ticket);
+  const rawPveAuth = pveAuth.replace(/%/g,'%25').replace(/&/g,'%26').replace(/#/g,'%23');
+
+  const base = `${wsProto}//${location.host}/api2/json/nodes/${node}/${ep}/${vmid}/${wsEndpoint}`;
+  return `${base}?port=${port}&vncticket=${encodeURIComponent(ticket)}&pveauth=${rawPveAuth}`;
 }
 
 // ── SNAPSHOTS ────────────────────────────────────────────

@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PCC Console</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { width: 100%; height: 100%; background: #0d0d0d; overflow: hidden; font-family: system-ui, sans-serif; }
+
+    #bar {
+      position: fixed; top: 0; left: 0; right: 0; z-index: 99;
+      height: 36px; background: rgba(15,15,15,.95); backdrop-filter: blur(6px);
+      border-bottom: 1px solid rgba(255,255,255,.08);
+      display: flex; align-items: center; gap: 6px; padding: 0 10px;
+    }
+    #bar .label { color: rgba(255,255,255,.55); font-size: 12px; margin-right: auto;
+                  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .status { font-size: 11px; font-family: monospace; padding: 2px 8px; border-radius: 10px; white-space: nowrap; }
+    .status.connecting { background: rgba(234,179,8,.15); color: #facc15; }
+    .status.connected  { background: rgba(34,197,94,.15);  color: #4ade80; }
+    .status.error      { background: rgba(239,68,68,.15);  color: #f87171; }
+    #bar button {
+      background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.1);
+      color: rgba(255,255,255,.7); padding: 3px 9px; border-radius: 4px;
+      cursor: pointer; font-size: 11px; white-space: nowrap; transition: background .15s;
+    }
+    #bar button:hover { background: rgba(255,255,255,.14); color: #fff; }
+
+    #screen { position: fixed; top: 36px; left: 0; right: 0; bottom: 0; }
+
+    #overlay {
+      position: fixed; inset: 36px 0 0 0;
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      gap: 10px; background: #0d0d0d; color: rgba(255,255,255,.5); font-size: 13px;
+      text-align: center; padding: 20px;
+    }
+    .spinner { width: 28px; height: 28px; border: 2px solid rgba(255,255,255,.1);
+               border-top-color: #f97316; border-radius: 50%; animation: spin .7s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    #overlay.hidden { display: none; }
+    #debug { font-size: 10px; font-family: monospace; color: rgba(255,255,255,.25);
+             margin-top: 6px; max-width: 620px; word-break: break-all; line-height: 1.5; }
+    #retry-btn { margin-top: 6px; padding: 5px 14px; background: rgba(249,115,22,.2);
+                 border: 1px solid rgba(249,115,22,.4); color: #f97316; border-radius: 5px;
+                 cursor: pointer; font-size: 12px; display: none; }
+    #retry-btn:hover { background: rgba(249,115,22,.35); }
+  </style>
+</head>
+<body>
+
+<div id="bar">
+  <span class="label" id="lbl">Connecting…</span>
+  <span class="status connecting" id="st">⟳ connecting</span>
+  <button id="cad-btn" style="display:none">Ctrl+Alt+Del</button>
+  <button id="fs-btn">⛶ Fullscreen</button>
+  <button id="close-btn">✕ Close</button>
+</div>
+
+<div id="overlay">
+  <div class="spinner" id="spin"></div>
+  <div id="overlay-msg">Loading console…</div>
+  <div id="debug"></div>
+  <button id="retry-btn">↺ Retry</button>
+</div>
+
+<div id="screen"></div>
+
+<script type="module">
+import RFB from 'https://cdn.jsdelivr.net/npm/@novnc/novnc@1.4.0/core/rfb.js';
+
+const p      = new URLSearchParams(location.search);
+const wsUrl  = p.get('ws');
+const label  = p.get('label') || 'Console';
+const ep     = p.get('ep')    || 'qemu';
+const ticket = p.get('ticket') || '';
+
+// DOM refs
+const lbl      = document.getElementById('lbl');
+const st       = document.getElementById('st');
+const overlay  = document.getElementById('overlay');
+const omsg     = document.getElementById('overlay-msg');
+const dbg      = document.getElementById('debug');
+const spin     = document.getElementById('spin');
+const retryBtn = document.getElementById('retry-btn');
+const cadBtn   = document.getElementById('cad-btn');
+
+lbl.textContent = label;
+document.title  = label + ' — PCC';
+
+// All button handlers wired here inside the module — no inline onclick attributes
+document.getElementById('fs-btn').addEventListener('click', () => {
+  if (!document.fullscreenElement) document.documentElement.requestFullscreen().catch(() => {});
+  else document.exitFullscreen();
+});
+document.getElementById('close-btn').addEventListener('click', () => window.close());
+retryBtn.addEventListener('click', () => location.reload());
+
+function setStatus(cls, text) { st.className = 'status ' + cls; st.textContent = text; }
+
+function showError(msg, url) {
+  spin.style.display  = 'none';
+  omsg.textContent    = msg;
+  dbg.textContent     = url ? 'WS: ' + url : '';
+  retryBtn.style.display = '';
+  setStatus('error', '✕ error');
+}
+
+if (!wsUrl) {
+  showError('Missing WebSocket URL — close this window and try again.');
+} else {
+  omsg.textContent = 'Opening WebSocket connection…';
+  dbg.textContent  = 'WS: ' + wsUrl;
+
+  let rfb;
+  try {
+    rfb = new RFB(document.getElementById('screen'), wsUrl);
+    rfb.scaleViewport = true;
+    rfb.resizeSession = true;
+
+    // Proxmox VNC uses the VNC ticket as the RFB-level password — send it automatically
+    rfb.addEventListener('credentialsrequired', () => {
+      rfb.sendCredentials({ password: ticket });
+    });
+
+    rfb.addEventListener('connect', () => {
+      overlay.classList.add('hidden');
+      setStatus('connected', '● connected');
+      if (ep === 'qemu') cadBtn.style.display = '';
+    });
+
+    rfb.addEventListener('disconnect', e => {
+      overlay.classList.remove('hidden');
+      cadBtn.style.display = 'none';
+      if (e.detail.clean) {
+        spin.style.display = 'none';
+        omsg.textContent   = 'Session ended.';
+        setStatus('error', '○ disconnected');
+      } else {
+        showError(
+          'Connection lost' + (e.detail.reason ? ': ' + e.detail.reason : '.'),
+          wsUrl
+        );
+      }
+    });
+
+    rfb.addEventListener('desktopname', e => {
+      if (e.detail.name) { lbl.textContent = e.detail.name; document.title = e.detail.name + ' — PCC'; }
+    });
+
+    // Ctrl+Alt+Del — rfb is in scope here via closure
+    cadBtn.addEventListener('click', () => rfb.sendCtrlAltDel());
+
+  } catch(e) {
+    showError('Failed to initialise noVNC: ' + e.message, wsUrl);
+  }
+}
+</script>
+
+</body>
+</html>
