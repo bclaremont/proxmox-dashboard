@@ -1352,6 +1352,7 @@
   <div class="notif-hdr">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:14px;height:14px;color:var(--accent);flex-shrink:0"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
     <h4>Notifications</h4>
+    <button class="btn small" onclick="openVMAlertsModal()" title="Per-VM alert rules" style="padding:3px 8px;font-size:11px">⚡ VM Rules</button>
     <button class="btn small" onclick="openAlertSettingsModal()" title="Alert settings" style="padding:3px 8px;font-size:11px">⚙ Settings</button>
     <button class="btn small" onclick="clearAllNotifs()" style="padding:3px 8px;font-size:11px">Clear all</button>
     <button onclick="closeNotifPanel()" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:14px;padding:0 2px">✕</button>
@@ -1413,7 +1414,7 @@ let PCC_USER    = null;   // { username, role }
 
 const PCC_SHARED_KEYS = new Set([
   'pve-affinity-rules','pve-drs-settings','pve-host-profiles',
-  'pve-saved-views','pve-alert-thresholds','pve-locations'
+  'pve-saved-views','pve-alert-thresholds','pve-locations','pve-vm-alerts'
 ]);
 
 async function pccDetectBackend() {
@@ -2030,6 +2031,7 @@ function _renderVMCards(items) {
              <button class="btn small danger" onclick="confirmAction('${x.node}','${x.vmid}','${x.type}','stop','${cid}')" title="Force stop">■</button>`
           : `<button class="btn small success" onclick="vmAction('${x.node}','${x.vmid}','${x.type}','start','${cid}')" title="Start">▶</button>`}
         ${running?`<button class="btn small" onclick="openConsole('${x.node}','${x.vmid}','${x.type}')" title="Console">⌨</button>`:''}
+        <button class="btn small" onclick="openAddVMAlertModal('${x.vmid}','${x.node}','${escHtml(x.name||String(x.vmid))}','${cid}')" title="Add performance alert">🔔</button>
       </div>
       ${since?`<div style="font-size:10px;color:var(--muted);margin-top:5px" title="Running since ${since}">⬆ ${fmtUptime(x.uptime)}</div>`:''}
     </div>`;
@@ -2582,6 +2584,7 @@ async function openDetail(item) {
   document.getElementById('detail-actions').innerHTML += running
     ? `<button class="btn small" onclick="openConsole('${item.node}','${item.vmid}','${item.type}')">⌨ Console</button>` : '';
   document.getElementById('detail-actions').innerHTML += `<button class="btn small" onclick="openCloneModal('${item.node}','${item.vmid}','${item.type}','${(item.name||'').replace(/['"]/g,'')}','${cid}')">⎘ Clone</button>`;
+  document.getElementById('detail-actions').innerHTML += `<button class="btn small" onclick="openAddVMAlertModal('${item.vmid}','${item.node}','${(item.name||String(item.vmid)).replace(/['"]/g,'')}','${cid}')" title="Add performance alert rule">🔔 Alert</button>`;
   if (!running) document.getElementById('detail-actions').innerHTML += `<button class="btn small warning" onclick="convertToTemplate('${item.node}','${item.vmid}','${item.type}')" title="Convert to template (irreversible)">⬡ Template</button>`;
   // Hide node-only tabs when viewing a VM/CT
   document.querySelectorAll('.dtab').forEach(t=>{
@@ -11903,6 +11906,206 @@ let notifPanelOpen = false;
 const NOTIF_COOLDOWN = 5 * 60 * 1000; // 5 min between repeat resource alerts
 const NOTIF_MAX      = 100;
 
+// ── PER-VM PERFORMANCE ALERTS ─────────────────────────────
+// Rules stored in localStorage (synced to backend via _syncShared).
+// State (breach counters) is in-memory only — resets on page reload.
+//
+// Rule schema: { id, vmid, node, name, connId, metric, threshold, sustained, enabled }
+//   metric:    'cpu' | 'ram' | 'disk'
+//   threshold: 0-100 (percent)
+//   sustained: minutes the metric must stay above threshold before firing (0 = instant)
+
+let _vmAlertState = {};  // { ruleId: { count, lastFired } }
+
+function getVMAlerts() {
+  try { return JSON.parse(localStorage.getItem('pve-vm-alerts') || '[]'); } catch { return []; }
+}
+function saveVMAlerts(rules) {
+  const v = JSON.stringify(rules);
+  localStorage.setItem('pve-vm-alerts', v);
+  _syncShared('pve-vm-alerts', v);
+}
+
+function checkVMAlerts() {
+  const rules = getVMAlerts().filter(r => r.enabled);
+  if (!rules.length) return;
+
+  const REFRESH_S   = 30;
+  const COOLDOWN_MS = 15 * 60 * 1000;
+  const allWorkloads = allVMs().concat(allCTs());
+  const now = Date.now();
+
+  rules.forEach(rule => {
+    const vm = allWorkloads.find(x =>
+      String(x.vmid) === String(rule.vmid) &&
+      x.node === rule.node &&
+      (x.connId || '') === (rule.connId || '')
+    );
+    if (!vm || vm.status !== 'running') {
+      if (_vmAlertState[rule.id]) _vmAlertState[rule.id].count = 0;
+      return;
+    }
+
+    let value = 0;
+    if (rule.metric === 'cpu') value = (vm.cpu || 0) * 100;
+    else if (rule.metric === 'ram') value = vm.maxmem ? (vm.mem / vm.maxmem * 100) : 0;
+    else if (rule.metric === 'disk') value = vm.maxdisk ? (vm.disk / vm.maxdisk * 100) : 0;
+
+    const st = _vmAlertState[rule.id] || { count: 0, lastFired: 0 };
+    const breachesNeeded = Math.max(1, Math.ceil((rule.sustained || 0) * 60 / REFRESH_S));
+
+    if (value > rule.threshold) {
+      st.count++;
+      if (st.count >= breachesNeeded && now - st.lastFired > COOLDOWN_MS) {
+        st.lastFired = now;
+        const sev = value > rule.threshold + 10 ? 'error' : 'warning';
+        const metricLabel = rule.metric.toUpperCase();
+        const vmName = vm.name || `${vm.type?.toUpperCase()||'VM'} ${rule.vmid}`;
+        addNotif(
+          'vm_perf',
+          sev,
+          `${metricLabel} alert — ${vmName}`,
+          `${vmName} on ${rule.node}: ${metricLabel} at ${value.toFixed(1)}% ` +
+          `(threshold ${rule.threshold}%${rule.sustained ? `, sustained ${rule.sustained}m` : ''})`,
+          `vmperf-${rule.id}-${Math.floor(now / COOLDOWN_MS)}`
+        );
+      }
+    } else {
+      st.count = 0;
+    }
+    _vmAlertState[rule.id] = st;
+  });
+}
+
+// ── Per-VM Alert Rules modal ───────────────────────────────
+
+function openVMAlertsModal() {
+  document.getElementById('modal-title').textContent = 'Per-VM Alert Rules';
+  _renderVMAlertModalBody();
+  modalCallback = null;
+  const btn = document.getElementById('modal-confirm-btn');
+  btn.textContent = '+ Add Rule'; btn.disabled = false;
+  btn.onclick = () => { openAddVMAlertModal(); };
+  document.getElementById('modal-bg').classList.add('open');
+}
+
+function _renderVMAlertModalBody() {
+  const rules = getVMAlerts();
+  const el = document.getElementById('modal-body');
+  if (!rules.length) {
+    el.innerHTML = `
+      <p style="color:var(--muted);font-size:13px;margin-bottom:14px">
+        Get notified when a specific VM or CT exceeds a CPU, RAM, or disk threshold
+        for a set amount of time. Rules apply on top of the cluster-wide thresholds.
+      </p>
+      <div class="empty" style="padding:24px">No per-VM rules yet — click Add Rule to create one.</div>`;
+    return;
+  }
+  el.innerHTML = `
+    <p style="color:var(--muted);font-size:13px;margin-bottom:12px">
+      Rules fire when the metric stays above the threshold for the sustained duration.
+      Each rule has a 15-minute cooldown between repeat notifications.
+    </p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>VM / CT</th><th>Node</th><th>Metric</th><th>Threshold</th><th>Sustained</th><th>State</th><th style="width:90px"></th></tr></thead>
+      <tbody>${rules.map(r => {
+        const st = _vmAlertState[r.id];
+        const breachesNeeded = Math.max(1, Math.ceil((r.sustained||0)*60/30));
+        const stateText = !r.enabled ? `<span style="color:var(--muted);font-size:11px">disabled</span>` :
+          st && st.count > 0
+            ? `<span style="color:var(--yellow);font-size:11px">⚠ ${st.count}/${breachesNeeded}</span>`
+            : `<span style="color:var(--green);font-size:11px">● ok</span>`;
+        return `<tr>
+          <td><strong>${escHtml(r.name || String(r.vmid))}</strong><span style="color:var(--muted);font-size:11px"> #${r.vmid}</span></td>
+          <td style="color:var(--muted);font-size:12px">${escHtml(r.node)}</td>
+          <td><span class="badge running" style="font-size:10px"><span class="badge-dot"></span>${r.metric.toUpperCase()}</span></td>
+          <td style="font-weight:600">&gt; ${r.threshold}%</td>
+          <td style="color:var(--muted);font-size:12px">${r.sustained ? r.sustained + ' min' : 'instant'}</td>
+          <td>${stateText}</td>
+          <td onclick="event.stopPropagation()" style="display:flex;gap:4px;align-items:center">
+            <button class="btn small" title="${r.enabled?'Disable':'Enable'}"
+              onclick="_toggleVMAlert('${r.id}')"
+              style="padding:2px 7px;font-size:11px">${r.enabled ? '⏸' : '▶'}</button>
+            <button class="btn small danger"
+              onclick="_deleteVMAlert('${r.id}')"
+              style="padding:2px 7px;font-size:11px">✕</button>
+          </td>
+        </tr>`;
+      }).join('')}
+      </tbody></table></div>`;
+}
+
+function _toggleVMAlert(id) {
+  const rules = getVMAlerts();
+  const r = rules.find(x => x.id === id);
+  if (r) { r.enabled = !r.enabled; saveVMAlerts(rules); _renderVMAlertModalBody(); }
+}
+
+function _deleteVMAlert(id) {
+  saveVMAlerts(getVMAlerts().filter(x => x.id !== id));
+  delete _vmAlertState[id];
+  _renderVMAlertModalBody();
+}
+
+function openAddVMAlertModal(prefillVmid, prefillNode, prefillName, prefillConnId) {
+  // Build VM picker from current allVMs/allCTs
+  const items = allVMs().concat(allCTs()).filter(x => x.status === 'running');
+  const vmOpts = items.map(x =>
+    `<option value="${x.vmid}|${x.node}|${escHtml(x.name||x.vmid)}|${x.connId||''}"` +
+    (String(x.vmid)===String(prefillVmid)&&x.node===prefillNode?' selected':'') +
+    `>${escHtml(x.name||x.vmid)} (${x.vmid}) — ${x.node}${x.connId?' ['+getConnName(x.connId)+']':''}</option>`
+  ).join('');
+
+  document.getElementById('modal-title').textContent = 'Add Per-VM Alert Rule';
+  document.getElementById('modal-body').innerHTML = `
+    <div class="form-group"><label>VIRTUAL MACHINE / CONTAINER</label>
+      <select id="va-vm">${vmOpts || '<option value="">No running VMs found</option>'}</select>
+    </div>
+    <div class="create-vm-grid">
+      <div class="form-group"><label>METRIC</label>
+        <select id="va-metric">
+          <option value="cpu">CPU Usage</option>
+          <option value="ram">RAM Usage</option>
+          <option value="disk">Disk I/O (read bandwidth %)</option>
+        </select>
+      </div>
+      <div class="form-group"><label>THRESHOLD (%)</label>
+        <input id="va-thresh" type="number" value="80" min="1" max="100"/>
+      </div>
+    </div>
+    <div class="form-group">
+      <label>SUSTAINED (minutes above threshold before alerting — 0 = every refresh)</label>
+      <input id="va-sustained" type="number" value="5" min="0" max="60"/>
+    </div>
+    <div style="font-size:12px;color:var(--muted);margin-top:4px">
+      After firing, the rule has a 15-minute cooldown before it can fire again.
+    </div>`;
+
+  const btn = document.getElementById('modal-confirm-btn');
+  btn.textContent = 'Add Rule'; btn.disabled = false;
+  btn.onclick = () => {
+    const sel   = document.getElementById('va-vm')?.value || '';
+    const parts = sel.split('|');
+    if (!parts[0]) return toast('Select a VM', 'error');
+    const [vmid, node, name, connId] = parts;
+    const metric    = document.getElementById('va-metric')?.value || 'cpu';
+    const threshold = parseInt(document.getElementById('va-thresh')?.value) || 80;
+    const sustained = parseInt(document.getElementById('va-sustained')?.value) || 0;
+
+    const rules = getVMAlerts();
+    rules.push({ id: 'vmalert-' + Date.now(), vmid: parseInt(vmid), node, name, connId: connId||'', metric, threshold, sustained, enabled: true });
+    saveVMAlerts(rules);
+    toast('Alert rule added', 'success');
+
+    // Return to rules list
+    document.getElementById('modal-title').textContent = 'Per-VM Alert Rules';
+    _renderVMAlertModalBody();
+    const b = document.getElementById('modal-confirm-btn');
+    b.textContent = '+ Add Rule'; b.disabled = false;
+    b.onclick = () => openAddVMAlertModal();
+  };
+}
+
 function getAlertThresholds() {
   const defaults = { cpu:90, memory:90, storage:85, certDays:30, vmDown:true, taskError:true };
   try { return { ...defaults, ...JSON.parse(localStorage.getItem('pve-alert-thresholds')||'{}') }; }
@@ -12061,7 +12264,10 @@ function checkAndFireAlerts() {
     else if (newErrs.length) notifCooldowns[seenKey] = Date.now();
   }
 
-  // 5. Update existing alert banner (compatibility)
+  // 5. Per-VM performance alert rules
+  checkVMAlerts();
+
+  // 6. Update existing alert banner (compatibility)
   checkAlerts();
   // Persist VM state tracking
   _persistNotifs();
