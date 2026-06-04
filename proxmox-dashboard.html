@@ -621,6 +621,10 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
         Host Profiles
       </div>
+      <div class="nav-item" data-view="customspecs" onclick="switchView('customspecs')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 9h6M9 12h6M9 15h4"/><path d="M3 7h18" stroke-width="1.5"/></svg>
+        Customisation Specs
+      </div>
     </div>
 
     <!-- ADMIN -->
@@ -1060,6 +1064,20 @@
       <div id="pcc-admin-content"><div class="empty">Loading…</div></div>
     </div>
 
+    <!-- CUSTOMISATION SPECS -->
+    <div id="view-customspecs" style="display:none">
+      <div class="section-header">
+        <span class="section-title">VM Customisation Specs</span>
+        <button class="btn small primary" onclick="openCreateSpecModal()">+ New Spec</button>
+      </div>
+      <div style="background:rgba(88,166,255,.08);border:1px solid rgba(88,166,255,.3);border-radius:var(--radius);padding:10px 14px;margin-bottom:16px;font-size:13px;color:var(--muted)">
+        ℹ Customisation specs are applied to new VMs after cloning from a cloud-init template.
+        They set hostname, IP, DNS, user and SSH keys — equivalent to vCenter Guest Customization.
+        Clone any cloud-init VM and choose a spec, or use the <strong style="color:var(--text)">⎘ Clone</strong> button on any VM.
+      </div>
+      <div id="customspecs-content"><div class="empty">Loading…</div></div>
+    </div>
+
     <!-- HOST PROFILES -->
     <div id="view-hostprofiles" style="display:none">
       <div class="section-header">
@@ -1414,7 +1432,7 @@ let PCC_USER    = null;   // { username, role }
 
 const PCC_SHARED_KEYS = new Set([
   'pve-affinity-rules','pve-drs-settings','pve-host-profiles',
-  'pve-saved-views','pve-alert-thresholds','pve-locations','pve-vm-alerts'
+  'pve-saved-views','pve-alert-thresholds','pve-locations','pve-vm-alerts','pve-custom-specs'
 ]);
 
 async function pccDetectBackend() {
@@ -3091,7 +3109,7 @@ async function migrateVM(node, vmid, type, targetNode, online=false, withLocal=f
 
 function switchView(view) {
   expandSidebarSection(view); // auto-expand collapsed section if needed
-  const views=['connect','connections','worldmap','savedview','overview','vms','containers','nodes','tasks','syslog','storage','network','heatmap','isolib','sdn','capacity','affinity','drs','hostprofiles','pcc-admin','datacenter','pools','ceph','ha','firewall','backups','users','certs','audit','clustergraphs','tags','tfa','subscriptions','updates','pbs'];
+  const views=['connect','connections','worldmap','savedview','overview','vms','containers','nodes','tasks','syslog','storage','network','heatmap','isolib','sdn','capacity','affinity','drs','hostprofiles','customspecs','pcc-admin','datacenter','pools','ceph','ha','firewall','backups','users','certs','audit','clustergraphs','tags','tfa','subscriptions','updates','pbs'];
   views.forEach(v=>{
     const el=document.getElementById('view-'+v);
     if(el) el.style.display=v===view?'':'none';
@@ -3145,6 +3163,7 @@ function switchView(view) {
   if(view==='affinity') renderAffinityView();
   if(view==='capacity') runCapacityAnalysis();
   if(view==='hostprofiles') loadHostProfiles();
+  if(view==='customspecs') loadCustomSpecs();
   if(view==='pcc-admin') loadPCCAdmin();
   if(view==='datacenter') loadDatacenter();
   if(view!=='connect') renderCurrentView();
@@ -9044,12 +9063,232 @@ function convertToTemplate(node, vmid, type) {
 // POST /api2/json/nodes/{node}/lxc/{vmid}/clone
 // Official: https://pve.proxmox.com/pve-docs/api-viewer/#/nodes/{node}/qemu/{vmid}/clone
 
-function openCloneModal(node, vmid, type, name, connId='') {
+// ── VM CUSTOMISATION SPECS ────────────────────────────────
+// Named cloud-init configuration templates — like vCenter Guest Customization Specs.
+// Applied to new VMs after cloning from a cloud-init-capable template.
+//
+// Spec schema:
+//   { id, name, description, hostname, domain, network, ip, gateway,
+//     dns, searchdomain, user, sshkeys, created }
+//
+// Cloud-init API (applied to cloned VM):
+//   PUT /api2/json/nodes/{node}/qemu/{vmid}/config
+//   params: ciuser, nameserver, searchdomain, sshkeys (URL-encoded), ipconfig0
+
+function getCustomSpecs() {
+  try { return JSON.parse(localStorage.getItem('pve-custom-specs') || '[]'); } catch { return []; }
+}
+function saveCustomSpecs(specs) {
+  const v = JSON.stringify(specs);
+  localStorage.setItem('pve-custom-specs', v);
+  _syncShared('pve-custom-specs', v);
+}
+
+function loadCustomSpecs() {
+  const el = document.getElementById('customspecs-content');
+  if (!el) return;
+  const specs = getCustomSpecs();
+  if (!specs.length) {
+    el.innerHTML = `
+      <div style="text-align:center;padding:40px 20px;color:var(--muted)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="width:48px;height:48px;margin:0 auto 14px;display:block;opacity:.4"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 9h6M9 12h6M9 15h4"/><path d="M3 7h18" stroke-width="1.5"/></svg>
+        <div style="font-size:15px;margin-bottom:8px">No customisation specs yet</div>
+        <div style="font-size:13px;margin-bottom:16px">Create a spec to auto-configure hostname, IP, DNS and SSH keys<br>when cloning a cloud-init template.</div>
+        <button class="btn primary" onclick="openCreateSpecModal()">+ New Spec</button>
+      </div>`;
+    return;
+  }
+  el.innerHTML = `
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:12px">
+      ${specs.map(s => `
+        <div style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);padding:16px">
+          <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:10px">
+            <div>
+              <div style="font-weight:700;font-size:14px">${escHtml(s.name)}</div>
+              ${s.description ? `<div style="font-size:12px;color:var(--muted);margin-top:2px">${escHtml(s.description)}</div>` : ''}
+            </div>
+            <div style="font-size:10px;color:var(--muted)">${s.created ? new Date(s.created).toLocaleDateString() : ''}</div>
+          </div>
+          <div style="font-size:12px;color:var(--muted);line-height:1.8;margin-bottom:12px">
+            ${s.hostname ? `Host: <strong style="color:var(--text)">${escHtml(s.hostname)}${s.domain ? '.' + escHtml(s.domain) : ''}</strong><br>` : ''}
+            Network: <strong style="color:var(--text)">${s.network === 'static' ? (s.ip || 'static') + ' gw ' + (s.gateway || '?') : 'DHCP'}</strong><br>
+            ${s.dns ? `DNS: <strong style="color:var(--text)">${escHtml(s.dns)}</strong><br>` : ''}
+            ${s.user ? `User: <strong style="color:var(--text)">${escHtml(s.user)}</strong><br>` : ''}
+            ${s.sshkeys ? `SSH key: <strong style="color:var(--green)">✓ configured</strong>` : ''}
+          </div>
+          <div style="display:flex;gap:5px;flex-wrap:wrap">
+            <button class="btn small primary" onclick="openDeployWithSpecModal('${s.id}')">▶ Deploy</button>
+            <button class="btn small" onclick="openCreateSpecModal('${s.id}')">✎ Edit</button>
+            <button class="btn small danger" onclick="_deleteSpec('${s.id}')">Delete</button>
+          </div>
+        </div>`).join('')}
+    </div>`;
+}
+
+function _deleteSpec(id) {
+  saveCustomSpecs(getCustomSpecs().filter(s => s.id !== id));
+  loadCustomSpecs();
+  toast('Spec deleted', 'info');
+}
+
+function openCreateSpecModal(editId) {
+  const existing = editId ? getCustomSpecs().find(s => s.id === editId) : null;
+  const s = existing || {};
+  document.getElementById('modal-title').textContent = existing ? `Edit Spec — ${s.name}` : 'New Customisation Spec';
+  document.getElementById('modal-body').innerHTML = `
+    <div class="form-group"><label>NAME</label><input id="cs-name" value="${escHtml(s.name||'')}" placeholder="e.g. Production Web Server"/></div>
+    <div class="form-group"><label>DESCRIPTION (optional)</label><input id="cs-desc" value="${escHtml(s.description||'')}"/></div>
+    <div class="section-title" style="font-size:11px;margin:12px 0 8px">Identity</div>
+    <div class="create-vm-grid">
+      <div class="form-group"><label>HOSTNAME TEMPLATE</label>
+        <input id="cs-hostname" value="${escHtml(s.hostname||'')}" placeholder="{name} or myvm"/>
+        <div style="font-size:10px;color:var(--muted);margin-top:3px">Placeholders: {name} {vmid}</div>
+      </div>
+      <div class="form-group"><label>DOMAIN</label><input id="cs-domain" value="${escHtml(s.domain||'')}" placeholder="certus.lan"/></div>
+    </div>
+    <div class="section-title" style="font-size:11px;margin:12px 0 8px">Network</div>
+    <div class="form-group"><label>IP CONFIG</label>
+      <select id="cs-net" onchange="document.getElementById('cs-static').style.display=this.value==='static'?'':'none'">
+        <option value="dhcp"${(s.network||'dhcp')==='dhcp'?' selected':''}>DHCP</option>
+        <option value="static"${s.network==='static'?' selected':''}>Static IP</option>
+      </select>
+    </div>
+    <div id="cs-static" style="display:${s.network==='static'?'block':'none'}">
+      <div class="create-vm-grid">
+        <div class="form-group"><label>IP / PREFIX</label><input id="cs-ip" value="${escHtml(s.ip||'')}" placeholder="192.168.1.100/24"/></div>
+        <div class="form-group"><label>GATEWAY</label><input id="cs-gw" value="${escHtml(s.gateway||'')}" placeholder="192.168.1.1"/></div>
+      </div>
+    </div>
+    <div class="create-vm-grid">
+      <div class="form-group"><label>DNS SERVER</label><input id="cs-dns" value="${escHtml(s.dns||'')}" placeholder="8.8.8.8"/></div>
+      <div class="form-group"><label>DNS SEARCH DOMAIN</label><input id="cs-search" value="${escHtml(s.searchdomain||'')}"/></div>
+    </div>
+    <div class="section-title" style="font-size:11px;margin:12px 0 8px">Authentication</div>
+    <div class="form-group"><label>DEFAULT USER</label><input id="cs-user" value="${escHtml(s.user||'')}" placeholder="ubuntu"/></div>
+    <div class="form-group"><label>SSH PUBLIC KEY</label>
+      <textarea id="cs-ssh" rows="3" style="width:100%;background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius);color:var(--text);padding:8px;font-family:monospace;font-size:11px;resize:vertical" placeholder="ssh-rsa AAAA...">${escHtml(s.sshkeys||'')}</textarea>
+    </div>`;
+
+  modalCallback = () => {
+    const name = document.getElementById('cs-name')?.value?.trim();
+    if (!name) return toast('Enter a spec name', 'error');
+    const spec = {
+      id:           existing ? existing.id : 'spec-' + Date.now(),
+      name,
+      description:  document.getElementById('cs-desc')?.value?.trim() || '',
+      hostname:     document.getElementById('cs-hostname')?.value?.trim() || '',
+      domain:       document.getElementById('cs-domain')?.value?.trim() || '',
+      network:      document.getElementById('cs-net')?.value || 'dhcp',
+      ip:           document.getElementById('cs-ip')?.value?.trim() || '',
+      gateway:      document.getElementById('cs-gw')?.value?.trim() || '',
+      dns:          document.getElementById('cs-dns')?.value?.trim() || '',
+      searchdomain: document.getElementById('cs-search')?.value?.trim() || '',
+      user:         document.getElementById('cs-user')?.value?.trim() || '',
+      sshkeys:      document.getElementById('cs-ssh')?.value?.trim() || '',
+      created:      existing ? existing.created : Date.now(),
+    };
+    const all = getCustomSpecs();
+    if (existing) {
+      const idx = all.findIndex(x => x.id === existing.id);
+      if (idx >= 0) all[idx] = spec; else all.push(spec);
+    } else {
+      all.push(spec);
+    }
+    saveCustomSpecs(all);
+    toast(existing ? 'Spec updated' : 'Spec created', 'success');
+    loadCustomSpecs();
+  };
+  document.getElementById('modal-bg').classList.add('open');
+}
+
+// Open a "Deploy from template" modal pre-selected with a spec
+function openDeployWithSpecModal(specId) {
+  const spec = getCustomSpecs().find(s => s.id === specId);
+  if (!spec) return;
+  // Find cloud-init capable VMs (running or stopped templates)
+  const templates = allVMs().filter(v => v.template || v.status === 'stopped');
+  if (!templates.length) { toast('No templates found — convert a VM to template first', 'info'); return; }
+  const vmOpts = templates.map(v =>
+    `<option value="${v.vmid}|${v.node}|${v.connId||''}">${escHtml(v.name||String(v.vmid))} (${v.vmid}) — ${v.node}</option>`
+  ).join('');
+  document.getElementById('modal-title').textContent = `Deploy — ${spec.name}`;
+  document.getElementById('modal-body').innerHTML = `
+    <div class="form-group"><label>SOURCE TEMPLATE</label><select id="dpl-src">${vmOpts}</select></div>
+    <div class="form-group"><label>NEW VM NAME</label><input id="dpl-name" placeholder="${escHtml(spec.hostname||'new-vm')}"/></div>
+    <div style="font-size:12px;color:var(--muted);margin-top:4px;margin-bottom:12px">
+      Will clone the selected template and apply spec: <strong style="color:var(--text)">${escHtml(spec.name)}</strong>
+    </div>`;
+  modalCallback = async () => {
+    const sel = document.getElementById('dpl-src')?.value || '';
+    const [vmid, node, connId] = sel.split('|');
+    const newName = document.getElementById('dpl-name')?.value?.trim();
+    if (!vmid) return toast('Select a template', 'error');
+    await _deployFromSpec(node, parseInt(vmid), 'qemu', connId, newName, specId);
+  };
+  document.getElementById('modal-bg').classList.add('open');
+}
+
+// Build cloud-init params from a spec + runtime overrides
+function _buildCloudInitParams(spec, resolvedHostname, resolvedIp) {
+  const params = {};
+  if (resolvedHostname)   params.hostname    = resolvedHostname;
+  if (spec.searchdomain)  params.searchdomain = spec.searchdomain;
+  if (spec.dns)           params.nameserver  = spec.dns;
+  if (spec.user)          params.ciuser      = spec.user;
+  if (spec.sshkeys)       params.sshkeys     = encodeURIComponent(spec.sshkeys);
+  // ipconfig0
+  if (spec.network === 'static' && (resolvedIp || spec.ip)) {
+    let ipcfg = `ip=${resolvedIp || spec.ip}`;
+    if (spec.gateway) ipcfg += `,gw=${spec.gateway}`;
+    params.ipconfig0 = ipcfg;
+  } else {
+    params.ipconfig0 = 'ip=dhcp';
+  }
+  return params;
+}
+
+function _resolveSpecPlaceholders(spec, vmName, vmid) {
+  const hostname = spec.hostname
+    .replace('{name}', vmName || String(vmid))
+    .replace('{vmid}', String(vmid));
+  return hostname ? (spec.domain ? `${hostname}.${spec.domain}` : hostname) : '';
+}
+
+async function _deployFromSpec(srcNode, srcVmid, type, connId, newName, specId) {
+  const spec = getCustomSpecs().find(s => s.id === specId);
+  // Use openCloneModal flow but trigger it programmatically
+  openCloneModal(srcNode, srcVmid, type, newName || '', connId, specId);
+  if (newName) {
+    const nameEl = document.getElementById('cl-name');
+    if (nameEl) nameEl.value = newName;
+  }
+}
+
+// Apply a customisation spec to an already-cloned VM
+async function applyCustomSpec(node, vmid, specId, vmName, conn) {
+  const spec = getCustomSpecs().find(s => s.id === specId);
+  if (!spec) return;
+  const hostname = _resolveSpecPlaceholders(spec, vmName, vmid);
+  const params   = _buildCloudInitParams(spec, hostname, '');
+  if (Object.keys(params).length === 0) return;
+  const put = conn ? ((p, d) => {
+    const h = connHeaders(conn, {'Content-Type':'application/x-www-form-urlencoded'});
+    const body = Object.entries(d).map(([k,v])=>`${encodeURIComponent(k)}=${encodeURIComponent(v)}`).join('&');
+    return fetch(conn.host+p, {method:'PUT', headers:h, body});
+  }) : ((p, d) => pvePut(p, d));
+  await put(`/api2/json/nodes/${node}/qemu/${vmid}/config`, params);
+}
+
+function openCloneModal(node, vmid, type, name, connId='', preselectedSpecId='') {
   const conn = resolveConn(connId);
   const allUsed = new Set(allVMs().concat(allCTs()).map(x=>x.vmid));
   let nextID = parseInt(vmid)+1; while(allUsed.has(nextID)) nextID++;
   const nodeList = conn ? conn.nodes : PVE.nodes;
   const nodeOpts = nodeList.map(n=>`<option value="${n.node}"${n.node===node?' selected':''}>${n.node}</option>`).join('');
+  const specs = getCustomSpecs();
+  const specOpts = `<option value="">— none —</option>` +
+    specs.map(s=>`<option value="${s.id}"${s.id===preselectedSpecId?' selected':''}>${escHtml(s.name)}</option>`).join('');
+
   document.getElementById('modal-title').textContent = `Clone ${type.toUpperCase()} ${vmid}${name?' — '+name:''}`;
   document.getElementById('modal-body').innerHTML = `
     <div class="create-vm-grid">
@@ -9068,12 +9307,39 @@ function openCloneModal(node, vmid, type, name, connId='') {
       <select id="cl-stor">${buildStorageOpts(node)}</select>
     </div>
     <div class="form-group"><label>RESOURCE POOL (optional)</label><input id="cl-pool" placeholder="pool name"/></div>
+    <hr style="border:none;border-top:1px solid var(--border);margin:14px 0"/>
+    <div class="form-group">
+      <label>CUSTOMISATION SPEC <span style="color:var(--muted);font-weight:400">(cloud-init — applied after clone)</span></label>
+      <select id="cl-spec" onchange="cloneSpecChanged()">${specOpts}</select>
+    </div>
+    <div id="cl-spec-preview" style="display:none;background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius);padding:10px 12px;font-size:12px;color:var(--muted);margin-top:-4px;line-height:1.8"></div>
     <div style="background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius);padding:9px 12px;font-size:11px;color:var(--muted);margin-top:8px">
-      <strong style="color:var(--text)">Full clone:</strong> completely independent VM on any storage.<br>
-      <strong style="color:var(--text)">Linked clone:</strong> source should be converted to a template first.
+      <strong style="color:var(--text)">Full clone:</strong> completely independent VM on any storage. &nbsp;
+      <strong style="color:var(--text)">Linked clone:</strong> source should be a template.
+      ${!specs.length?` &nbsp;<a href="#" onclick="switchView('customspecs');document.getElementById('modal-bg').classList.remove('open');return false" style="color:var(--accent)">Create a spec →</a>`:''}
     </div>`;
+
+  // Show spec preview if preselected
+  if (preselectedSpecId) cloneSpecChanged();
   modalCallback = () => doCloneVM(node, vmid, type, connId);
   document.getElementById('modal-bg').classList.add('open');
+}
+
+function cloneSpecChanged() {
+  const specId = document.getElementById('cl-spec')?.value;
+  const preview = document.getElementById('cl-spec-preview');
+  if (!preview) return;
+  if (!specId) { preview.style.display = 'none'; return; }
+  const spec = getCustomSpecs().find(s => s.id === specId);
+  if (!spec) { preview.style.display = 'none'; return; }
+  preview.style.display = '';
+  preview.innerHTML = [
+    spec.hostname ? `Hostname: <strong style="color:var(--text)">${escHtml(spec.hostname)}${spec.domain?'.'+escHtml(spec.domain):''}</strong>` : '',
+    `Network: <strong style="color:var(--text)">${spec.network==='static'?(spec.ip||'static IP'):'DHCP'}</strong>`,
+    spec.dns ? `DNS: <strong style="color:var(--text)">${escHtml(spec.dns)}</strong>` : '',
+    spec.user ? `User: <strong style="color:var(--text)">${escHtml(spec.user)}</strong>` : '',
+    spec.sshkeys ? `SSH key: <strong style="color:var(--green)">✓</strong>` : '',
+  ].filter(Boolean).join(' &nbsp;·&nbsp; ');
 }
 
 function cloneModeChange() {
@@ -9085,20 +9351,21 @@ function cloneRefreshStor() {
 }
 
 async function doCloneVM(srcNode, srcVMID, type, connId='') {
-  const conn = resolveConn(connId);
+  const conn   = resolveConn(connId);
   const newid  = parseInt(document.getElementById('cl-newid').value);
   const name   = document.getElementById('cl-name').value.trim();
   const target = document.getElementById('cl-node').value;
   const full   = document.getElementById('cl-full').value;
   const stor   = full==='1' ? document.getElementById('cl-stor').value : null;
   const pool   = document.getElementById('cl-pool').value.trim();
+  const specId = document.getElementById('cl-spec')?.value || '';
   if (!newid||newid<100) return toast('New VM ID must be ≥ 100','error');
-  const ep = type==='vm'?'qemu':'lxc';
+  const ep = type==='vm'||type==='qemu'?'qemu':'lxc';
   const params = { newid, full:parseInt(full) };
-  if (name) params.name = name;
-  if (target!==srcNode) params.target = target;
+  if (name)              params.name    = name;
+  if (target!==srcNode)  params.target  = target;
   if (stor && stor!=='_keep') params.storage = stor;
-  if (pool) params.pool = pool;
+  if (pool)              params.pool    = pool;
   const label = `Clone ${type.toUpperCase()} ${srcVMID} → ${newid}`;
   try {
     const res = conn
@@ -9108,6 +9375,21 @@ async function doCloneVM(srcNode, srcVMID, type, connId='') {
     toast(`Clone started: ${srcVMID} → ${newid}`, 'success');
     if (upid && typeof upid === 'string') tmRegister(upid, srcNode, label);
     else setTimeout(refreshAll, 3000);
+
+    // Apply customisation spec to the new VM.
+    // The VM object is created before disk copy completes, so we can set config
+    // immediately — cloud-init settings are applied on first boot.
+    if (specId && ep === 'qemu') {
+      const applyNode = target || srcNode;
+      setTimeout(async () => {
+        try {
+          await applyCustomSpec(applyNode, newid, specId, name, conn);
+          toast(`Customisation spec applied to VM ${newid}`, 'success');
+        } catch(e) {
+          toast(`Clone OK but spec apply failed: ${e.message}`, 'warning');
+        }
+      }, 3000);
+    }
   } catch(e) { toast('Clone failed: '+e.message,'error'); }
 }
 
