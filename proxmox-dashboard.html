@@ -123,24 +123,24 @@
     .stat-card.accent-yellow{border-left-color:var(--yellow);} .stat-card.accent-yellow .value{color:var(--yellow);}
     .stat-card.accent-red{border-left-color:var(--red);} .stat-card.accent-red .value{color:var(--red);}
     .stat-card.accent-teal{border-left-color:var(--teal);} .stat-card.accent-teal .value{color:var(--teal);}
-    /* GAUGE */
+    /* GAUGE — #2: taller bars, better defined */
     .gauge-wrap{display:flex;align-items:center;gap:8px;}
-    .gauge-bar{flex:1;height:5px;background:var(--bg3);border-radius:3px;overflow:hidden;}
-    .gauge-fill{height:100%;border-radius:3px;transition:width .4s;}
+    .gauge-bar{flex:1;height:7px;background:var(--bg3);border-radius:4px;overflow:hidden;}
+    .gauge-fill{height:100%;border-radius:4px;transition:width .4s;}
     .gauge-fill.low{background:var(--green);}
     .gauge-fill.mid{background:var(--yellow);}
     .gauge-fill.high{background:var(--red);}
-    /* SECTION HEADER */
-    .section-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;}
-    .section-title{font-size:12px;text-transform:uppercase;letter-spacing:1px;color:var(--muted);}
-    /* TABLE */
+    /* SECTION HEADER — #7: breathing room between sections */
+    .section-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;margin-top:6px;}
+    .section-title{font-size:12px;text-transform:uppercase;letter-spacing:1.2px;color:var(--muted);font-weight:600;}
+    /* TABLE — #3: slightly more row padding */
     .table-wrap{background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;margin-bottom:22px;}
     table{width:100%;border-collapse:collapse;}
     thead th{background:var(--bg3);padding:10px 14px;text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:1px;color:var(--muted);border-bottom:1px solid var(--border);}
     tbody tr{border-bottom:1px solid var(--border);transition:background .1s;}
     tbody tr:last-child{border-bottom:none;}
     tbody tr:hover{background:var(--bg3);}
-    td{padding:10px 14px;vertical-align:middle;font-size:13px;}
+    td{padding:11px 14px;vertical-align:middle;font-size:13px;}
     /* BADGES */
     .badge{display:inline-flex;align-items:center;gap:5px;padding:3px 8px;border-radius:20px;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.5px;}
     .badge.running{background:rgba(63,185,80,.15);color:var(--green);border:1px solid rgba(63,185,80,.3);}
@@ -152,9 +152,10 @@
     .badge.error{background:rgba(248,81,73,.12);color:var(--red);border:1px solid rgba(248,81,73,.25);}
     .badge.warning{background:rgba(210,153,34,.12);color:var(--yellow);border:1px solid rgba(210,153,34,.25);}
     .badge-dot{width:6px;height:6px;border-radius:50%;background:currentColor;}
-    .type-chip{font-size:11px;padding:2px 7px;border-radius:4px;border:1px solid var(--border);color:var(--muted);}
-    .type-chip.vm{border-color:rgba(88,166,255,.4);color:var(--blue);}
-    .type-chip.ct{border-color:rgba(188,140,255,.4);color:var(--purple);}
+    /* TYPE CHIPS — #6: more saturated, easier to distinguish VM vs CT */
+    .type-chip{font-size:11px;padding:2px 8px;border-radius:4px;font-weight:600;letter-spacing:.3px;}
+    .type-chip.vm{background:rgba(88,166,255,.15);border:1px solid rgba(88,166,255,.5);color:#79b8ff;}
+    .type-chip.ct{background:rgba(188,140,255,.15);border:1px solid rgba(188,140,255,.5);color:#c9a7ff;}
     /* NODE CARDS */
     .node-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:14px;margin-bottom:22px;}
     .node-card{background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);padding:16px;cursor:pointer;transition:border-color .15s;}
