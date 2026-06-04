@@ -1124,6 +1124,7 @@
       <div class="dtabs" id="dc-tabs" style="margin-bottom:14px">
         <div class="dtab active" onclick="switchDCTab('status')">Status</div>
         <div class="dtab" onclick="switchDCTab('options')">Options</div>
+        <div class="dtab" onclick="switchDCTab('migration')">Migration Network</div>
         <div class="dtab" onclick="switchDCTab('replication')">Replication</div>
         <div class="dtab" onclick="switchDCTab('log')">Cluster Log</div>
       </div>
@@ -11835,7 +11836,7 @@ let dcData  = { status:[], opts:{}, repl:[], connId:'' };
 function switchDCTab(tab) {
   _dcTab = tab;
   document.querySelectorAll('#dc-tabs .dtab').forEach((t,i)=>{
-    t.classList.toggle('active', ['status','options','replication','log'][i]===tab);
+    t.classList.toggle('active', ['status','options','migration','replication','log'][i]===tab);
   });
   const actEl = document.getElementById('dc-tab-action');
   if(actEl) actEl.innerHTML = tab==='replication'
@@ -12015,6 +12016,12 @@ function _renderDCTab() {
     },50);
   }
 
+  // ── MIGRATION NETWORK TAB ─────────────────────────────
+  else if (_dcTab==='migration') {
+    _renderMigrationNetworkTab(el, conn, get);
+    return; // async render handles el.innerHTML
+  }
+
   // ── REPLICATION TAB ────────────────────────────────────
   else if (_dcTab==='replication') {
     const jobs = dcData.repl;
@@ -12110,6 +12117,234 @@ async function saveDatacenterOptions() {
     toast('Datacenter options saved','success');
     setTimeout(loadDatacenter,800);
   } catch(e){ toast('Save failed: '+e.message,'error'); }
+}
+
+// ── MIGRATION NETWORK ─────────────────────────────────────
+// Cluster-wide migration settings live in /cluster/options.
+// Per-node network interfaces from /nodes/{node}/network help
+// administrators verify the right interface will be used.
+
+async function _renderMigrationNetworkTab(el, conn, get) {
+  el.innerHTML = '<div class="empty"><span class="loading"></span> Loading migration network config…</div>';
+
+  try {
+    // Fetch cluster options + network interfaces for every node
+    const clusterNodes = (dcData.status || []).filter(s => s.type === 'node');
+    const [optsRes, ...netResults] = await Promise.all([
+      get('/api2/json/cluster/options').catch(() => ({ data: {} })),
+      ...clusterNodes.map(n =>
+        get(`/api2/json/nodes/${n.name}/network`).catch(() => ({ data: [] }))
+      ),
+    ]);
+
+    const opts    = optsRes.data || {};
+    const mig     = opts.migration || {};
+    const migType = mig.type    || 'secure';
+    const migNet  = mig.network || '';
+    const bw      = (opts.bandwidth_limit || {}).migration || 0;
+
+    // Map node → interfaces
+    const nodeNets = {};
+    clusterNodes.forEach((n, i) => {
+      const ifaces = netResults[i]?.data || [];
+      nodeNets[n.name] = ifaces.filter(f => f.address || f.address6);
+    });
+
+    // Determine which interface each node would use for the migration CIDR
+    function _matchIface(ifaces, cidr) {
+      if (!cidr) return null;
+      const [net, prefix] = cidr.split('/');
+      const maskBits = parseInt(prefix) || 24;
+      const netNum   = _ipToNum(net);
+      const mask     = ~((1 << (32 - maskBits)) - 1) >>> 0;
+      for (const f of ifaces) {
+        if (!f.address) continue;
+        if ((_ipToNum(f.address) & mask) >>> 0 === (netNum & mask) >>> 0) return f;
+      }
+      return null;
+    }
+
+    function _ipToNum(ip) {
+      const parts = (ip || '').split('.').map(Number);
+      if (parts.length !== 4) return 0;
+      return ((parts[0] << 24) | (parts[1] << 16) | (parts[2] << 8) | parts[3]) >>> 0;
+    }
+
+    const typeLabel = { secure: '🔒 Secure (SSH tunnel)', insecure: '⚡ Insecure (direct TCP — faster)', websocket: '🌐 WebSocket' };
+    const typeColor = { secure: 'var(--green)', insecure: 'var(--yellow)', websocket: 'var(--blue)' };
+
+    el.innerHTML = `
+      <!-- Current config -->
+      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:12px;margin-bottom:20px">
+        <div class="stat-card accent-blue">
+          <div class="label">Migration Type</div>
+          <div class="value" style="font-size:16px;color:${typeColor[migType]||'var(--text)'}">${typeLabel[migType]||migType}</div>
+        </div>
+        <div class="stat-card accent-${migNet?'green':'orange'}">
+          <div class="label">Migration Network</div>
+          <div class="value" style="font-size:${migNet?'16':'14'}px">${migNet ? escHtml(migNet) : 'Default routing'}</div>
+          <div class="sub">${migNet ? 'dedicated CIDR' : 'no dedicated network — uses management NIC'}</div>
+        </div>
+        <div class="stat-card accent-blue">
+          <div class="label">Bandwidth Limit</div>
+          <div class="value" style="font-size:16px">${bw ? bw + ' MB/s' : '∞ unlimited'}</div>
+        </div>
+      </div>
+
+      ${!migNet ? `
+      <div style="background:rgba(234,179,8,.08);border:1px solid rgba(234,179,8,.3);border-radius:var(--radius);padding:12px 16px;margin-bottom:16px;font-size:13px;color:var(--muted)">
+        ⚠ <strong style="color:var(--yellow)">No dedicated migration network configured.</strong>
+        Live migrations share the management NIC, which can saturate it and affect cluster communication.
+        Setting a dedicated migration CIDR (matching a separate NIC on each node) isolates this traffic.
+      </div>` : ''}
+
+      <!-- Node interface topology -->
+      <div class="section-header" style="margin-bottom:10px">
+        <span class="section-title">Node Network Interfaces</span>
+        <span style="font-size:12px;color:var(--muted)">${migNet ? `Highlighted = matches migration CIDR <strong style="color:var(--text)">${escHtml(migNet)}</strong>` : 'Set a migration CIDR to see which interface would be used'}</span>
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:10px;margin-bottom:20px">
+        ${clusterNodes.map(n => {
+          const ifaces  = nodeNets[n.name] || [];
+          const matched = migNet ? _matchIface(ifaces, migNet) : null;
+          return `<div style="background:var(--bg2);border:1px solid ${matched?'var(--green)':'var(--border)'};border-radius:var(--radius);padding:12px">
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
+              <strong style="font-size:13px">${escHtml(n.name)}</strong>
+              ${matched
+                ? `<span class="badge running" style="font-size:10px"><span class="badge-dot"></span>${escHtml(matched.iface)} — migration</span>`
+                : migNet ? `<span class="badge stopped" style="font-size:10px"><span class="badge-dot"></span>no match</span>` : ''}
+            </div>
+            ${ifaces.length ? ifaces.map(f => {
+              const isMatch = matched && f.iface === matched.iface;
+              return `<div style="padding:4px 0;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px">
+                <span style="font-family:monospace;font-size:11px;min-width:70px;color:${isMatch?'var(--green)':'var(--text)'};font-weight:${isMatch?700:400}">${escHtml(f.iface)}</span>
+                <span style="font-size:11px;color:var(--muted);flex:1">${escHtml(f.address||'')}${f.netmask?' / '+escHtml(f.netmask):''}</span>
+                ${isMatch ? '<span style="font-size:9px;color:var(--green);font-weight:700">✓ MIG</span>' : ''}
+              </div>`;
+            }).join('')
+            : '<div style="font-size:12px;color:var(--muted)">No interface data</div>'}
+          </div>`;
+        }).join('')}
+      </div>
+
+      <!-- Quick configure -->
+      <div class="section-header" style="margin-bottom:12px"><span class="section-title">Configure Migration Network</span></div>
+      <div style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);padding:16px;max-width:680px">
+        <div class="create-vm-grid">
+          <div class="form-group">
+            <label>MIGRATION TYPE</label>
+            <select id="mig-type">
+              <option value="secure"${migType==='secure'?' selected':''}>Secure — SSH tunnel (encrypted)</option>
+              <option value="insecure"${migType==='insecure'?' selected':''}>Insecure — direct TCP (faster, trusted LAN only)</option>
+              <option value="websocket"${migType==='websocket'?' selected':''}>WebSocket</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>DEDICATED MIGRATION NETWORK (CIDR)</label>
+            <input id="mig-cidr" value="${escHtml(migNet)}" placeholder="e.g. 10.10.10.0/24"
+              oninput="_migCidrPreview(this.value)"/>
+            <div style="font-size:11px;color:var(--muted);margin-top:3px">Leave blank to use default routing (management network).</div>
+          </div>
+        </div>
+        <div class="form-group">
+          <label>BANDWIDTH LIMIT (MB/s — 0 = unlimited)</label>
+          <input id="mig-bw" type="number" value="${bw}" min="0" style="width:160px"/>
+        </div>
+
+        <!-- Live preview of which interface each node would use -->
+        <div id="mig-preview" style="margin-bottom:14px;${migNet?'':'display:none'}">
+          <div style="font-size:11px;font-weight:600;color:var(--muted);margin-bottom:6px;text-transform:uppercase;letter-spacing:1px">Interface preview</div>
+          <div id="mig-preview-rows" style="display:flex;flex-wrap:wrap;gap:6px">${_migPreviewRows(clusterNodes, nodeNets, migNet)}</div>
+        </div>
+
+        <div id="mig-err" style="display:none;color:var(--red);font-size:12px;margin-bottom:8px"></div>
+        <button class="btn primary" onclick="_saveMigrationNetwork()">💾 Save Migration Config</button>
+        ${migNet ? `<button class="btn" style="margin-left:8px" onclick="document.getElementById('mig-cidr').value='';_migCidrPreview('')">✕ Clear dedicated network</button>` : ''}
+      </div>`;
+
+    // Attach live preview handler
+    const cidrEl = document.getElementById('mig-cidr');
+    if (cidrEl) cidrEl._nodeNets = nodeNets;
+    if (cidrEl) cidrEl._nodes   = clusterNodes;
+
+  } catch(e) {
+    el.innerHTML = `<div class="empty">Failed to load migration config: ${e.message}</div>`;
+  }
+}
+
+function _migPreviewRows(nodes, nodeNets, cidr) {
+  if (!cidr || !cidr.includes('/')) return '';
+  const [net, prefix] = cidr.split('/');
+  const maskBits = parseInt(prefix) || 24;
+  const netNum   = _migIpToNum(net);
+  const mask     = ~((1 << (32 - maskBits)) - 1) >>> 0;
+  return nodes.map(n => {
+    const ifaces = nodeNets[n.name] || [];
+    const match  = ifaces.find(f => f.address && ((_migIpToNum(f.address) & mask) >>> 0) === (netNum & mask) >>> 0);
+    return match
+      ? `<span style="background:rgba(63,185,80,.12);border:1px solid rgba(63,185,80,.3);border-radius:4px;padding:3px 8px;font-size:11px;font-family:monospace;color:var(--green)">${escHtml(n.name)}: ${escHtml(match.iface)} (${escHtml(match.address)})</span>`
+      : `<span style="background:rgba(248,81,73,.1);border:1px solid rgba(248,81,73,.3);border-radius:4px;padding:3px 8px;font-size:11px;font-family:monospace;color:var(--red)">${escHtml(n.name)}: no match</span>`;
+  }).join('');
+}
+
+function _migIpToNum(ip) {
+  const p = (ip || '').split('.').map(Number);
+  return p.length === 4 ? (((p[0]<<24)|(p[1]<<16)|(p[2]<<8)|p[3])>>>0) : 0;
+}
+
+function _migCidrPreview(cidr) {
+  const preview = document.getElementById('mig-preview');
+  const rows    = document.getElementById('mig-preview-rows');
+  const cidrEl  = document.getElementById('mig-cidr');
+  if (!preview || !rows || !cidrEl) return;
+  const nodes    = cidrEl._nodes    || [];
+  const nodeNets = cidrEl._nodeNets || {};
+  preview.style.display = cidr ? '' : 'none';
+  rows.innerHTML = _migPreviewRows(nodes, nodeNets, cidr);
+}
+
+async function _saveMigrationNetwork() {
+  const type = document.getElementById('mig-type')?.value || 'secure';
+  const cidr = (document.getElementById('mig-cidr')?.value || '').trim();
+  const bw   = parseInt(document.getElementById('mig-bw')?.value || '0') || 0;
+  const errEl = document.getElementById('mig-err');
+  if (errEl) errEl.style.display = 'none';
+
+  // Validate CIDR if provided
+  if (cidr && !/^\d{1,3}(\.\d{1,3}){3}\/\d{1,2}$/.test(cidr)) {
+    if (errEl) { errEl.textContent = 'Invalid CIDR format — use e.g. 10.10.10.0/24'; errEl.style.display = ''; }
+    return;
+  }
+
+  const conn = resolveConn(dcData.connId);
+  try {
+    // Build migration string
+    let migStr = `type=${type}`;
+    if (cidr) migStr += `,network=${cidr}`;
+
+    const params = { migration: migStr };
+    if (bw > 0) params.bandwidth_limit = `migration=${bw}`;
+    else        params.delete          = 'bandwidth_limit';
+
+    if (conn) {
+      const h = connHeaders(conn, { 'Content-Type': 'application/x-www-form-urlencoded' });
+      const body = Object.entries(params).map(([k,v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`).join('&');
+      const r = await fetch(conn.host + '/api2/json/cluster/options', { method: 'PUT', headers: h, body });
+      if (!r.ok) { const t = await r.text(); throw new Error(`HTTP ${r.status}: ${t}`); }
+    } else {
+      await pvePut('/api2/json/cluster/options', params);
+    }
+
+    toast('Migration network configuration saved', 'success');
+    // Reload datacenter data to refresh display
+    const get = conn ? (p => connGet(conn, p)) : pveGet;
+    const optsRes = await get('/api2/json/cluster/options').catch(() => ({ data: {} }));
+    dcData.opts = optsRes.data || {};
+    _renderDCTab();
+  } catch(e) {
+    if (errEl) { errEl.textContent = 'Save failed: ' + e.message; errEl.style.display = ''; }
+    else toast('Save failed: ' + e.message, 'error');
+  }
 }
 
 // ── REPLICATION JOBS ──────────────────────────────────────
