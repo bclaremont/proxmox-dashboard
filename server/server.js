@@ -448,3 +448,108 @@ server.on('upgrade', (req, socket, head) => {
 server.listen(PORT, '127.0.0.1', () =>
   console.log(`PCC backend running on http://127.0.0.1:${PORT}`)
 );
+
+// ── Backend schedule runner ───────────────────────────────
+// Checks pve-schedules every 60s and executes due jobs via the
+// cluster proxy — runs 24/7 regardless of browser state.
+
+function schedNextRun(s) {
+  const now  = new Date();
+  const [h, m] = (s.time || '00:00').split(':').map(Number);
+  if (s.schedType === 'daily') {
+    const next = new Date(now); next.setHours(h, m, 0, 0);
+    if (next <= now) next.setDate(next.getDate() + 1);
+    return next.getTime();
+  }
+  if (s.schedType === 'weekly') {
+    const days = s.days?.length ? s.days : [1];
+    for (let i = 0; i < 8; i++) {
+      const next = new Date(now); next.setDate(next.getDate() + i); next.setHours(h, m, 0, 0);
+      if (days.includes(next.getDay()) && next > now) return next.getTime();
+    }
+  }
+  if (s.schedType === 'hourly') {
+    const min = parseInt(s.minute || 0);
+    const next = new Date(now); next.setMinutes(min, 0, 0);
+    if (next <= now) next.setHours(next.getHours() + 1);
+    return next.getTime();
+  }
+  return null;
+}
+
+async function runScheduledAction(s, cluster) {
+  const targetUrl = new url.URL(cluster.host);
+  const isHttps   = targetUrl.protocol === 'https:';
+  const transport = isHttps ? https : http;
+  const ep        = (s.vmType === 'lxc' || s.vmType === 'ct') ? 'lxc' : 'qemu';
+  const { node, vmid, action } = s;
+
+  const apiPost = (path, body) => new Promise((resolve, reject) => {
+    const bodyStr = Object.entries(body).map(([k,v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`).join('&');
+    const opts = {
+      hostname: targetUrl.hostname, port: parseInt(targetUrl.port) || (isHttps ? 443 : 80),
+      path, method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'Authorization': cluster.auth_value, 'Content-Length': Buffer.byteLength(bodyStr) },
+      rejectUnauthorized: false,
+    };
+    const req = transport.request(opts, res => {
+      let data = '';
+      res.on('data', c => data += c);
+      res.on('end', () => res.statusCode < 300 ? resolve(data) : reject(new Error(`HTTP ${res.statusCode}: ${data}`)));
+    });
+    req.on('error', reject);
+    req.write(bodyStr); req.end();
+  });
+
+  switch (action) {
+    case 'start':    await apiPost(`/api2/json/nodes/${node}/${ep}/${vmid}/status/start`, {}); break;
+    case 'stop':     await apiPost(`/api2/json/nodes/${node}/${ep}/${vmid}/status/stop`, {}); break;
+    case 'shutdown': await apiPost(`/api2/json/nodes/${node}/${ep}/${vmid}/status/shutdown`, {}); break;
+    case 'reboot':   await apiPost(`/api2/json/nodes/${node}/${ep}/${vmid}/status/reboot`, {}); break;
+    case 'backup': {
+      const o = s.options || {};
+      await apiPost(`/api2/json/nodes/${node}/vzdump`, { vmid, compress: o.compress || 'zstd', mode: 'snapshot', ...(o.storage?{storage:o.storage}:{}) });
+      break;
+    }
+    case 'snapshot': {
+      const o = s.options || {};
+      const snapname = (o.snapname || 'auto{date}').replace(/\{date\}/g, new Date().toISOString().slice(0,10).replace(/-/g,''));
+      await apiPost(`/api2/json/nodes/${node}/${ep}/${vmid}/snapshot`, { snapname, description: o.description || 'Scheduled snapshot' });
+      break;
+    }
+  }
+}
+
+async function backendScheduleTick() {
+  const row = db.prepare("SELECT value FROM shared_state WHERE key = 'pve-schedules'").get();
+  if (!row) return;
+  let schedules;
+  try { schedules = JSON.parse(row.value); } catch { return; }
+  if (!Array.isArray(schedules)) return;
+
+  const now = Date.now();
+  let changed = false;
+
+  for (const s of schedules) {
+    if (!s.enabled || !s.nextRun || now < s.nextRun) continue;
+    const cluster = db.prepare('SELECT * FROM clusters WHERE id = ?').get(s.connId || (db.prepare('SELECT id FROM clusters ORDER BY sort_order LIMIT 1').get()?.id));
+    if (!cluster) { s.nextRun = schedNextRun(s); changed = true; continue; }
+    try {
+      await runScheduledAction(s, cluster);
+      console.log(`Schedule executed: ${s.action} on ${s.vmType}/${s.vmid} (${s.name})`);
+    } catch(e) {
+      console.error(`Schedule failed: ${s.name} — ${e.message}`);
+    }
+    s.lastRun = now;
+    s.nextRun = schedNextRun(s);
+    changed = true;
+  }
+
+  if (changed) {
+    db.prepare("INSERT OR REPLACE INTO shared_state (key, value, updated_at, updated_by) VALUES ('pve-schedules', ?, unixepoch(), 'scheduler')")
+      .run(JSON.stringify(schedules));
+  }
+}
+
+setInterval(() => { backendScheduleTick().catch(e => console.error('Schedule tick error:', e)); }, 60000);
+backendScheduleTick().catch(() => {}); // run once on startup

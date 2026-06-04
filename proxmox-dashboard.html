@@ -629,6 +629,11 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 9h6M9 12h6M9 15h4"/><path d="M3 7h18" stroke-width="1.5"/></svg>
         Customisation Specs
       </div>
+      <div class="nav-item" data-view="schedules" onclick="switchView('schedules')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/><circle cx="16" cy="16" r="3"/><path d="M16 14.5v1.5l1 1"/></svg>
+        Scheduled Operations
+        <span class="nav-badge warn" id="sched-badge" style="display:none">!</span>
+      </div>
     </div>
 
     <!-- ADMIN -->
@@ -644,6 +649,10 @@
       <div class="nav-item" data-view="users" onclick="switchView('users')">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
         Users &amp; Perms
+      </div>
+      <div class="nav-item" data-view="webhooks" onclick="switchView('webhooks')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+        Webhooks
       </div>
       <div class="nav-item" data-view="tags" onclick="switchView('tags')">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>
@@ -672,6 +681,10 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
         Audit Log
       </div>
+      <div class="nav-item" data-view="reports" onclick="switchView('reports')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
+        Reports &amp; Export
+      </div>
     </div>
 
     <div class="sidebar-section" id="saved-views-sidebar" data-section="savedviews">
@@ -693,10 +706,14 @@
     <div id="view-connect">
       <div id="connect-panel">
         <h2>PCC — Proxmox Command Center</h2>
-        <p>Uses the official PVE REST API (port 8006 via nginx reverse proxy on 8080).</p>
+        <p>Enter the URL of your Proxmox VE host. If you're running the PCC nginx proxy, the URL below is pre-filled automatically.</p>
         <div class="form-group">
-          <label>HOST URL</label>
-          <input id="in-host" type="text" placeholder="http://172.16.110.221:8080" value="http://172.16.110.221:8080" />
+          <label>PROXMOX HOST URL</label>
+          <input id="in-host" type="text" placeholder="http://pve.example.com:8080" autocomplete="url" />
+          <div style="font-size:11px;color:var(--muted);margin-top:4px;line-height:1.5">
+            With nginx proxy (recommended): <code>http://your-pve-host:8080</code><br>
+            Direct API (no proxy): <code>https://your-pve-host:8006</code>
+          </div>
         </div>
         <div class="form-row">
           <div class="form-group">
@@ -1087,6 +1104,15 @@
       </div>
     </div>
 
+    <!-- WEBHOOKS -->
+    <div id="view-webhooks" style="display:none">
+      <div class="section-header">
+        <span class="section-title">Webhooks &amp; External Notifications</span>
+        <button class="btn small primary" onclick="openCreateWebhookModal()">+ Add Webhook</button>
+      </div>
+      <div id="webhooks-content"><div class="empty">Loading…</div></div>
+    </div>
+
     <!-- PCC ADMIN -->
     <div id="view-pcc-admin" style="display:none">
       <div class="section-header">
@@ -1114,6 +1140,18 @@
         Clone any cloud-init VM and choose a spec, or use the <strong style="color:var(--text)">⎘ Clone</strong> button on any VM.
       </div>
       <div id="customspecs-content"><div class="empty">Loading…</div></div>
+    </div>
+
+    <!-- SCHEDULED OPERATIONS -->
+    <div id="view-schedules" style="display:none">
+      <div class="section-header">
+        <span class="section-title">Scheduled Operations</span>
+        <div style="display:flex;gap:6px;align-items:center">
+          <span id="sched-status-pill" class="pill offline" style="display:none;font-size:11px">scheduler off</span>
+          <button class="btn small primary" onclick="openCreateScheduleModal()">+ New Schedule</button>
+        </div>
+      </div>
+      <div id="schedules-content"><div class="empty">Loading…</div></div>
     </div>
 
     <!-- HOST PROFILES -->
@@ -1255,6 +1293,20 @@
         </div>
       </div>
       <div id="certs-content"><div class="empty">Loading…</div></div>
+    </div>
+
+    <!-- REPORTS & EXPORT -->
+    <div id="view-reports" style="display:none">
+      <div class="section-header">
+        <span class="section-title">Reports &amp; Export</span>
+        <div style="display:flex;gap:6px;align-items:center">
+          <select id="rpt-conn" style="width:140px;padding:5px 8px;font-size:13px" onchange="renderReports()">
+            <option value="_all">All Clusters</option>
+            <option value="">Primary</option>
+          </select>
+        </div>
+      </div>
+      <div id="reports-content"><div class="empty">Loading…</div></div>
     </div>
 
     <!-- AUDIT LOG -->
@@ -1471,7 +1523,7 @@ let PCC_USER    = null;   // { username, role }
 
 const PCC_SHARED_KEYS = new Set([
   'pve-affinity-rules','pve-drs-settings','pve-host-profiles',
-  'pve-saved-views','pve-alert-thresholds','pve-locations','pve-vm-alerts','pve-custom-specs','pve-content-library-meta'
+  'pve-saved-views','pve-alert-thresholds','pve-locations','pve-vm-alerts','pve-custom-specs','pve-content-library-meta','pve-webhooks','pve-schedules'
 ]);
 
 async function pccDetectBackend() {
@@ -1627,6 +1679,7 @@ async function pccAutoConnect() {
     await refreshAll();
     PVE.refreshInterval = setInterval(refreshAll, 30000);
     tmStart();
+    _scheduleInit();
     renderSavedViewsSidebar();
     restoreSidebarSections();
     restoreSidebarCollapse();
@@ -2262,6 +2315,7 @@ async function connect() {
     await refreshAll();
     PVE.refreshInterval = setInterval(refreshAll, 30000);
     tmStart();
+    _scheduleInit();
     renderSavedViewsSidebar();
     restoreSidebarSections();
     restoreSidebarCollapse();
@@ -3150,8 +3204,13 @@ async function migrateVM(node, vmid, type, targetNode, online=false, withLocal=f
 // ── RENDERING ─────────────────────────────────────────────
 
 function switchView(view) {
-  expandSidebarSection(view); // auto-expand collapsed section if needed
-  const views=['connect','connections','worldmap','savedview','overview','vms','containers','nodes','tasks','syslog','storage','network','heatmap','isolib','contentlib','sdn','capacity','affinity','drs','hostprofiles','customspecs','pcc-admin','datacenter','pools','ceph','ha','firewall','backups','users','certs','audit','clustergraphs','tags','tfa','subscriptions','updates','pbs'];
+  expandSidebarSection(view);
+  // Auto-fill host URL from current origin when showing connect form
+  if (view === 'connect') {
+    const hostEl = document.getElementById('in-host');
+    if (hostEl && !hostEl.value) hostEl.value = window.location.origin;
+  }
+  const views=['connect','connections','worldmap','savedview','overview','vms','containers','nodes','tasks','syslog','storage','network','heatmap','isolib','contentlib','sdn','capacity','affinity','drs','hostprofiles','customspecs','schedules','pcc-admin','datacenter','pools','ceph','ha','firewall','backups','users','webhooks','certs','audit','reports','clustergraphs','tags','tfa','subscriptions','updates','pbs'];
   views.forEach(v=>{
     const el=document.getElementById('view-'+v);
     if(el) el.style.display=v===view?'':'none';
@@ -3191,7 +3250,8 @@ function switchView(view) {
   if(view==='certs') loadCerts();
   if(view==='audit') loadAudit();
   if(view==='clustergraphs') loadClusterGraphs();
-  if(view==='isolib') loadISOLibrary();
+  if(view==='isolib')   loadISOLibrary();
+  if(view==='webhooks') loadWebhooks();
   if(view==='contentlib') loadContentLibrary();
   if(view==='updates') loadUpdates();
   if(view==='pbs') loadPBS();
@@ -3207,6 +3267,8 @@ function switchView(view) {
   if(view==='capacity') runCapacityAnalysis();
   if(view==='hostprofiles') loadHostProfiles();
   if(view==='customspecs') loadCustomSpecs();
+  if(view==='schedules')   loadSchedules();
+  if(view==='reports')     loadReports();
   if(view==='pcc-admin') loadPCCAdmin();
   if(view==='datacenter') loadDatacenter();
   if(view!=='connect') renderCurrentView();
@@ -9356,6 +9418,401 @@ function convertToTemplate(node, vmid, type) {
 // POST /api2/json/nodes/{node}/lxc/{vmid}/clone
 // Official: https://pve.proxmox.com/pve-docs/api-viewer/#/nodes/{node}/qemu/{vmid}/clone
 
+// ── SCHEDULED OPERATIONS ─────────────────────────────────
+// Schedule recurring VM/CT actions: start, shutdown, stop, reboot,
+// backup (vzdump), snapshot. Schedules fire via a 60-second browser
+// tick while PCC is open. In standalone backend mode the Node.js
+// server also runs a 60s tick so schedules execute 24/7.
+//
+// Schedule schema:
+//   { id, name, enabled, vmid, vmName, vmType, node, connId,
+//     action, schedType, time, days, minute, cronExpr,
+//     options:{storage,compress,snapname,description},
+//     lastRun, nextRun, created }
+
+let _schedTimerId = null;
+
+function getSchedules() {
+  try { return JSON.parse(localStorage.getItem('pve-schedules') || '[]'); } catch { return []; }
+}
+function saveSchedules(s) {
+  const v = JSON.stringify(s);
+  localStorage.setItem('pve-schedules', v);
+  _syncShared('pve-schedules', v);
+}
+
+// ── Schedule time helpers ─────────────────────────────────
+
+const _DAYS = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+
+function _schedNextRun(s) {
+  const now  = new Date();
+  const [h, m] = (s.time || '00:00').split(':').map(Number);
+
+  if (s.schedType === 'daily') {
+    const next = new Date(now); next.setSeconds(0,0);
+    next.setHours(h, m, 0, 0);
+    if (next <= now) next.setDate(next.getDate() + 1);
+    return next.getTime();
+  }
+
+  if (s.schedType === 'weekly') {
+    const days = s.days?.length ? s.days : [1];
+    for (let offset = 0; offset < 8; offset++) {
+      const next = new Date(now);
+      next.setDate(next.getDate() + offset);
+      next.setHours(h, m, 0, 0);
+      if (days.includes(next.getDay()) && next > now) return next.getTime();
+    }
+  }
+
+  if (s.schedType === 'hourly') {
+    const min  = parseInt(s.minute || 0);
+    const next = new Date(now); next.setSeconds(0, 0);
+    next.setMinutes(min, 0, 0);
+    if (next <= now) next.setHours(next.getHours() + 1);
+    return next.getTime();
+  }
+
+  return null;
+}
+
+function _schedFmtDesc(s) {
+  if (s.schedType === 'daily')
+    return `Daily at ${s.time || '00:00'}`;
+  if (s.schedType === 'weekly') {
+    const dayNames = (s.days || []).sort().map(d => _DAYS[d]).join(', ');
+    return `${dayNames} at ${s.time || '00:00'}`;
+  }
+  if (s.schedType === 'hourly')
+    return `Hourly at :${String(s.minute || 0).padStart(2,'0')}`;
+  return s.cronExpr || '—';
+}
+
+function _schedFmtCountdown(nextRun) {
+  if (!nextRun) return '—';
+  const diff = nextRun - Date.now();
+  if (diff < 0) return '<span style="color:var(--red)">overdue</span>';
+  const m = Math.floor(diff / 60000);
+  if (m < 60)   return `in ${m}m`;
+  const h = Math.floor(m / 60);
+  if (h < 24)   return `in ${h}h ${m % 60}m`;
+  return `in ${Math.floor(h / 24)}d ${h % 24}h`;
+}
+
+// ── Scheduler engine ──────────────────────────────────────
+
+function _scheduleInit() {
+  if (_schedTimerId) clearInterval(_schedTimerId);
+  _schedTimerId = setInterval(_scheduleTick, 60000);
+  _scheduleTick(); // check immediately on start
+  _schedUpdateBadge();
+}
+
+function _scheduleStop() {
+  if (_schedTimerId) { clearInterval(_schedTimerId); _schedTimerId = null; }
+}
+
+function _schedUpdateBadge() {
+  const pill   = document.getElementById('sched-status-pill');
+  const badge  = document.getElementById('sched-badge');
+  const active = !!_schedTimerId;
+  if (pill)  { pill.textContent = active ? '⏱ running' : 'off'; pill.className = `pill ${active?'online':'offline'}`; pill.style.display = ''; }
+  if (badge) badge.style.display = 'none'; // clear error badge
+}
+
+async function _scheduleTick() {
+  const now    = Date.now();
+  const all    = getSchedules();
+  let changed  = false;
+
+  for (const s of all) {
+    if (!s.enabled || !s.nextRun) continue;
+    if (now < s.nextRun) continue;
+
+    // Execute — don't await, fire and forget with error capture
+    _scheduleExecute(s).catch(e => {
+      addNotif('schedule_err', 'error',
+        `Schedule failed — ${s.name}`,
+        `${s.action} on ${s.vmName||s.vmid}: ${e.message}`,
+        `sched-err-${s.id}-${Math.floor(now/3600000)}`);
+    });
+
+    s.lastRun = now;
+    s.nextRun = _schedNextRun(s);
+    changed   = true;
+  }
+
+  if (changed) {
+    saveSchedules(all);
+    if (document.getElementById('view-schedules')?.style.display !== 'none') loadSchedules();
+  }
+}
+
+async function _scheduleExecute(s) {
+  const conn  = resolveConn(s.connId || '');
+  const post  = conn ? (p,d) => connPost(conn, p, d) : pvePost;
+  const ep    = (s.vmType === 'lxc' || s.vmType === 'ct') ? 'lxc' : 'qemu';
+  const {node, vmid, action} = s;
+
+  switch (action) {
+    case 'start':
+      await post(`/api2/json/nodes/${node}/${ep}/${vmid}/status/start`, {}); break;
+    case 'stop':
+      await post(`/api2/json/nodes/${node}/${ep}/${vmid}/status/stop`, {}); break;
+    case 'shutdown':
+      await post(`/api2/json/nodes/${node}/${ep}/${vmid}/status/shutdown`, {}); break;
+    case 'reboot':
+      await post(`/api2/json/nodes/${node}/${ep}/${vmid}/status/reboot`, {}); break;
+    case 'backup': {
+      const opts = s.options || {};
+      const params = {
+        vmid,
+        compress: opts.compress || 'zstd',
+        mode:     'snapshot',
+      };
+      if (opts.storage) params.storage = opts.storage;
+      await post(`/api2/json/nodes/${node}/vzdump`, params);
+      break;
+    }
+    case 'snapshot': {
+      const opts     = s.options || {};
+      const datePart = new Date().toISOString().slice(0,10).replace(/-/g,'');
+      const snapname = (opts.snapname || 'auto{date}').replace(/\{date\}/g, datePart);
+      await post(`/api2/json/nodes/${node}/${ep}/${vmid}/snapshot`, {
+        snapname,
+        description: opts.description || `Scheduled snapshot ${new Date().toLocaleString()}`,
+      });
+      break;
+    }
+    default: throw new Error(`Unknown action: ${action}`);
+  }
+
+  addNotif('schedule', 'info',
+    `Scheduled ${action} — ${s.vmName || s.vmid}`,
+    `${action} completed for ${ep.toUpperCase()} ${vmid} on ${node}`,
+    `sched-ok-${s.id}-${Math.floor(Date.now()/3600000)}`);
+}
+
+// ── Schedules view ────────────────────────────────────────
+
+function loadSchedules() {
+  const el = document.getElementById('schedules-content');
+  if (!el) return;
+  _schedUpdateBadge();
+  const schedules = getSchedules();
+
+  // Show status banner in direct mode
+  const modeBanner = !PCC_BACKEND
+    ? `<div style="background:rgba(234,179,8,.08);border:1px solid rgba(234,179,8,.3);border-radius:var(--radius);padding:10px 14px;margin-bottom:14px;font-size:12px;color:var(--muted)">
+        ⚠ <strong style="color:var(--yellow)">Direct mode:</strong> schedules only execute while this browser tab is open.
+        For 24/7 scheduling, deploy the <strong style="color:var(--text)">standalone PCC server</strong> (Actions → server/).
+       </div>`
+    : '';
+
+  if (!schedules.length) {
+    el.innerHTML = `${modeBanner}
+      <div style="text-align:center;padding:40px 20px;color:var(--muted)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="width:48px;height:48px;margin:0 auto 14px;display:block;opacity:.4"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+        <div style="font-size:15px;margin-bottom:8px">No schedules yet</div>
+        <div style="font-size:13px;margin-bottom:16px">Automate start, stop, backup and snapshot operations<br>on any VM or container across all connected clusters.</div>
+        <button class="btn primary" onclick="openCreateScheduleModal()">+ New Schedule</button>
+      </div>`;
+    return;
+  }
+
+  const actionIcon = { start:'▶', stop:'■', shutdown:'⏻', reboot:'↺', backup:'💾', snapshot:'📸' };
+  const actionCol  = { start:'var(--green)', stop:'var(--red)', shutdown:'var(--yellow)', reboot:'var(--blue)', backup:'var(--teal)', snapshot:'var(--muted)' };
+
+  el.innerHTML = `${modeBanner}
+    <div class="table-wrap"><table>
+      <thead><tr><th>Name</th><th>VM / CT</th><th>Action</th><th>Schedule</th><th>Next Run</th><th>Last Run</th><th>Status</th><th>Actions</th></tr></thead>
+      <tbody>${schedules.map(s => `<tr>
+        <td><strong>${escHtml(s.name)}</strong></td>
+        <td>
+          <span class="type-chip ${s.vmType==='lxc'?'ct':'vm'}" style="font-size:9px">${(s.vmType||'vm').toUpperCase()}</span>
+          <span style="margin-left:5px">${escHtml(s.vmName||String(s.vmid))}</span>
+          <span style="font-size:11px;color:var(--muted)"> ${s.vmid} · ${s.node}</span>
+        </td>
+        <td><span style="color:${actionCol[s.action]||'var(--text)'};font-weight:600">${actionIcon[s.action]||'?'} ${s.action}</span></td>
+        <td style="font-size:12px;color:var(--muted)">${escHtml(_schedFmtDesc(s))}</td>
+        <td style="font-size:12px">${_schedFmtCountdown(s.nextRun)}</td>
+        <td style="font-size:11px;color:var(--muted)">${s.lastRun ? new Date(s.lastRun).toLocaleString() : '—'}</td>
+        <td>
+          <label style="display:flex;align-items:center;gap:5px;cursor:pointer;font-size:12px">
+            <input type="checkbox" ${s.enabled?'checked':''} onchange="_schedToggle('${s.id}',this.checked)" style="width:auto;padding:0;margin:0"/>
+            <span style="color:${s.enabled?'var(--green)':'var(--muted)'}">${s.enabled?'on':'off'}</span>
+          </label>
+        </td>
+        <td onclick="event.stopPropagation()"><div class="actions-row">
+          <button class="btn small success" onclick="_runScheduleNow('${s.id}')" title="Run now">▶</button>
+          <button class="btn small" onclick="openCreateScheduleModal('${s.id}')">✎</button>
+          <button class="btn small danger" onclick="_schedDelete('${s.id}')">✕</button>
+        </div></td>
+      </tr>`).join('')}
+      </tbody></table></div>`;
+}
+
+function _schedToggle(id, enabled) {
+  const all = getSchedules();
+  const s   = all.find(x => x.id === id);
+  if (!s) return;
+  s.enabled = enabled;
+  if (enabled && !s.nextRun) s.nextRun = _schedNextRun(s);
+  saveSchedules(all);
+}
+
+function _schedDelete(id) {
+  const s = getSchedules().find(x => x.id === id);
+  document.getElementById('modal-title').textContent = 'Delete Schedule';
+  document.getElementById('modal-body').innerHTML =
+    `<p style="color:var(--muted)">Delete schedule <strong style="color:var(--red)">${escHtml(s?.name||id)}</strong>?</p>`;
+  modalCallback = () => { saveSchedules(getSchedules().filter(x => x.id !== id)); loadSchedules(); toast('Schedule deleted','info'); };
+  document.getElementById('modal-bg').classList.add('open');
+}
+
+async function _runScheduleNow(id) {
+  const s = getSchedules().find(x => x.id === id);
+  if (!s) return;
+  toast(`Running: ${s.action} on ${s.vmName||s.vmid}…`, 'info');
+  try {
+    await _scheduleExecute(s);
+    const all = getSchedules(); const sx = all.find(x => x.id === id);
+    if (sx) { sx.lastRun = Date.now(); saveSchedules(all); loadSchedules(); }
+  } catch(e) { toast(`Failed: ${e.message}`, 'error'); }
+}
+
+function openCreateScheduleModal(editId) {
+  const existing = editId ? getSchedules().find(s => s.id === editId) : null;
+  const s = existing || {};
+  const allItems = allVMs().concat(allCTs());
+  const vmOpts = allItems.map(v =>
+    `<option value="${v.vmid}|${v.node}|${v.type||'vm'}|${v.connId||''}|${escHtml(v.name||v.vmid)}"${String(v.vmid)===String(s.vmid)&&v.node===s.node?' selected':''}>
+      ${escHtml(v.name||String(v.vmid))} (${v.vmid}) — ${v.node}${v.connId?' ['+getConnName(v.connId)+']':''}
+    </option>`).join('');
+
+  const imageStors = (PVE.storage||[]).filter(st => st.content?.includes('images'))
+    .map(st => `<option value="${st.storage}"${st.storage===(s.options?.storage||'')?' selected':''}>${st.storage}</option>`).join('');
+
+  document.getElementById('modal-title').textContent = existing ? `Edit Schedule — ${s.name}` : 'New Scheduled Operation';
+  document.getElementById('modal-body').innerHTML = `
+    <div class="form-group"><label>NAME</label>
+      <input id="sc-name" value="${escHtml(s.name||'')}" placeholder="e.g. Dev VM nightly shutdown"/></div>
+    <div class="form-group"><label>VM / CONTAINER</label>
+      <select id="sc-vm">${vmOpts||'<option value="">No VMs — connect to cluster first</option>'}</select></div>
+    <div class="form-group"><label>ACTION</label>
+      <select id="sc-action" onchange="_schedActionChange()">
+        <option value="start"${s.action==='start'?' selected':''}>▶ Start</option>
+        <option value="shutdown"${(s.action==='shutdown'||!s.action)?' selected':''}>⏻ Graceful shutdown (ACPI)</option>
+        <option value="stop"${s.action==='stop'?' selected':''}>■ Force stop</option>
+        <option value="reboot"${s.action==='reboot'?' selected':''}>↺ Reboot</option>
+        <option value="backup"${s.action==='backup'?' selected':''}>💾 Backup (vzdump)</option>
+        <option value="snapshot"${s.action==='snapshot'?' selected':''}>📸 Snapshot</option>
+      </select></div>
+
+    <div id="sc-backup-opts" style="display:${s.action==='backup'?'block':'none'}">
+      <div class="create-vm-grid">
+        <div class="form-group"><label>BACKUP STORAGE</label>
+          <select id="sc-bk-stor">${imageStors||'<option value="local">local</option>'}</select></div>
+        <div class="form-group"><label>COMPRESSION</label>
+          <select id="sc-bk-comp">
+            <option value="zstd"${(s.options?.compress||'zstd')==='zstd'?' selected':''}>zstd (fast)</option>
+            <option value="lzo"${s.options?.compress==='lzo'?' selected':''}>lzo (faster)</option>
+            <option value="gz"${s.options?.compress==='gz'?' selected':''}>gzip</option>
+          </select></div>
+      </div>
+    </div>
+    <div id="sc-snap-opts" style="display:${s.action==='snapshot'?'block':'none'}">
+      <div class="create-vm-grid">
+        <div class="form-group"><label>SNAPSHOT NAME TEMPLATE</label>
+          <input id="sc-snap-name" value="${escHtml(s.options?.snapname||'auto{date}')}" placeholder="auto{date}"/>
+          <div style="font-size:10px;color:var(--muted);margin-top:2px">{date} → YYYYMMDD</div>
+        </div>
+        <div class="form-group"><label>DESCRIPTION</label>
+          <input id="sc-snap-desc" value="${escHtml(s.options?.description||'Scheduled snapshot')}"/></div>
+      </div>
+    </div>
+
+    <div class="section-title" style="font-size:11px;margin:12px 0 8px">Schedule</div>
+    <div class="form-group"><label>REPEAT</label>
+      <select id="sc-type" onchange="_schedTypeChange()">
+        <option value="daily"${(s.schedType||'daily')==='daily'?' selected':''}>Daily</option>
+        <option value="weekly"${s.schedType==='weekly'?' selected':''}>Weekly — specific days</option>
+        <option value="hourly"${s.schedType==='hourly'?' selected':''}>Hourly</option>
+      </select></div>
+    <div id="sc-time-row" style="display:${s.schedType==='hourly'?'none':'block'}">
+      <div class="form-group"><label>TIME (HH:MM)</label>
+        <input id="sc-time" type="time" value="${s.time||'02:00'}" style="width:120px"/></div>
+    </div>
+    <div id="sc-hourly-row" style="display:${s.schedType==='hourly'?'block':'none'}">
+      <div class="form-group"><label>MINUTE PAST THE HOUR</label>
+        <input id="sc-minute" type="number" value="${s.minute||0}" min="0" max="59" style="width:80px"/></div>
+    </div>
+    <div id="sc-days-row" style="display:${s.schedType==='weekly'?'flex':'none'};gap:8px;flex-wrap:wrap;margin-bottom:12px">
+      ${_DAYS.map((d,i)=>`<label style="display:flex;align-items:center;gap:4px;font-size:12px;cursor:pointer">
+        <input type="checkbox" class="sc-day" value="${i}" ${(s.days||[1,2,3,4,5]).includes(i)?'checked':''} style="width:auto;padding:0;margin:0"/> ${d}
+      </label>`).join('')}
+    </div>`;
+
+  const btn = document.getElementById('modal-confirm-btn');
+  btn.textContent = existing ? 'Save' : 'Create Schedule'; btn.disabled = false;
+  btn.onclick = () => {
+    const name = document.getElementById('sc-name')?.value?.trim();
+    const vmSel = document.getElementById('sc-vm')?.value || '';
+    if (!name) return toast('Enter a name','error');
+    if (!vmSel) return toast('Select a VM','error');
+    const [vmid, node, vmType, connId, vmName] = vmSel.split('|');
+    const action   = document.getElementById('sc-action')?.value || 'shutdown';
+    const schedType= document.getElementById('sc-type')?.value   || 'daily';
+    const time     = document.getElementById('sc-time')?.value   || '02:00';
+    const minute   = parseInt(document.getElementById('sc-minute')?.value||'0');
+    const days     = [...document.querySelectorAll('.sc-day:checked')].map(e=>parseInt(e.value));
+    const options  = {};
+    if (action === 'backup') {
+      options.storage  = document.getElementById('sc-bk-stor')?.value;
+      options.compress = document.getElementById('sc-bk-comp')?.value || 'zstd';
+    }
+    if (action === 'snapshot') {
+      options.snapname    = document.getElementById('sc-snap-name')?.value?.trim() || 'auto{date}';
+      options.description = document.getElementById('sc-snap-desc')?.value?.trim() || 'Scheduled snapshot';
+    }
+    const entry = {
+      id:        existing?.id || 'sched-' + Date.now(),
+      name, vmid: parseInt(vmid), vmName, vmType, node,
+      connId:    connId || '',
+      action, schedType, time, minute,
+      days:      schedType === 'weekly' ? days : [],
+      options,
+      enabled:   existing ? existing.enabled : true,
+      lastRun:   existing?.lastRun || null,
+      nextRun:   null,
+      created:   existing?.created || Date.now(),
+    };
+    entry.nextRun = _schedNextRun(entry);
+    const all = getSchedules();
+    if (existing) { const idx=all.findIndex(x=>x.id===existing.id); if(idx>=0) all[idx]=entry; else all.push(entry); }
+    else all.push(entry);
+    saveSchedules(all);
+    document.getElementById('modal-bg').classList.remove('open');
+    btn.onclick = confirmModal; btn.textContent = 'Confirm'; btn.disabled = false;
+    toast(existing?'Schedule updated':'Schedule created','success');
+    loadSchedules();
+  };
+  document.getElementById('modal-bg').classList.add('open');
+}
+
+function _schedActionChange() {
+  const a = document.getElementById('sc-action')?.value;
+  document.getElementById('sc-backup-opts').style.display = a==='backup'   ? 'block' : 'none';
+  document.getElementById('sc-snap-opts').style.display   = a==='snapshot' ? 'block' : 'none';
+}
+function _schedTypeChange() {
+  const t = document.getElementById('sc-type')?.value;
+  document.getElementById('sc-time-row').style.display   = t==='hourly'  ? 'none'  : 'block';
+  document.getElementById('sc-hourly-row').style.display = t==='hourly'  ? 'block' : 'none';
+  document.getElementById('sc-days-row').style.display   = t==='weekly'  ? 'flex'  : 'none';
+}
+
 // ── VM CUSTOMISATION SPECS ────────────────────────────────
 // Named cloud-init configuration templates — like vCenter Guest Customization Specs.
 // Applied to new VMs after cloning from a cloud-init-capable template.
@@ -13647,6 +14104,305 @@ function openAddVMAlertModal(prefillVmid, prefillNode, prefillName, prefillConnI
   };
 }
 
+// ── WEBHOOKS & EXTERNAL NOTIFICATIONS ────────────────────
+// Send PCC alerts to Slack, Teams, Discord, or any generic HTTP endpoint.
+// Webhooks are fired from addNotif() for every new notification that
+// passes the webhook's severity and type filters.
+//
+// Payload formats:
+//   slack   → {"text":"...", "attachments":[...]}
+//   teams   → {"@type":"MessageCard", "title":"...", "text":"..."}
+//   discord → {"embeds":[{"title":"...","description":"...","color":N}]}
+//   generic → {"severity","type","title","message","timestamp"}
+
+function getWebhooks() {
+  try { return JSON.parse(localStorage.getItem('pve-webhooks') || '[]'); } catch { return []; }
+}
+function saveWebhooks(w) {
+  const v = JSON.stringify(w);
+  localStorage.setItem('pve-webhooks', v);
+  _syncShared('pve-webhooks', v);
+}
+
+const _WH_SEV_ORDER = { info: 0, warning: 1, error: 2 };
+const _WH_COLORS    = { info: '#58a6ff', warning: '#d29922', error: '#f85149' };
+const _WH_EMOJIS    = { info: 'ℹ️', warning: '⚠️', error: '🔴' };
+
+function _whSevNum(sev) { return _WH_SEV_ORDER[sev] ?? 0; }
+
+function _buildWebhookPayload(type, notif) {
+  const { severity, title, message, timestamp } = notif;
+  const emoji     = _WH_EMOJIS[severity]  || 'ℹ️';
+  const color     = _WH_COLORS[severity]  || '#58a6ff';
+  const colorDec  = parseInt(color.slice(1), 16);
+  const ts        = timestamp ? new Date(timestamp).toISOString() : new Date().toISOString();
+  const text      = `${emoji} *${title}*\n${message}`;
+
+  if (type === 'slack') {
+    return {
+      text: `${emoji} *${title}*`,
+      attachments: [{
+        color,
+        text: message,
+        footer: 'PCC — Proxmox Command Center',
+        ts: Math.floor((timestamp || Date.now()) / 1000),
+        fields: [{ title: 'Severity', value: severity.toUpperCase(), short: true }],
+      }],
+    };
+  }
+  if (type === 'teams') {
+    return {
+      '@type':    'MessageCard',
+      '@context': 'https://schema.org/extensions',
+      summary:    title,
+      themeColor: color.slice(1),
+      title:      `${emoji} ${title}`,
+      text:       message,
+      sections:   [{ facts: [{ name: 'Severity', value: severity.toUpperCase() }, { name: 'Time', value: ts }] }],
+    };
+  }
+  if (type === 'discord') {
+    return {
+      embeds: [{
+        title:       `${emoji} ${title}`,
+        description: message,
+        color:       colorDec,
+        footer:      { text: 'PCC — Proxmox Command Center' },
+        timestamp:   ts,
+      }],
+    };
+  }
+  // generic
+  return { severity, type: notif.type, title, message, timestamp: ts, source: 'PCC' };
+}
+
+async function _sendWebhook(webhook, payload) {
+  const headers = { 'Content-Type': 'application/json' };
+  if (webhook.secret) headers['Authorization'] = `Bearer ${webhook.secret}`;
+  const r = await fetch(webhook.url, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify(payload),
+    mode: 'no-cors',  // most webhook providers don't set CORS headers we need
+  });
+  // no-cors mode always returns opaque response — we can't check status
+  // but the request IS sent. For cors mode, check r.ok.
+}
+
+function _fireWebhooks(notif) {
+  const hooks = getWebhooks().filter(w => w.enabled && w.url);
+  if (!hooks.length) return;
+  hooks.forEach(w => {
+    // Severity filter
+    if (_whSevNum(notif.severity) < _whSevNum(w.minSeverity || 'warning')) return;
+    // Type filter
+    if (w.types && w.types.length && !w.types.includes(notif.type)) return;
+    // Rate limit per webhook: at most 1 send per 60s for the same dedupeKey
+    const rlKey = `_wh_${w.id}_${notif.id}`;
+    if (window[rlKey]) return;
+    window[rlKey] = true;
+    const payload = _buildWebhookPayload(w.type || 'generic', notif);
+    _sendWebhook(w, payload).catch(() => {}); // fire-and-forget
+  });
+}
+
+// ── Webhooks view ─────────────────────────────────────────
+
+function loadWebhooks() {
+  const el = document.getElementById('webhooks-content');
+  if (!el) return;
+  const hooks = getWebhooks();
+
+  if (!hooks.length) {
+    el.innerHTML = `
+      <div style="text-align:center;padding:40px 20px;color:var(--muted)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="width:48px;height:48px;margin:0 auto 14px;display:block;opacity:.4"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+        <div style="font-size:15px;margin-bottom:8px">No webhooks configured</div>
+        <div style="font-size:13px;margin-bottom:16px">
+          Send PCC alerts to Slack, Teams, Discord or any HTTP endpoint.<br>
+          Webhooks fire whenever a notification is added to your alerts feed.
+        </div>
+        <button class="btn primary" onclick="openCreateWebhookModal()">+ Add Webhook</button>
+      </div>
+      ${_whQuickStartGuide()}`;
+    return;
+  }
+
+  el.innerHTML = `
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:12px;margin-bottom:24px">
+      ${hooks.map(w => {
+        const typeIcon = { slack:'💬', teams:'🟦', discord:'🎮', generic:'🔗' }[w.type] || '🔗';
+        const sevLabel = { info:'ℹ all', warning:'⚠ warning+', error:'🔴 errors only' }[w.minSeverity||'warning'];
+        const filterLabel = w.types?.length ? w.types.join(', ') : 'all types';
+        return `<div style="background:var(--bg2);border:1px solid var(--border);border-left:3px solid ${w.enabled?'var(--green)':'var(--border)'};border-radius:var(--radius);padding:14px">
+          <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:10px">
+            <div>
+              <div style="font-size:16px;margin-bottom:4px">${typeIcon} <strong style="font-size:14px">${escHtml(w.name)}</strong></div>
+              <div style="font-size:11px;color:var(--muted);font-family:monospace;word-break:break-all">${escHtml(w.url.length>55?w.url.slice(0,55)+'…':w.url)}</div>
+            </div>
+            <label style="display:flex;align-items:center;gap:5px;cursor:pointer;font-size:12px;color:var(--muted);white-space:nowrap;margin-left:10px">
+              <input type="checkbox" ${w.enabled?'checked':''} onchange="_whToggle('${w.id}',this.checked)" style="width:auto;padding:0;margin:0"/>
+              ${w.enabled?'<span style="color:var(--green)">on</span>':'off'}
+            </label>
+          </div>
+          <div style="font-size:12px;color:var(--muted);margin-bottom:10px;line-height:1.7">
+            Severity: <strong style="color:var(--text)">${sevLabel}</strong><br>
+            Types: <strong style="color:var(--text)">${escHtml(filterLabel)}</strong>
+            ${w.secret?'<br>Auth: <strong style="color:var(--text)">Bearer token set</strong>':''}
+          </div>
+          <div style="display:flex;gap:5px;flex-wrap:wrap">
+            <button class="btn small success" onclick="_whTest('${w.id}')">▶ Test</button>
+            <button class="btn small" onclick="openCreateWebhookModal('${w.id}')">✎ Edit</button>
+            <button class="btn small danger" onclick="_whDelete('${w.id}')">Delete</button>
+          </div>
+        </div>`;
+      }).join('')}
+    </div>
+    ${_whQuickStartGuide()}`;
+}
+
+function _whQuickStartGuide() {
+  return `
+    <div style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);padding:16px 20px">
+      <div style="font-size:13px;font-weight:700;margin-bottom:12px">📖 How to get webhook URLs</div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:16px;font-size:12px;color:var(--muted)">
+        <div>
+          <div style="font-weight:700;color:var(--text);margin-bottom:4px">💬 Slack</div>
+          1. Go to <strong>api.slack.com/apps</strong><br>
+          2. Create App → Incoming Webhooks → On<br>
+          3. Add to Workspace → copy Webhook URL<br>
+          <span style="font-family:monospace;font-size:10px;color:var(--muted)">https://hooks.slack.com/services/T.../B.../...</span>
+        </div>
+        <div>
+          <div style="font-weight:700;color:var(--text);margin-bottom:4px">🟦 Microsoft Teams</div>
+          1. Open a channel → ··· → Connectors<br>
+          2. Incoming Webhook → Configure → Copy URL<br>
+          <span style="font-family:monospace;font-size:10px;color:var(--muted)">https://outlook.office.com/webhook/...</span>
+        </div>
+        <div>
+          <div style="font-weight:700;color:var(--text);margin-bottom:4px">🎮 Discord</div>
+          1. Channel Settings → Integrations → Webhooks<br>
+          2. New Webhook → Copy Webhook URL<br>
+          3. Append <code>/slack</code> to URL for Slack-compat format,<br>
+          &nbsp;&nbsp; or use Discord type for native embeds<br>
+          <span style="font-family:monospace;font-size:10px;color:var(--muted)">https://discord.com/api/webhooks/...</span>
+        </div>
+        <div>
+          <div style="font-weight:700;color:var(--text);margin-bottom:4px">🔗 Generic / Custom</div>
+          Any HTTP endpoint accepting a POST with JSON body.<br>
+          Payload: <code>{"severity","type","title","message","timestamp"}</code><br>
+          Optionally add a <strong>Bearer token</strong> for auth.<br>
+          <strong style="color:var(--yellow)">Note:</strong> endpoint must allow CORS, or use standalone PCC server mode.
+        </div>
+      </div>
+    </div>`;
+}
+
+function _whToggle(id, enabled) {
+  const hooks = getWebhooks();
+  const w = hooks.find(h => h.id === id);
+  if (w) { w.enabled = enabled; saveWebhooks(hooks); }
+}
+
+function _whDelete(id) {
+  const w = getWebhooks().find(h => h.id === id);
+  document.getElementById('modal-title').textContent = 'Delete Webhook';
+  document.getElementById('modal-body').innerHTML = `<p style="color:var(--muted)">Delete webhook <strong style="color:var(--red)">${escHtml(w?.name||id)}</strong>?</p>`;
+  modalCallback = () => { saveWebhooks(getWebhooks().filter(h => h.id !== id)); loadWebhooks(); toast('Webhook deleted','info'); };
+  document.getElementById('modal-bg').classList.add('open');
+}
+
+async function _whTest(id) {
+  const w = getWebhooks().find(h => h.id === id);
+  if (!w) return;
+  const testNotif = {
+    id:        'test-' + Date.now(),
+    type:      'test',
+    severity:  'warning',
+    title:     'PCC Test Notification',
+    message:   `This is a test from PCC — Proxmox Command Center. Webhook "${w.name}" is working correctly.`,
+    timestamp: Date.now(),
+  };
+  const payload = _buildWebhookPayload(w.type || 'generic', testNotif);
+  try {
+    await _sendWebhook(w, payload);
+    toast(`Test sent to "${w.name}" — check your endpoint`, 'success');
+  } catch(e) {
+    toast(`Test failed: ${e.message}`, 'error');
+  }
+}
+
+function openCreateWebhookModal(editId) {
+  const existing = editId ? getWebhooks().find(w => w.id === editId) : null;
+  const w = existing || {};
+
+  const severityOpts = [
+    { value: 'info',    label: 'ℹ All notifications (info, warning, error)' },
+    { value: 'warning', label: '⚠ Warning and error only' },
+    { value: 'error',   label: '🔴 Errors only' },
+  ].map(o => `<option value="${o.value}"${(w.minSeverity||'warning')===o.value?' selected':''}>${o.label}</option>`).join('');
+
+  const typeOpts = ['cpu','memory','storage','vm_down','task_error','vm_perf','test']
+    .map(t => `<label style="display:flex;align-items:center;gap:5px;font-size:12px;cursor:pointer">
+      <input type="checkbox" value="${t}" ${(!w.types||!w.types.length||w.types.includes(t))?'checked':''} style="width:auto;padding:0;margin:0"/>
+      ${t.replace('_',' ')}
+    </label>`).join('');
+
+  document.getElementById('modal-title').textContent = existing ? `Edit Webhook — ${w.name}` : 'Add Webhook';
+  document.getElementById('modal-body').innerHTML = `
+    <div class="form-group"><label>NAME</label>
+      <input id="wh-name" value="${escHtml(w.name||'')}" placeholder="e.g. Slack #alerts"/></div>
+    <div class="form-group"><label>TYPE</label>
+      <select id="wh-type">
+        <option value="slack"${(w.type||'slack')==='slack'?' selected':''}>💬 Slack</option>
+        <option value="teams"${w.type==='teams'?' selected':''}>🟦 Microsoft Teams</option>
+        <option value="discord"${w.type==='discord'?' selected':''}>🎮 Discord</option>
+        <option value="generic"${w.type==='generic'?' selected':''}>🔗 Generic JSON POST</option>
+      </select></div>
+    <div class="form-group"><label>WEBHOOK URL</label>
+      <input id="wh-url" value="${escHtml(w.url||'')}" placeholder="https://hooks.slack.com/services/..." style="font-family:monospace;font-size:12px"/></div>
+    <div class="form-group"><label>BEARER TOKEN / SECRET (optional — sent as Authorization header)</label>
+      <input id="wh-secret" type="password" value="${escHtml(w.secret||'')}" placeholder="leave blank if not needed"/></div>
+    <div class="form-group"><label>MINIMUM SEVERITY</label>
+      <select id="wh-sev">${severityOpts}</select></div>
+    <div class="form-group"><label>NOTIFICATION TYPES TO SEND</label>
+      <div style="display:flex;gap:12px;flex-wrap:wrap;background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius);padding:10px 14px" id="wh-types">
+        ${typeOpts}
+      </div>
+      <div style="font-size:11px;color:var(--muted);margin-top:4px">Uncheck types you don't want forwarded to this webhook.</div>
+    </div>`;
+
+  const btn = document.getElementById('modal-confirm-btn');
+  btn.textContent = existing ? 'Save' : 'Add Webhook'; btn.disabled = false;
+  btn.onclick = () => {
+    const name = document.getElementById('wh-name')?.value?.trim();
+    const url  = document.getElementById('wh-url')?.value?.trim();
+    if (!name || !url) return toast('Name and URL are required','error');
+    if (!url.startsWith('http')) return toast('URL must start with http:// or https://','error');
+    const checked = [...document.querySelectorAll('#wh-types input:checked')].map(i => i.value);
+    const hook = {
+      id:          existing ? existing.id : 'wh-' + Date.now(),
+      name,
+      type:        document.getElementById('wh-type')?.value || 'generic',
+      url,
+      secret:      document.getElementById('wh-secret')?.value?.trim() || '',
+      minSeverity: document.getElementById('wh-sev')?.value || 'warning',
+      types:       checked.length === 7 ? [] : checked, // empty = all
+      enabled:     existing ? existing.enabled : true,
+      created:     existing ? existing.created : Date.now(),
+    };
+    const all = getWebhooks();
+    if (existing) { const idx = all.findIndex(x => x.id === existing.id); if (idx>=0) all[idx]=hook; else all.push(hook); }
+    else all.push(hook);
+    saveWebhooks(all);
+    document.getElementById('modal-bg').classList.remove('open');
+    btn.onclick = confirmModal; btn.textContent = 'Confirm'; btn.disabled = false;
+    toast(existing ? 'Webhook updated' : 'Webhook added','success');
+    loadWebhooks();
+  };
+  document.getElementById('modal-bg').classList.add('open');
+}
+
 function getAlertThresholds() {
   const defaults = { cpu:90, memory:90, storage:85, certDays:30, vmDown:true, taskError:true };
   try { return { ...defaults, ...JSON.parse(localStorage.getItem('pve-alert-thresholds')||'{}') }; }
@@ -13679,6 +14435,7 @@ function addNotif(type, severity, title, message, dedupeKey) {
   updateNotifBadge();
   if (notifPanelOpen) renderNotifList();
   if (severity==='error'||severity==='warning') _fireBrowserNotif(title, message);
+  _fireWebhooks(n);
 }
 
 async function _fireBrowserNotif(title, body) {
@@ -16392,6 +17149,322 @@ function closeDLModal(e) {
   if (e && e.target !== document.getElementById('dl-bg')) return;
   document.getElementById('dl-bg').style.display = 'none';
 }
+
+// ── REPORTS & EXPORT ─────────────────────────────────────
+// Generates cluster utilisation summaries and VM inventories.
+// All reports export to CSV or copy to clipboard.
+// Data comes entirely from in-memory PVE data — no extra API calls needed.
+
+let _rptTab = 'summary';
+
+function loadReports() {
+  // Populate cluster selector
+  const sel = document.getElementById('rpt-conn');
+  if (sel) {
+    const cur = sel.value;
+    sel.innerHTML = '<option value="_all">All Clusters</option><option value="">Primary</option>' +
+      extraConns.map(c=>`<option value="${c.id}">${escHtml(c.name||c.host)}</option>`).join('');
+    if (cur) sel.value = cur;
+  }
+  renderReports();
+}
+
+function renderReports() {
+  const el = document.getElementById('reports-content');
+  if (!el) return;
+
+  const connFilter = document.getElementById('rpt-conn')?.value ?? '_all';
+
+  // Filter data by selected cluster
+  const nodes = connFilter === '_all' ? allNodes()
+    : connFilter === ''               ? PVE.nodeStatuses
+    : (extraConns.find(c=>c.id===connFilter)?.nodeStatuses || []);
+
+  const vms = (connFilter === '_all' ? allVMs() : connFilter === '' ? PVE.vms : (extraConns.find(c=>c.id===connFilter)?.vms||[]))
+    .concat(connFilter === '_all' ? allCTs() : connFilter === '' ? PVE.containers : (extraConns.find(c=>c.id===connFilter)?.containers||[]));
+
+  const storage = connFilter === '_all'
+    ? [...(PVE.storage||[]), ...extraConns.flatMap(c=>c.storage||[])]
+    : connFilter === ''
+    ? (PVE.storage||[])
+    : (extraConns.find(c=>c.id===connFilter)?.storage||[]);
+
+  const now = new Date().toLocaleString();
+
+  // ── Summary stats ──────────────────────────────────────────
+  const running    = vms.filter(v=>v.status==='running').length;
+  const stopped    = vms.filter(v=>v.status!=='running').length;
+  const templates  = vms.filter(v=>v.template).length;
+  const totalVMs   = vms.filter(v=>!v.template).length;
+
+  const totalCPU   = nodes.reduce((a,n)=>a+(n.statusData?.cpuinfo?.cpus||0), 0);
+  const usedCPU    = nodes.reduce((a,n)=>a+((n.statusData?.cpu||0)*100*(n.statusData?.cpuinfo?.cpus||1)), 0) / Math.max(totalCPU, 1);
+  const totalRAMb  = nodes.reduce((a,n)=>a+(n.statusData?.memory?.total||0), 0);
+  const usedRAMb   = nodes.reduce((a,n)=>a+(n.statusData?.memory?.used||0), 0);
+  const usedRAMPct = totalRAMb ? (usedRAMb/totalRAMb*100) : 0;
+
+  const storImages = storage.filter(s=>s.content?.includes('images')&&s.total>0);
+  const totalStorb = storImages.reduce((a,s)=>a+s.total, 0);
+  const usedStorb  = storImages.reduce((a,s)=>a+s.used, 0);
+  const usedStorPct= totalStorb ? (usedStorb/totalStorb*100) : 0;
+
+  const fmtGiB = b => b ? (b/1073741824).toFixed(1)+' GiB' : '—';
+
+  el.innerHTML = `
+    <!-- Tabs -->
+    <div class="dtabs" style="margin-bottom:16px">
+      <div class="dtab ${_rptTab==='summary'?'active':''}" onclick="_rptSwitch('summary')">Summary</div>
+      <div class="dtab ${_rptTab==='inventory'?'active':''}" onclick="_rptSwitch('inventory')">VM Inventory</div>
+      <div class="dtab ${_rptTab==='nodes'?'active':''}" onclick="_rptSwitch('nodes')">Node Utilisation</div>
+      <div class="dtab ${_rptTab==='storage'?'active':''}" onclick="_rptSwitch('storage')">Storage</div>
+    </div>
+
+    ${_rptTab === 'summary' ? `
+      <!-- Cluster summary -->
+      <div class="stats-grid" style="margin-bottom:20px">
+        <div class="stat-card accent-blue"><div class="label">Nodes</div><div class="value">${nodes.length}</div></div>
+        <div class="stat-card accent-green"><div class="label">Running VMs/CTs</div><div class="value">${running}</div><div class="sub">of ${totalVMs} total</div></div>
+        <div class="stat-card accent-orange"><div class="label">CPU Load</div><div class="value">${usedCPU.toFixed(1)}%</div><div class="sub">${totalCPU} vCPUs total</div></div>
+        <div class="stat-card accent-${usedRAMPct>90?'red':'orange'}"><div class="label">RAM Used</div><div class="value">${usedRAMPct.toFixed(1)}%</div><div class="sub">${fmtGiB(usedRAMb)} / ${fmtGiB(totalRAMb)}</div></div>
+        <div class="stat-card accent-${usedStorPct>90?'red':'blue'}"><div class="label">Storage Used</div><div class="value">${usedStorPct.toFixed(1)}%</div><div class="sub">${fmtGiB(usedStorb)} / ${fmtGiB(totalStorb)}</div></div>
+        <div class="stat-card accent-blue"><div class="label">Templates</div><div class="value">${templates}</div></div>
+      </div>
+
+      <div style="display:flex;gap:10px;margin-bottom:20px;flex-wrap:wrap">
+        <button class="btn primary" onclick="_exportSummaryCSV()">↓ Export Summary CSV</button>
+        <button class="btn primary" onclick="_exportInventoryCSV()">↓ Export VM Inventory CSV</button>
+        <button class="btn" onclick="_copyReportMD()">📋 Copy Markdown Report</button>
+      </div>
+
+      <!-- Per-node mini cards -->
+      <div class="section-header" style="margin-bottom:10px"><span class="section-title">Per Node</span></div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:10px">
+        ${nodes.map(n=>{
+          const s   = n.statusData||{};
+          const cpu = s.cpu?s.cpu*100:0;
+          const mem = s.memory?.total?(s.memory.used/s.memory.total*100):0;
+          const disk= s.rootfs?.total?(s.rootfs.used/s.rootfs.total*100):0;
+          const vmCount = vms.filter(v=>v.node===n.node&&!v.template).length;
+          return `<div style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);padding:12px">
+            <div style="font-weight:700;font-size:13px;margin-bottom:8px">${escHtml(n.node)}${n.connId?` <span style="font-size:10px;color:var(--muted)">[${getConnName(n.connId)}]</span>`:''}</div>
+            <div style="font-size:11px;color:var(--muted);margin-bottom:2px">CPU ${cpu.toFixed(1)}%</div>
+            <div class="gauge-bar" style="margin-bottom:5px"><div class="gauge-fill ${gaugeClass(cpu)}" style="width:${Math.min(cpu,100)}%"></div></div>
+            <div style="font-size:11px;color:var(--muted);margin-bottom:2px">RAM ${mem.toFixed(1)}%</div>
+            <div class="gauge-bar" style="margin-bottom:5px"><div class="gauge-fill ${gaugeClass(mem)}" style="width:${Math.min(mem,100)}%"></div></div>
+            <div style="font-size:11px;color:var(--muted);margin-top:4px">${vmCount} VM/CT${vmCount!==1?'s':''}</div>
+          </div>`;}).join('')||'<div class="empty">No node data</div>'}
+      </div>` : ''}
+
+    ${_rptTab === 'inventory' ? `
+      <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap;align-items:center">
+        <input id="rpt-inv-q" placeholder="Search name, node, tag…" style="padding:5px 10px;font-size:13px;width:200px" oninput="renderReports()"/>
+        <select id="rpt-inv-status" style="padding:5px 8px;font-size:13px" onchange="renderReports()">
+          <option value="">All statuses</option>
+          <option value="running">Running</option>
+          <option value="stopped">Stopped</option>
+        </select>
+        <button class="btn small primary" onclick="_exportInventoryCSV()">↓ CSV</button>
+        <button class="btn small" onclick="_copyInventoryMD()">📋 Markdown</button>
+        <span style="font-size:12px;color:var(--muted);margin-left:4px">${totalVMs} VM/CT${totalVMs!==1?'s':''}</span>
+      </div>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Type</th><th>ID</th><th>Name</th><th>Status</th><th>Node</th><th>Cluster</th><th>CPU %</th><th>RAM</th><th>Disk</th><th>Tags</th></tr></thead>
+        <tbody>${_rptInventoryRows(vms)}</tbody>
+      </table></div>` : ''}
+
+    ${_rptTab === 'nodes' ? `
+      <div style="display:flex;gap:8px;margin-bottom:12px">
+        <button class="btn small primary" onclick="_exportNodesCSV()">↓ CSV</button>
+      </div>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Node</th><th>Cluster</th><th>CPU Cores</th><th>CPU %</th><th>RAM Total</th><th>RAM Used</th><th>RAM %</th><th>Root Disk</th><th>Root Disk %</th><th>VMs</th></tr></thead>
+        <tbody>${nodes.map(n=>{
+          const s    = n.statusData||{};
+          const cpu  = s.cpu?s.cpu*100:0;
+          const cores= s.cpuinfo?.cpus||'—';
+          const memT = s.memory?.total||0;
+          const memU = s.memory?.used||0;
+          const memP = memT?(memU/memT*100):0;
+          const dskT = s.rootfs?.total||0;
+          const dskU = s.rootfs?.used||0;
+          const dskP = dskT?(dskU/dskT*100):0;
+          const vc   = vms.filter(v=>v.node===n.node&&!v.template).length;
+          return `<tr>
+            <td><strong>${escHtml(n.node)}</strong></td>
+            <td style="color:var(--muted);font-size:12px">${n.connId?getConnName(n.connId):'Primary'}</td>
+            <td style="text-align:right">${cores}</td>
+            <td style="text-align:right"><span style="color:${cpu>90?'var(--red)':cpu>70?'var(--yellow)':'var(--text)'}">${cpu.toFixed(1)}%</span></td>
+            <td style="text-align:right;font-size:12px">${fmtGiB(memT)}</td>
+            <td style="text-align:right;font-size:12px">${fmtGiB(memU)}</td>
+            <td style="text-align:right"><span style="color:${memP>90?'var(--red)':memP>75?'var(--yellow)':'var(--text)'}">${memP.toFixed(1)}%</span></td>
+            <td style="text-align:right;font-size:12px">${fmtGiB(dskT)}</td>
+            <td style="text-align:right">${dskP.toFixed(1)}%</td>
+            <td style="text-align:right">${vc}</td>
+          </tr>`;}).join('')||'<tr><td colspan="10" class="empty">No data</td></tr>'}
+        </tbody></table></div>` : ''}
+
+    ${_rptTab === 'storage' ? `
+      <div style="display:flex;gap:8px;margin-bottom:12px">
+        <button class="btn small primary" onclick="_exportStorageCSV()">↓ CSV</button>
+      </div>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Storage</th><th>Node</th><th>Type</th><th>Total</th><th>Used</th><th>Free</th><th>Used %</th><th>Content</th></tr></thead>
+        <tbody>${storage.filter(s=>s.total>0).map(s=>{
+          const pct = s.total?(s.used/s.total*100):0;
+          return `<tr>
+            <td><strong>${escHtml(s.storage)}</strong></td>
+            <td style="color:var(--muted);font-size:12px">${escHtml(s.node)}</td>
+            <td style="font-size:12px;color:var(--muted)">${s.type||'—'}</td>
+            <td style="text-align:right;font-size:12px">${fmtGiB(s.total)}</td>
+            <td style="text-align:right;font-size:12px">${fmtGiB(s.used)}</td>
+            <td style="text-align:right;font-size:12px">${fmtGiB(s.avail||s.total-s.used)}</td>
+            <td style="text-align:right"><span style="color:${pct>90?'var(--red)':pct>75?'var(--yellow)':'var(--text)'}">${pct.toFixed(1)}%</span></td>
+            <td style="font-size:11px;color:var(--muted)">${s.content||'—'}</td>
+          </tr>`;}).join('')||'<tr><td colspan="8" class="empty">No storage data</td></tr>'}
+        </tbody></table></div>` : ''}
+
+    <div style="margin-top:16px;font-size:11px;color:var(--muted)">Generated ${now}</div>`;
+}
+
+function _rptSwitch(tab) { _rptTab = tab; renderReports(); }
+
+function _rptInventoryRows(vms) {
+  const q      = (document.getElementById('rpt-inv-q')?.value || '').toLowerCase();
+  const status = document.getElementById('rpt-inv-status')?.value || '';
+  return vms.filter(v => !v.template)
+    .filter(v => !q || (v.name||'').toLowerCase().includes(q) || String(v.vmid).includes(q) || (v.node||'').includes(q) || (v.tags||'').includes(q))
+    .filter(v => !status || v.status === status)
+    .map(v => {
+      const cpu  = v.cpu ? (v.cpu*100).toFixed(1)+'%' : '—';
+      const ram  = v.maxmem ? ((v.mem/v.maxmem*100).toFixed(1)+'%') : '—';
+      const disk = v.maxdisk ? (v.maxdisk/1073741824).toFixed(1)+' GiB' : '—';
+      return `<tr>
+        <td><span class="type-chip ${v.type==='lxc'?'ct':'vm'}" style="font-size:9px">${(v.type||'vm').toUpperCase()}</span></td>
+        <td style="font-size:12px;color:var(--muted)">${v.vmid}</td>
+        <td><strong>${escHtml(v.name||String(v.vmid))}</strong></td>
+        <td><span class="badge ${v.status==='running'?'running':'stopped'}" style="font-size:10px"><span class="badge-dot"></span>${v.status}</span></td>
+        <td style="font-size:12px;color:var(--muted)">${escHtml(v.node)}</td>
+        <td style="font-size:12px;color:var(--muted)">${v.connId?getConnName(v.connId):'Primary'}</td>
+        <td style="text-align:right;font-size:12px">${cpu}</td>
+        <td style="text-align:right;font-size:12px">${ram}</td>
+        <td style="text-align:right;font-size:12px">${disk}</td>
+        <td style="font-size:11px">${v.tags?renderTagChips(parseTags(v.tags),false):''}</td>
+      </tr>`;
+    }).join('') || '<tr><td colspan="10" class="empty">No VMs match</td></tr>';
+}
+
+// ── CSV export helpers ────────────────────────────────────
+
+function _csvRow(arr) { return arr.map(v => `"${String(v||'').replace(/"/g,'""')}"`).join(','); }
+function _downloadCSV(filename, rows) {
+  const blob = new Blob([rows.join('\r\n')], { type: 'text/csv' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob); a.download = filename;
+  a.click(); URL.revokeObjectURL(a.href);
+}
+
+function _exportInventoryCSV() {
+  const vms = allVMs().concat(allCTs()).filter(v => !v.template);
+  const rows = [
+    _csvRow(['Type','VMID','Name','Status','Node','Cluster','CPU%','RAM%','Disk GiB','Tags','Uptime (s)']),
+    ...vms.map(v => _csvRow([
+      v.type||'vm', v.vmid, v.name||'', v.status, v.node,
+      v.connId ? getConnName(v.connId) : 'Primary',
+      v.cpu ? (v.cpu*100).toFixed(2) : '',
+      v.maxmem ? (v.mem/v.maxmem*100).toFixed(2) : '',
+      v.maxdisk ? (v.maxdisk/1073741824).toFixed(2) : '',
+      v.tags||'', v.uptime||'',
+    ]))
+  ];
+  _downloadCSV(`pcc-vm-inventory-${new Date().toISOString().slice(0,10)}.csv`, rows);
+  toast('VM inventory exported', 'success');
+}
+
+function _exportNodesCSV() {
+  const nodes = allNodes();
+  const rows = [
+    _csvRow(['Node','Cluster','CPU Cores','CPU%','RAM Total GiB','RAM Used GiB','RAM%','Root Total GiB','Root Used GiB','Root%','VMs']),
+    ...nodes.map(n => {
+      const s = n.statusData||{};
+      const cpu = s.cpu?s.cpu*100:0;
+      const mt  = s.memory?.total||0; const mu = s.memory?.used||0;
+      const dt  = s.rootfs?.total||0;  const du = s.rootfs?.used||0;
+      const vc  = allVMs().concat(allCTs()).filter(v=>v.node===n.node&&!v.template).length;
+      return _csvRow([
+        n.node, n.connId?getConnName(n.connId):'Primary',
+        s.cpuinfo?.cpus||'', cpu.toFixed(2),
+        (mt/1073741824).toFixed(2), (mu/1073741824).toFixed(2), mt?(mu/mt*100).toFixed(2):'',
+        (dt/1073741824).toFixed(2), (du/1073741824).toFixed(2), dt?(du/dt*100).toFixed(2):'',
+        vc,
+      ]);
+    })
+  ];
+  _downloadCSV(`pcc-nodes-${new Date().toISOString().slice(0,10)}.csv`, rows);
+  toast('Node utilisation exported', 'success');
+}
+
+function _exportStorageCSV() {
+  const storage = [...(PVE.storage||[]), ...extraConns.flatMap(c=>c.storage||[])].filter(s=>s.total>0);
+  const rows = [
+    _csvRow(['Storage','Node','Type','Total GiB','Used GiB','Free GiB','Used%','Content','Shared']),
+    ...storage.map(s => _csvRow([
+      s.storage, s.node, s.type||'',
+      (s.total/1073741824).toFixed(2), (s.used/1073741824).toFixed(2),
+      ((s.avail||s.total-s.used)/1073741824).toFixed(2),
+      s.total?(s.used/s.total*100).toFixed(2):'',
+      s.content||'', s.shared?'yes':'no',
+    ]))
+  ];
+  _downloadCSV(`pcc-storage-${new Date().toISOString().slice(0,10)}.csv`, rows);
+  toast('Storage report exported', 'success');
+}
+
+function _exportSummaryCSV() {
+  _exportInventoryCSV(); // summary downloads inventory as the core data
+}
+
+function _copyReportMD() {
+  const nodes = allNodes();
+  const vms   = allVMs().concat(allCTs()).filter(v=>!v.template);
+  const run   = vms.filter(v=>v.status==='running').length;
+  const fmtGiB= b=>b?(b/1073741824).toFixed(1)+' GiB':'—';
+  const lines = [
+    `# PCC Cluster Report — ${new Date().toLocaleDateString()}`,
+    '',
+    `## Summary`,
+    `- **Nodes:** ${nodes.length}`,
+    `- **VMs / CTs:** ${vms.length} total, ${run} running`,
+    '',
+    `## Node Utilisation`,
+    '| Node | CPU % | RAM % | RAM Used | VMs |',
+    '|------|-------|-------|----------|-----|',
+    ...nodes.map(n => {
+      const s   = n.statusData||{};
+      const cpu = s.cpu?s.cpu*100:0;
+      const mt  = s.memory?.total||0; const mu = s.memory?.used||0;
+      const mem = mt?(mu/mt*100):0;
+      const vc  = vms.filter(v=>v.node===n.node).length;
+      return `| ${n.node} | ${cpu.toFixed(1)}% | ${mem.toFixed(1)}% | ${fmtGiB(mu)} | ${vc} |`;
+    }),
+    '',
+    `## VM / CT Inventory`,
+    '| Type | ID | Name | Status | Node | CPU % | RAM % |',
+    '|------|----|------|--------|------|-------|-------|',
+    ...vms.slice(0,50).map(v => {
+      const cpu = v.cpu?(v.cpu*100).toFixed(1):'—';
+      const ram = v.maxmem?(v.mem/v.maxmem*100).toFixed(1):'—';
+      return `| ${(v.type||'vm').toUpperCase()} | ${v.vmid} | ${v.name||v.vmid} | ${v.status} | ${v.node} | ${cpu}% | ${ram}% |`;
+    }),
+    vms.length>50?`\n_…and ${vms.length-50} more_`:'',
+    '',
+    `_Generated by PCC — Proxmox Command Center_`,
+  ];
+  navigator.clipboard?.writeText(lines.join('\n'))
+    .then(()=>toast('Markdown report copied to clipboard','success'))
+    .catch(()=>toast('Copy failed — try the CSV export instead','error'));
+}
+
+function _copyInventoryMD() { _copyReportMD(); }
 
 // ── Stop monitor on disconnect ────────────────────────────
 // tmStart() is called directly in connect() above
