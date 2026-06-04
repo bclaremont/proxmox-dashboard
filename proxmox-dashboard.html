@@ -709,7 +709,7 @@
         <p>Enter the URL of your Proxmox VE host. If you're running the PCC nginx proxy, the URL below is pre-filled automatically.</p>
         <div class="form-group">
           <label>PROXMOX HOST URL</label>
-          <input id="in-host" type="text" placeholder="http://pve.example.com:8080" autocomplete="url" />
+          <input id="in-host" type="text" placeholder="http://pve.example.com:8080" autocomplete="off" />
           <div style="font-size:11px;color:var(--muted);margin-top:4px;line-height:1.5">
             With nginx proxy (recommended): <code>http://your-pve-host:8080</code><br>
             Direct API (no proxy): <code>https://your-pve-host:8006</code>
@@ -3205,10 +3205,12 @@ async function migrateVM(node, vmid, type, targetNode, online=false, withLocal=f
 
 function switchView(view) {
   expandSidebarSection(view);
-  // Auto-fill host URL from current origin when showing connect form
+  // Auto-fill host URL from current origin when showing connect form.
+  // Always override — window.location.origin is always correct in direct
+  // mode (PCC is served by the same nginx proxy it connects to).
   if (view === 'connect') {
     const hostEl = document.getElementById('in-host');
-    if (hostEl && !hostEl.value) hostEl.value = window.location.origin;
+    if (hostEl) hostEl.value = window.location.origin;
   }
   const views=['connect','connections','worldmap','savedview','overview','vms','containers','nodes','tasks','syslog','storage','network','heatmap','isolib','contentlib','sdn','capacity','affinity','drs','hostprofiles','customspecs','schedules','pcc-admin','datacenter','pools','ceph','ha','firewall','backups','users','webhooks','certs','audit','reports','clustergraphs','tags','tfa','subscriptions','updates','pbs'];
   views.forEach(v=>{
