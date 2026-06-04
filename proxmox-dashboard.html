@@ -969,6 +969,7 @@
         <span class="section-title">Content Library</span>
         <div style="display:flex;gap:6px;align-items:center">
           <input id="cl-search" type="text" placeholder="Search…" style="width:150px;padding:5px 10px;font-size:13px" oninput="renderContentLibrary()"/>
+          <button class="btn small" onclick="_clToggleGuide()">📖 Guide</button>
           <button class="btn small" onclick="loadContentLibrary()">Refresh</button>
         </div>
       </div>
@@ -9829,6 +9830,90 @@ function switchCLTab(tab) {
   renderContentLibrary();
 }
 
+function _clToggleGuide() {
+  const key = 'cl-guide-dismissed';
+  const cur = localStorage.getItem(key) === '1';
+  localStorage.setItem(key, cur ? '0' : '1');
+  renderContentLibrary();
+}
+
+function _clVMTemplateGuide(guideKey, dismissed) {
+  if (dismissed) return ''; // collapsed — 📖 Guide button in header to re-open
+
+  const step = (n, icon, title, body) => `
+    <div style="display:flex;gap:12px;margin-bottom:14px">
+      <div style="width:32px;height:32px;border-radius:50%;background:rgba(249,115,22,.15);border:1px solid rgba(249,115,22,.4);display:flex;align-items:center;justify-content:center;font-size:16px;flex-shrink:0">${icon}</div>
+      <div>
+        <div style="font-weight:700;font-size:13px;margin-bottom:3px">${title}</div>
+        <div style="font-size:12px;color:var(--muted);line-height:1.7">${body}</div>
+      </div>
+    </div>`;
+
+  return `
+    <div id="cl-guide" style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);padding:18px 20px;margin-bottom:18px;position:relative">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+        <div>
+          <div style="font-size:15px;font-weight:700">📖 VM Templates — How It Works</div>
+          <div style="font-size:12px;color:var(--muted);margin-top:2px">A guide to creating, managing and deploying templates in PCC</div>
+        </div>
+        <button onclick="localStorage.setItem('cl-guide-dismissed','1');document.getElementById('cl-guide').remove()"
+          style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:18px;line-height:1;padding:0 4px" title="Dismiss">✕</button>
+      </div>
+
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:0 32px">
+        <div>
+          <div style="font-size:11px;text-transform:uppercase;letter-spacing:1px;color:var(--muted);margin-bottom:12px;font-weight:700">Creating a Template</div>
+
+          ${step(1,'🖥️','Start with a clean VM',
+            `Create a regular VM and install your OS + software. Use a <strong style="color:var(--text)">fresh install</strong> — avoid machine-specific config.<br>
+             <strong style="color:var(--text)">Tip:</strong> add a cloud-init drive at this stage (<em>Hardware → Add → CloudInit Drive</em> in the Proxmox web UI) so you can customise hostname and IP at deploy time.`)}
+
+          ${step(2,'🧹','Clean up before converting',
+            `Before converting, remove machine-specific data so every clone starts fresh:
+             <ul style="margin:6px 0 0 16px;line-height:1.9">
+               <li><code>truncate -s 0 /etc/machine-id</code> — unique machine ID</li>
+               <li><code>rm -f /etc/ssh/ssh_host_*</code> — SSH host keys</li>
+               <li><code>cloud-init clean --logs</code> — reset cloud-init state</li>
+               <li><code>apt-get clean</code> — remove cached packages</li>
+             </ul>
+             <strong style="color:var(--text)">PCC can do this automatically</strong> via the <em>⬡ Prepare as Template</em> button in the VM detail panel (requires QEMU guest agent).`)}
+
+          ${step(3,'⬡','Convert to template',
+            `<strong>Shut the VM down</strong>, then open its detail panel and click <strong style="color:var(--accent)">⬡ Prepare as Template</strong>.<br>
+             The wizard walks you through cleanup, optionally adds a cloud-init drive, then converts.
+             <strong style="color:var(--red)">This is irreversible</strong> — the VM becomes read-only.`)}
+        </div>
+
+        <div>
+          <div style="font-size:11px;text-transform:uppercase;letter-spacing:1px;color:var(--muted);margin-bottom:12px;font-weight:700">Deploying &amp; Managing</div>
+
+          ${step(4,'📝','Add library metadata',
+            `Click <strong>📝 Edit</strong> on any template to add:
+             <ul style="margin:6px 0 0 16px;line-height:1.9">
+               <li><strong style="color:var(--text)">Description</strong> — what the template is for</li>
+               <li><strong style="color:var(--text)">Version tag</strong> — e.g. <code>22.04-v3</code> or <code>2026-Q1</code></li>
+               <li><strong style="color:var(--text)">OS type</strong> — shown as an icon</li>
+               <li><strong style="color:var(--text)">Default Customisation Spec</strong> — auto-applied on deploy</li>
+             </ul>`)}
+
+          ${step(5,'▶','Deploy a template',
+            `Click <strong>▶ Deploy</strong> to open the Clone modal pre-loaded with the template's default Customisation Spec.<br>
+             The spec sets hostname, IP, DNS and SSH key on first boot via cloud-init — no manual config needed.<br>
+             <strong style="color:var(--text)">Create specs</strong> in <em>Automation → Customisation Specs</em>.`)}
+
+          ${step(6,'🌐','Publish to another cluster',
+            `Click <strong>🌐 Publish</strong> for step-by-step instructions to copy a template to another cluster using <code>vzdump</code> + <code>qmrestore</code>.
+             After restoring, run <code>qm template &lt;vmid&gt;</code> and it will appear in that cluster's Content Library.`)}
+        </div>
+      </div>
+
+      <div style="margin-top:16px;padding:10px 14px;background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius);font-size:12px;color:var(--muted)">
+        💡 <strong style="color:var(--text)">Cloud-init templates</strong> are the most powerful type — pair them with a Customisation Spec and every deployment gets its own hostname, IP and SSH key automatically.
+        Without cloud-init, clones start identical to the template (you must configure each one manually after deploy).
+      </div>
+    </div>`;
+}
+
 function renderContentLibrary() {
   const el = document.getElementById('cl-content');
   if (!el) return;
@@ -9845,6 +9930,22 @@ function renderContentLibrary() {
         !(meta[i.key]?.description || '').toLowerCase().includes(q)) return false;
     return true;
   });
+
+  // Show guide for VM Templates tab
+  if (_clTab === 'vm' || _clTab === 'all') {
+    const guideKey    = 'cl-guide-dismissed';
+    const isDismissed = localStorage.getItem(guideKey) === '1';
+    const guideHtml   = _clVMTemplateGuide(guideKey, isDismissed);
+    const existing    = document.getElementById('cl-guide-banner');
+    if (existing) existing.remove();
+    const guideEl = document.createElement('div');
+    guideEl.id = 'cl-guide-banner';
+    guideEl.innerHTML = guideHtml;
+    el.parentNode.insertBefore(guideEl, el);
+  } else {
+    const existing = document.getElementById('cl-guide-banner');
+    if (existing) existing.remove();
+  }
 
   const vmCount  = _clItems.filter(i => i.type === 'qemu').length;
   const ctCount  = _clItems.filter(i => i.type === 'vztmpl').length;
