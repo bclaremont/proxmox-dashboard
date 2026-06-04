@@ -546,6 +546,10 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="3"/><line x1="12" y1="2" x2="12" y2="5"/><line x1="12" y1="19" x2="12" y2="22"/><line x1="2" y1="12" x2="5" y2="12"/><line x1="19" y1="12" x2="22" y2="12"/></svg>
         ISO &amp; Templates
       </div>
+      <div class="nav-item" data-view="contentlib" onclick="switchView('contentlib')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/><line x1="12" y1="7" x2="16" y2="7"/><line x1="12" y1="11" x2="16" y2="11"/><line x1="12" y1="15" x2="14" y2="15"/></svg>
+        Content Library
+      </div>
     </div>
 
     <!-- INFRASTRUCTURE -->
@@ -957,6 +961,24 @@
     <div id="view-heatmap" style="display:none">
       <div class="section-header"><span class="section-title">Resource Heatmap — Cluster Capacity at a Glance</span></div>
       <div id="heatmap-content"></div>
+    </div>
+
+    <!-- CONTENT LIBRARY -->
+    <div id="view-contentlib" style="display:none">
+      <div class="section-header">
+        <span class="section-title">Content Library</span>
+        <div style="display:flex;gap:6px;align-items:center">
+          <input id="cl-search" type="text" placeholder="Search…" style="width:150px;padding:5px 10px;font-size:13px" oninput="renderContentLibrary()"/>
+          <button class="btn small" onclick="loadContentLibrary()">Refresh</button>
+        </div>
+      </div>
+      <div class="dtabs" id="cl-tabs" style="margin-bottom:14px">
+        <div class="dtab active" onclick="switchCLTab('all')">All</div>
+        <div class="dtab"        onclick="switchCLTab('vm')">VM Templates</div>
+        <div class="dtab"        onclick="switchCLTab('ct')">CT Templates</div>
+        <div class="dtab"        onclick="switchCLTab('iso')">ISOs</div>
+      </div>
+      <div id="cl-content"><div class="empty">Loading…</div></div>
     </div>
 
     <!-- ISO & TEMPLATE LIBRARY -->
@@ -1448,7 +1470,7 @@ let PCC_USER    = null;   // { username, role }
 
 const PCC_SHARED_KEYS = new Set([
   'pve-affinity-rules','pve-drs-settings','pve-host-profiles',
-  'pve-saved-views','pve-alert-thresholds','pve-locations','pve-vm-alerts','pve-custom-specs'
+  'pve-saved-views','pve-alert-thresholds','pve-locations','pve-vm-alerts','pve-custom-specs','pve-content-library-meta'
 ]);
 
 async function pccDetectBackend() {
@@ -2619,7 +2641,10 @@ async function openDetail(item) {
     ? `<button class="btn small" onclick="openConsole('${item.node}','${item.vmid}','${item.type}')">⌨ Console</button>` : '';
   document.getElementById('detail-actions').innerHTML += `<button class="btn small" onclick="openCloneModal('${item.node}','${item.vmid}','${item.type}','${(item.name||'').replace(/['"]/g,'')}','${cid}')">⎘ Clone</button>`;
   document.getElementById('detail-actions').innerHTML += `<button class="btn small" onclick="openAddVMAlertModal('${item.vmid}','${item.node}','${(item.name||String(item.vmid)).replace(/['"]/g,'')}','${cid}')" title="Add performance alert rule">🔔 Alert</button>`;
-  if (!running) document.getElementById('detail-actions').innerHTML += `<button class="btn small warning" onclick="convertToTemplate('${item.node}','${item.vmid}','${item.type}')" title="Convert to template (irreversible)">⬡ Template</button>`;
+  if (!running && (item.type==='vm'||item.type==='qemu'))
+    document.getElementById('detail-actions').innerHTML += `<button class="btn small warning" onclick="openPrepareTemplateModal('${item.node}','${item.vmid}','${item.type||'vm'}','${(item.name||'').replace(/'/g,'')}')" title="Prepare and convert to template">⬡ Prepare as Template</button>`;
+  else if (!running)
+    document.getElementById('detail-actions').innerHTML += `<button class="btn small warning" onclick="convertToTemplate('${item.node}','${item.vmid}','${item.type}')" title="Convert to template (irreversible)">⬡ Template</button>`;
   // Hide node-only tabs when viewing a VM/CT
   document.querySelectorAll('.dtab').forEach(t=>{
     const nodeOnly=['dns','hosts','disks','services'];
@@ -3125,7 +3150,7 @@ async function migrateVM(node, vmid, type, targetNode, online=false, withLocal=f
 
 function switchView(view) {
   expandSidebarSection(view); // auto-expand collapsed section if needed
-  const views=['connect','connections','worldmap','savedview','overview','vms','containers','nodes','tasks','syslog','storage','network','heatmap','isolib','sdn','capacity','affinity','drs','hostprofiles','customspecs','pcc-admin','datacenter','pools','ceph','ha','firewall','backups','users','certs','audit','clustergraphs','tags','tfa','subscriptions','updates','pbs'];
+  const views=['connect','connections','worldmap','savedview','overview','vms','containers','nodes','tasks','syslog','storage','network','heatmap','isolib','contentlib','sdn','capacity','affinity','drs','hostprofiles','customspecs','pcc-admin','datacenter','pools','ceph','ha','firewall','backups','users','certs','audit','clustergraphs','tags','tfa','subscriptions','updates','pbs'];
   views.forEach(v=>{
     const el=document.getElementById('view-'+v);
     if(el) el.style.display=v===view?'':'none';
@@ -3166,6 +3191,7 @@ function switchView(view) {
   if(view==='audit') loadAudit();
   if(view==='clustergraphs') loadClusterGraphs();
   if(view==='isolib') loadISOLibrary();
+  if(view==='contentlib') loadContentLibrary();
   if(view==='updates') loadUpdates();
   if(view==='pbs') loadPBS();
   if(view==='sdn') loadSDN();
@@ -9058,6 +9084,256 @@ migrateVM = async function(node, vmid, type, targetNode, online, withLocal, targ
 // ── CONVERT TO TEMPLATE ──────────────────────────────────
 // POST /api2/json/nodes/{node}/qemu/{vmid}/template
 // POST /api2/json/nodes/{node}/lxc/{vmid}/template
+// ── Prepare as Template wizard ────────────────────────────
+// Walks through: shutdown → cleanup → cloud-init drive → convert.
+// Each step shows current state and provides an action button.
+// Cleanup commands run via QEMU guest agent (requires agent enabled).
+
+async function openPrepareTemplateModal(node, vmid, type, name, connId='') {
+  const conn = resolveConn(connId);
+  const get  = conn ? p => connGet(conn, p) : pveGet;
+  const ep   = (type === 'qemu' || type === 'vm') ? 'qemu' : 'lxc';
+
+  document.getElementById('modal-title').textContent = `Prepare as Template — ${name || vmid}`;
+  document.getElementById('modal-body').innerHTML =
+    '<div class="empty"><span class="loading"></span> Loading VM config…</div>';
+  const btn = document.getElementById('modal-confirm-btn');
+  btn.textContent = 'Loading…'; btn.disabled = true; btn.onclick = confirmModal;
+  modalCallback = null;
+  document.getElementById('modal-bg').classList.add('open');
+
+  try {
+    const [cfgRes, statRes] = await Promise.all([
+      get(`/api2/json/nodes/${node}/${ep}/${vmid}/config`).catch(() => ({ data: {} })),
+      get(`/api2/json/nodes/${node}/${ep}/${vmid}/status/current`).catch(() => ({ data: {} })),
+    ]);
+    const cfg       = cfgRes.data  || {};
+    const stat      = statRes.data || {};
+    const isRunning = stat.status === 'running';
+    const hasCI     = Object.values(cfg).some(v => typeof v === 'string' && v.includes('cloudinit'));
+    const agentCfg  = cfg.agent || '';
+    const hasAgent  = agentCfg === '1' || agentCfg.includes('enabled=1');
+
+    _renderPrepModal(node, vmid, ep, name, connId, cfg, isRunning, hasCI, hasAgent, {});
+  } catch(e) {
+    document.getElementById('modal-body').innerHTML =
+      `<div class="empty">Failed to load VM: ${e.message}</div>`;
+    btn.textContent = 'Confirm'; btn.disabled = false;
+  }
+}
+
+function _renderPrepModal(node, vmid, ep, name, connId, cfg, isRunning, hasCI, hasAgent, state) {
+  // state: { cleanDone, ciAdded, converting }
+  const stopped = !isRunning;
+  const ready   = stopped && (hasCI || state.skipCI);
+
+  const stepRow = (num, title, desc, statusEl, actionEl) => `
+    <div style="display:flex;gap:12px;align-items:flex-start;padding:12px 0;border-bottom:1px solid var(--border)">
+      <div style="width:26px;height:26px;border-radius:50%;background:var(--bg3);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;flex-shrink:0;color:var(--muted)">${num}</div>
+      <div style="flex:1;min-width:0">
+        <div style="font-weight:600;font-size:13px;margin-bottom:2px">${title}</div>
+        <div style="font-size:12px;color:var(--muted);margin-bottom:6px">${desc}</div>
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">${statusEl}${actionEl}</div>
+      </div>
+    </div>`;
+
+  const badge = (txt, col) =>
+    `<span style="font-size:11px;padding:2px 8px;border-radius:10px;background:rgba(${col},.15);color:${col};font-weight:600">${txt}</span>`;
+  const greenBadge  = txt => badge(txt, 'var(--green)');
+  const yellowBadge = txt => badge(txt, 'var(--yellow)');
+  const redBadge    = txt => badge(txt, 'var(--red)');
+  const mutedBadge  = txt => badge(txt, 'var(--muted)');
+
+  // Find a free drive slot for cloud-init
+  const takenSlots = new Set(['ide0','ide1','ide2','ide3','scsi0','scsi1','sata0'].filter(k => cfg[k]));
+  const ciSlot = ['ide2','ide3','scsi1','sata0'].find(s => !takenSlots.has(s)) || 'ide2';
+
+  // Build storage options for cloud-init
+  const imageStors = (PVE.storage || [])
+    .filter(s => s.node === node && s.content && (s.content.includes('images') || s.content.includes('rootdir')))
+    .map(s => `<option value="${s.storage}">${escHtml(s.storage)}</option>`).join('');
+
+  const body = `
+    <div style="background:rgba(88,166,255,.08);border:1px solid rgba(88,166,255,.3);border-radius:var(--radius);padding:10px 14px;margin-bottom:14px;font-size:12px;color:var(--muted)">
+      Converting a VM to a template is <strong style="color:var(--text)">irreversible</strong>. Follow these steps to produce a clean, reusable template.
+    </div>
+
+    ${stepRow(1,
+      'Shut down the VM',
+      'The VM must be stopped before converting. All steps below require it to be off.',
+      isRunning ? redBadge('● Running') : greenBadge('✓ Stopped'),
+      isRunning
+        ? `<button class="btn small danger" onclick="_prepShutdown('${node}','${vmid}','${ep}','${name}','${connId}')">Shutdown now</button>`
+        : ''
+    )}
+
+    ${stepRow(2,
+      'Clean up system identity',
+      `Clears machine-ID, SSH host keys and cloud-init state inside the VM so each clone gets unique identifiers. <strong>Requires QEMU guest agent and the VM must be running while these commands execute, then shut down after.</strong>`,
+      state.cleanDone
+        ? greenBadge('✓ Done')
+        : !hasAgent
+        ? mutedBadge('⚠ Guest agent not detected — do this manually in the VM before shutting down')
+        : isRunning
+        ? mutedBadge('○ Pending')
+        : mutedBadge('Skipped (VM already stopped)'),
+      hasAgent && isRunning
+        ? `<button class="btn small" onclick="_prepCleanup('${node}','${vmid}','${ep}','${name}','${connId}')">Run cleanup</button>`
+        : `<div style="font-size:11px;color:var(--muted);font-family:monospace;background:var(--bg);border:1px solid var(--border);border-radius:4px;padding:6px 10px;margin-top:4px;line-height:1.7">
+             truncate -s 0 /etc/machine-id<br>
+             rm -f /etc/ssh/ssh_host_*<br>
+             cloud-init clean --logs 2>/dev/null; true<br>
+             apt-get clean 2>/dev/null; true
+           </div>`
+    )}
+
+    ${stepRow(3,
+      'Add cloud-init drive',
+      'Enables per-clone customisation of hostname, IP, DNS and SSH keys via Customisation Specs. Skip if this is not a cloud-init template.',
+      hasCI || state.ciAdded
+        ? greenBadge('✓ Cloud-init drive present')
+        : mutedBadge('○ No cloud-init drive'),
+      !hasCI && !state.ciAdded
+        ? `<span style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+            <select id="prep-ci-stor" style="padding:4px 8px;font-size:12px;background:var(--bg3);border:1px solid var(--border);border-radius:4px;color:var(--text)">${imageStors || `<option value="local">local</option>`}</select>
+            <button class="btn small success" onclick="_prepAddCloudinit('${node}','${vmid}','${ep}','${name}','${connId}','${ciSlot}')">Add drive</button>
+            <button class="btn small" onclick="_prepSkipCI('${node}','${vmid}','${ep}','${name}','${connId}')">Skip</button>
+           </span>`
+        : ''
+    )}
+
+    ${stepRow(4,
+      'Convert to template',
+      'Makes the VM read-only and registers it as a template. This is the final step — it cannot be undone.',
+      ready ? mutedBadge('Ready to convert') : !stopped ? redBadge('VM must be stopped first') : mutedBadge('Complete steps above'),
+      ''
+    )}
+
+    <div id="prep-err" style="display:none;color:var(--red);font-size:12px;margin-top:8px;padding:8px 12px;background:rgba(248,81,73,.08);border:1px solid var(--red);border-radius:var(--radius)"></div>`;
+
+  document.getElementById('modal-body').innerHTML = body;
+
+  const confirmBtn = document.getElementById('modal-confirm-btn');
+  confirmBtn.textContent = '⬡ Convert to Template';
+  confirmBtn.disabled    = !stopped;
+  confirmBtn.className   = `btn ${stopped ? 'danger' : ''}`;
+  confirmBtn.onclick = stopped
+    ? () => _prepFinalConvert(node, vmid, ep, name, connId)
+    : () => {};
+}
+
+async function _prepShutdown(node, vmid, ep, name, connId) {
+  const conn = resolveConn(connId);
+  const post = conn ? (p,d) => connPost(conn,p,d) : pvePost;
+  try {
+    await post(`/api2/json/nodes/${node}/${ep}/${vmid}/status/shutdown`, {});
+    toast('Shutdown initiated — waiting…', 'info');
+    // Poll for stopped state
+    const get = conn ? p => connGet(conn,p) : pveGet;
+    for (let i = 0; i < 30; i++) {
+      await new Promise(r => setTimeout(r, 2000));
+      const s = await get(`/api2/json/nodes/${node}/${ep}/${vmid}/status/current`).catch(() => ({data:{}}));
+      if ((s.data || {}).status !== 'running') {
+        toast('VM stopped', 'success');
+        await _prepReloadModal(node, vmid, ep, name, connId);
+        return;
+      }
+    }
+    toast('Shutdown taking longer than expected — check status', 'warning');
+    await _prepReloadModal(node, vmid, ep, name, connId);
+  } catch(e) { toast('Shutdown failed: '+e.message, 'error'); }
+}
+
+async function _prepCleanup(node, vmid, ep, name, connId) {
+  const conn = resolveConn(connId);
+  const post = conn ? (p,d) => connPost(conn,p,d) : pvePost;
+  const btn  = event?.target;
+  if (btn) { btn.disabled = true; btn.textContent = 'Running…'; }
+  try {
+    const script = [
+      'truncate -s 0 /etc/machine-id 2>/dev/null || true',
+      'rm -f /etc/ssh/ssh_host_* 2>/dev/null || true',
+      'cloud-init clean --logs 2>/dev/null || true',
+      'apt-get clean 2>/dev/null || true',
+      'yum clean all 2>/dev/null || dnf clean all 2>/dev/null || true',
+    ].join('; ');
+    await post(`/api2/json/nodes/${node}/${ep}/${vmid}/agent/exec`,
+      { command: '/bin/sh', 'input-data': `-c "${script}"` });
+    await new Promise(r => setTimeout(r, 2000));
+    toast('Cleanup commands sent — now shut down the VM', 'success');
+    if (btn) { btn.disabled = false; btn.textContent = 'Run cleanup'; }
+    // Mark clean done in state
+    await _prepReloadModal(node, vmid, ep, name, connId, { cleanDone: true });
+  } catch(e) {
+    if (btn) { btn.disabled = false; btn.textContent = 'Run cleanup'; }
+    const errEl = document.getElementById('prep-err');
+    if (errEl) { errEl.textContent = 'Cleanup failed: ' + e.message; errEl.style.display = ''; }
+  }
+}
+
+async function _prepAddCloudinit(node, vmid, ep, name, connId, slot) {
+  const conn = resolveConn(connId);
+  const stor = document.getElementById('prep-ci-stor')?.value || 'local';
+  try {
+    const params = { [slot]: `${stor}:cloudinit` };
+    if (conn) {
+      const h    = connHeaders(conn, { 'Content-Type': 'application/x-www-form-urlencoded' });
+      const body = Object.entries(params).map(([k,v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`).join('&');
+      const r = await fetch(conn.host + `/api2/json/nodes/${node}/${ep}/${vmid}/config`, { method:'PUT', headers:h, body });
+      if (!r.ok) { const t = await r.text(); throw new Error(`HTTP ${r.status}: ${t}`); }
+    } else {
+      await pvePut(`/api2/json/nodes/${node}/${ep}/${vmid}/config`, params);
+    }
+    toast(`Cloud-init drive added (${slot})`, 'success');
+    await _prepReloadModal(node, vmid, ep, name, connId, { ciAdded: true });
+  } catch(e) {
+    const errEl = document.getElementById('prep-err');
+    if (errEl) { errEl.textContent = 'Add cloud-init failed: ' + e.message; errEl.style.display = ''; }
+  }
+}
+
+async function _prepSkipCI(node, vmid, ep, name, connId) {
+  await _prepReloadModal(node, vmid, ep, name, connId, { skipCI: true });
+}
+
+async function _prepReloadModal(node, vmid, ep, name, connId, extraState = {}) {
+  const conn = resolveConn(connId);
+  const get  = conn ? p => connGet(conn, p) : pveGet;
+  try {
+    const [cfgRes, statRes] = await Promise.all([
+      get(`/api2/json/nodes/${node}/${ep}/${vmid}/config`).catch(() => ({ data: {} })),
+      get(`/api2/json/nodes/${node}/${ep}/${vmid}/status/current`).catch(() => ({ data: {} })),
+    ]);
+    const cfg       = cfgRes.data  || {};
+    const stat      = statRes.data || {};
+    const isRunning = stat.status === 'running';
+    const hasCI     = Object.values(cfg).some(v => typeof v === 'string' && v.includes('cloudinit'));
+    const agentCfg  = cfg.agent || '';
+    const hasAgent  = agentCfg === '1' || agentCfg.includes('enabled=1');
+    _renderPrepModal(node, vmid, ep, name, connId, cfg, isRunning, hasCI, hasAgent, extraState);
+  } catch {}
+}
+
+async function _prepFinalConvert(node, vmid, ep, name, connId) {
+  const btn  = document.getElementById('modal-confirm-btn');
+  const errEl = document.getElementById('prep-err');
+  if (errEl) errEl.style.display = 'none';
+  btn.disabled = true; btn.textContent = 'Converting…';
+  const conn = resolveConn(connId);
+  const post = conn ? (p,d) => connPost(conn,p,d) : pvePost;
+  try {
+    await post(`/api2/json/nodes/${node}/${ep}/${vmid}/template`, {});
+    document.getElementById('modal-bg').classList.remove('open');
+    btn.onclick = confirmModal; btn.textContent = 'Confirm'; btn.disabled = false;
+    btn.className = 'btn';
+    toast(`${name || vmid} converted to template — it now appears in the Content Library`, 'success');
+    setTimeout(refreshAll, 2000);
+  } catch(e) {
+    btn.disabled = false; btn.textContent = '⬡ Convert to Template';
+    if (errEl) { errEl.textContent = 'Conversion failed: ' + e.message; errEl.style.display = ''; }
+  }
+}
+
 function convertToTemplate(node, vmid, type) {
   document.getElementById('modal-title').textContent = `Convert ${type.toUpperCase()} ${vmid} to Template`;
   document.getElementById('modal-body').innerHTML = `
@@ -9407,6 +9683,332 @@ async function doCloneVM(srcNode, srcVMID, type, connId='') {
       }, 3000);
     }
   } catch(e) { toast('Clone failed: '+e.message,'error'); }
+}
+
+// ── CONTENT LIBRARY ──────────────────────────────────────
+// Unified catalogue of VM templates, CT templates, and ISOs across
+// all connected clusters, augmented with user-supplied metadata.
+//
+// Metadata stored in pve-content-library-meta (synced to backend):
+//   { [itemKey]: { description, osType, version, notes, recommendedSpec, deployCount } }
+// Item key format: "{connId}|{node}|{type}|{id}"
+//   type: 'qemu' | 'lxc' | 'iso' | 'vztmpl'
+//   id:   vmid (number) or volid (string) for storage items
+
+let _clTab   = 'all';
+let _clItems = [];   // loaded library items
+
+const _CL_OS_TYPES = [
+  { value: '',        label: 'Unknown' },
+  { value: 'ubuntu',  label: 'Ubuntu' },
+  { value: 'debian',  label: 'Debian' },
+  { value: 'centos',  label: 'CentOS / AlmaLinux / Rocky' },
+  { value: 'fedora',  label: 'Fedora' },
+  { value: 'suse',    label: 'SUSE / openSUSE' },
+  { value: 'arch',    label: 'Arch Linux' },
+  { value: 'alpine',  label: 'Alpine Linux' },
+  { value: 'win11',   label: 'Windows 11' },
+  { value: 'win10',   label: 'Windows 10' },
+  { value: 'win2022', label: 'Windows Server 2022' },
+  { value: 'win2019', label: 'Windows Server 2019' },
+  { value: 'other',   label: 'Other / Custom' },
+];
+const _CL_OS_ICONS = {
+  ubuntu:'🐧', debian:'🐧', centos:'🐧', fedora:'🐧', suse:'🐧',
+  arch:'🐧', alpine:'🐧',
+  win11:'🪟', win10:'🪟', win2022:'🖥️', win2019:'🖥️',
+  '':'📦', other:'📦',
+};
+
+function getCLMeta() {
+  try { return JSON.parse(localStorage.getItem('pve-content-library-meta') || '{}'); } catch { return {}; }
+}
+function saveCLMeta(m) {
+  const v = JSON.stringify(m);
+  localStorage.setItem('pve-content-library-meta', v);
+  _syncShared('pve-content-library-meta', v);
+}
+
+function _clKey(connId, node, type, id) { return `${connId||''}|${node}|${type}|${id}`; }
+
+// Infer OS type from name heuristic
+function _guessOs(name) {
+  const n = (name || '').toLowerCase();
+  if (n.includes('ubuntu'))  return 'ubuntu';
+  if (n.includes('debian'))  return 'debian';
+  if (n.includes('centos') || n.includes('alma') || n.includes('rocky')) return 'centos';
+  if (n.includes('fedora'))  return 'fedora';
+  if (n.includes('suse'))    return 'suse';
+  if (n.includes('arch'))    return 'arch';
+  if (n.includes('alpine'))  return 'alpine';
+  if (n.includes('win11') || n.includes('windows 11')) return 'win11';
+  if (n.includes('win10') || n.includes('windows 10')) return 'win10';
+  if (n.includes('2022'))    return 'win2022';
+  if (n.includes('2019'))    return 'win2019';
+  return '';
+}
+
+function fmtSize(bytes) {
+  if (!bytes) return '—';
+  const gb = bytes / 1073741824;
+  if (gb >= 1) return gb.toFixed(1) + ' GiB';
+  return (bytes / 1048576).toFixed(0) + ' MiB';
+}
+
+async function loadContentLibrary() {
+  const el = document.getElementById('cl-content');
+  if (!el) return;
+  el.innerHTML = '<div class="empty"><span class="loading"></span> Loading content library…</div>';
+  _clItems = [];
+
+  // 1. VM templates — from allVMs() cache
+  allVMs().forEach(v => {
+    if (!v.template) return;
+    _clItems.push({
+      key:      _clKey(v.connId || '', v.node, 'qemu', v.vmid),
+      type:     'qemu',
+      name:     v.name || `VM ${v.vmid}`,
+      id:       v.vmid,
+      node:     v.node,
+      connId:   v.connId || '',
+      cluster:  v.connId ? getConnName(v.connId) : 'Primary',
+      size:     v.maxdisk || 0,
+      tags:     v.tags ? parseTags(v.tags) : [],
+      created:  null,
+    });
+  });
+
+  // 2. Storage items (CT templates + ISOs) — fetch fresh if isoLib loaded, else fetch now
+  const storageItems = isoLib.loaded ? isoLib.items : await _fetchStorageItems();
+  storageItems.forEach(i => {
+    const type = i.contentType === 'iso' ? 'iso' : 'vztmpl';
+    _clItems.push({
+      key:     _clKey('', i.node, type, i.volid),
+      type,
+      name:    i.name,
+      id:      i.volid,
+      node:    i.node,
+      connId:  '',
+      cluster: 'Primary',
+      size:    i.size || 0,
+      tags:    [],
+      volid:   i.volid,
+      storage: i.storage,
+      created: i.ctime ? i.ctime * 1000 : null,
+    });
+  });
+
+  renderContentLibrary();
+}
+
+async function _fetchStorageItems() {
+  const items = [];
+  try {
+    await Promise.all(PVE.nodes.map(async n => {
+      const storRes = await pveGet(`/api2/json/nodes/${n.node}/storage`).catch(() => ({ data: [] }));
+      await Promise.all((storRes.data || []).map(async s => {
+        const d = await pveGet(`/api2/json/nodes/${n.node}/storage/${s.storage}/content`).catch(() => ({ data: [] }));
+        (d.data || []).filter(i => i.content === 'iso' || i.content === 'vztmpl').forEach(item => {
+          items.push({
+            volid: item.volid, node: n.node, storage: s.storage,
+            contentType: item.content, name: (item.volid || '').split('/').pop(),
+            size: item.size || 0, ctime: item.ctime || 0,
+          });
+        });
+      }));
+    }));
+  } catch {}
+  return items;
+}
+
+function switchCLTab(tab) {
+  _clTab = tab;
+  document.querySelectorAll('#cl-tabs .dtab').forEach((t, i) => {
+    t.classList.toggle('active', ['all','vm','ct','iso'][i] === tab);
+  });
+  renderContentLibrary();
+}
+
+function renderContentLibrary() {
+  const el = document.getElementById('cl-content');
+  if (!el) return;
+
+  const meta    = getCLMeta();
+  const q       = (document.getElementById('cl-search')?.value || '').toLowerCase();
+  const specs   = getCustomSpecs();
+
+  let items = _clItems.filter(i => {
+    if (_clTab === 'vm'  && i.type !== 'qemu')    return false;
+    if (_clTab === 'ct'  && i.type !== 'vztmpl')  return false;
+    if (_clTab === 'iso' && i.type !== 'iso')     return false;
+    if (q && !i.name.toLowerCase().includes(q) &&
+        !(meta[i.key]?.description || '').toLowerCase().includes(q)) return false;
+    return true;
+  });
+
+  const vmCount  = _clItems.filter(i => i.type === 'qemu').length;
+  const ctCount  = _clItems.filter(i => i.type === 'vztmpl').length;
+  const isoCount = _clItems.filter(i => i.type === 'iso').length;
+
+  if (!items.length) {
+    el.innerHTML = `
+      <div style="margin-bottom:12px;font-size:12px;color:var(--muted)">
+        ${vmCount} VM template${vmCount!==1?'s':''} · ${ctCount} CT template${ctCount!==1?'s':''} · ${isoCount} ISO${isoCount!==1?'s':''} · ${_clItems.length} total
+      </div>
+      <div class="empty">${q ? 'No items match your search.' : 'No items found — connect to a cluster first.'}</div>`;
+    return;
+  }
+
+  el.innerHTML = `
+    <div style="margin-bottom:12px;font-size:12px;color:var(--muted)">
+      ${vmCount} VM template${vmCount!==1?'s':''} · ${ctCount} CT template${ctCount!==1?'s':''} · ${isoCount} ISO${isoCount!==1?'s':''} · showing ${items.length}
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px">
+      ${items.map(item => {
+        const m       = meta[item.key] || {};
+        const osType  = m.osType || _guessOs(item.name);
+        const osIcon  = _CL_OS_ICONS[osType] || '📦';
+        const osLabel = (_CL_OS_TYPES.find(o => o.value === osType) || {}).label || '';
+        const spec    = m.recommendedSpec ? specs.find(s => s.id === m.recommendedSpec) : null;
+        const typeChip = item.type === 'qemu'
+          ? '<span class="type-chip vm" style="font-size:9px">VM TMPL</span>'
+          : item.type === 'vztmpl'
+          ? '<span class="type-chip ct" style="font-size:9px">CT TMPL</span>'
+          : '<span style="background:rgba(88,166,255,.15);color:var(--blue);border-radius:4px;padding:1px 5px;font-size:9px;font-weight:700">ISO</span>';
+
+        return `<div style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);padding:14px;display:flex;flex-direction:column;gap:8px">
+          <div style="display:flex;align-items:flex-start;gap:10px">
+            <div style="font-size:26px;line-height:1;flex-shrink:0">${osIcon}</div>
+            <div style="flex:1;min-width:0">
+              <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+                ${typeChip}
+                <strong style="font-size:13px;overflow:hidden;text-overflow:ellipsis">${escHtml(item.name)}</strong>
+              </div>
+              <div style="font-size:11px;color:var(--muted);margin-top:3px">
+                ${item.type==='qemu'?`#${item.id} · `:''}${escHtml(item.node)}${item.connId?' · '+escHtml(item.cluster):''}
+                ${item.size ? ' · ' + fmtSize(item.size) : ''}
+              </div>
+            </div>
+          </div>
+
+          ${m.description || m.version ? `<div style="font-size:12px;color:var(--muted);line-height:1.5">
+            ${m.version ? `<span style="background:rgba(88,166,255,.12);color:var(--blue);border-radius:3px;padding:1px 6px;font-size:10px;font-weight:600;margin-right:4px">${escHtml(m.version)}</span>` : ''}
+            ${escHtml(m.description || '')}
+          </div>` : ''}
+
+          ${item.tags?.length ? `<div style="display:flex;gap:4px;flex-wrap:wrap">${renderTagChips(item.tags, false)}</div>` : ''}
+
+          ${osLabel ? `<div style="font-size:11px;color:var(--muted)">OS: ${escHtml(osLabel)}${spec?` · Spec: <strong style="color:var(--text)">${escHtml(spec.name)}</strong>`:''}</div>` : ''}
+
+          <div style="display:flex;gap:5px;flex-wrap:wrap;margin-top:2px">
+            ${item.type === 'qemu' ? `
+              <button class="btn small primary" onclick="_clDeploy(${JSON.stringify(item.key)})">▶ Deploy</button>
+              <button class="btn small" onclick="_clPublish(${JSON.stringify(item.key)})">🌐 Publish</button>` : ''}
+            ${item.type === 'vztmpl' ? `
+              <button class="btn small primary" onclick="_clDeployCT(${JSON.stringify(item.key)})">▶ Create CT</button>` : ''}
+            ${item.type === 'iso' ? `
+              <button class="btn small" onclick="_clCopyVolid(${JSON.stringify(item.id)})" title="Copy volume ID to clipboard">📋 Copy volid</button>` : ''}
+            <button class="btn small" onclick="openCLMetaModal(${JSON.stringify(item.key)},${JSON.stringify(item.name)})">📝 Edit</button>
+          </div>
+        </div>`;
+      }).join('')}
+    </div>`;
+}
+
+// ── Content Library actions ────────────────────────────────
+
+function _clDeploy(key) {
+  const item = _clItems.find(i => i.key === key);
+  if (!item) return;
+  const meta = getCLMeta()[key] || {};
+  openCloneModal(item.node, item.id, 'vm', item.name, item.connId, meta.recommendedSpec || '');
+}
+
+function _clDeployCT(key) {
+  const item = _clItems.find(i => i.key === key);
+  if (!item) return;
+  // Pre-fill create CT wizard with this template
+  openCreateCTWizard(item.volid);
+}
+
+function _clCopyVolid(volid) {
+  navigator.clipboard?.writeText(volid).then(() => toast('Volume ID copied', 'success'))
+    .catch(() => toast(volid, 'info'));
+}
+
+function _clPublish(key) {
+  const item = _clItems.find(i => i.key === key);
+  if (!item) return;
+  document.getElementById('modal-title').textContent = `Publish Template — ${item.name}`;
+  document.getElementById('modal-body').innerHTML = `
+    <p style="color:var(--muted);font-size:13px;margin-bottom:14px">
+      To make this template available on another cluster, use <code>vzdump</code> to create a portable backup,
+      transfer it, then restore it as a template.
+    </p>
+    <div class="section-title" style="font-size:11px;margin-bottom:8px">Step 1 — Backup on source cluster (${escHtml(item.node)})</div>
+    <pre style="background:var(--bg);border:1px solid var(--border);border-radius:var(--radius);padding:10px 12px;font-size:11px;color:var(--teal);overflow-x:auto;margin-bottom:12px">vzdump ${item.id} --compress zstd --storage local --node ${item.node}</pre>
+    <div class="section-title" style="font-size:11px;margin-bottom:8px">Step 2 — Download the backup</div>
+    <p style="font-size:12px;color:var(--muted);margin-bottom:12px">Go to Storage → Backups on <strong>${escHtml(item.node)}</strong> and download the <code>.vma.zst</code> file.</p>
+    <div class="section-title" style="font-size:11px;margin-bottom:8px">Step 3 — Restore on target cluster</div>
+    <pre style="background:var(--bg);border:1px solid var(--border);border-radius:var(--radius);padding:10px 12px;font-size:11px;color:var(--teal);overflow-x:auto;margin-bottom:12px">qmrestore /path/to/backup.vma.zst &lt;NEWVMID&gt; --storage local-lvm</pre>
+    <div class="section-title" style="font-size:11px;margin-bottom:8px">Step 4 — Convert to template on target</div>
+    <pre style="background:var(--bg);border:1px solid var(--border);border-radius:var(--radius);padding:10px 12px;font-size:11px;color:var(--teal);overflow-x:auto">qm template &lt;NEWVMID&gt;</pre>
+    <p style="font-size:11px;color:var(--muted);margin-top:8px">Then add the restored template to PCC's Content Library on the target cluster and set the same metadata.</p>`;
+  modalCallback = null;
+  const btn = document.getElementById('modal-confirm-btn');
+  btn.textContent = 'Close'; btn.disabled = false;
+  btn.onclick = () => { document.getElementById('modal-bg').classList.remove('open'); btn.onclick = confirmModal; btn.textContent = 'Confirm'; };
+  document.getElementById('modal-bg').classList.add('open');
+}
+
+// ── Edit library metadata modal ────────────────────────────
+
+function openCLMetaModal(key, name) {
+  const meta = getCLMeta();
+  const m    = meta[key] || {};
+  const specs = getCustomSpecs();
+  const specOpts = `<option value="">— none —</option>` +
+    specs.map(s => `<option value="${s.id}"${s.id===m.recommendedSpec?' selected':''}>${escHtml(s.name)}</option>`).join('');
+  const osOpts = _CL_OS_TYPES.map(o =>
+    `<option value="${o.value}"${(m.osType||'')=== o.value?' selected':''}>${o.label}</option>`
+  ).join('');
+
+  document.getElementById('modal-title').textContent = `Library Metadata — ${name}`;
+  document.getElementById('modal-body').innerHTML = `
+    <div class="form-group"><label>DESCRIPTION</label>
+      <textarea id="clm-desc" rows="3" style="width:100%;background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius);color:var(--text);padding:8px;font-family:var(--font);font-size:13px;resize:vertical">${escHtml(m.description||'')}</textarea>
+    </div>
+    <div class="create-vm-grid">
+      <div class="form-group"><label>VERSION / BUILD TAG</label>
+        <input id="clm-ver" value="${escHtml(m.version||'')}" placeholder="22.04-v3, 2026-Q1, etc."/>
+      </div>
+      <div class="form-group"><label>OS TYPE</label>
+        <select id="clm-os">${osOpts}</select>
+      </div>
+    </div>
+    <div class="form-group"><label>DEFAULT CUSTOMISATION SPEC (for VM templates)</label>
+      <select id="clm-spec">${specOpts}</select>
+    </div>
+    <div class="form-group"><label>NOTES</label>
+      <textarea id="clm-notes" rows="2" style="width:100%;background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius);color:var(--text);padding:8px;font-family:var(--font);font-size:13px;resize:vertical" placeholder="Internal notes, change log…">${escHtml(m.notes||'')}</textarea>
+    </div>
+    ${m.deployCount ? `<div style="font-size:12px;color:var(--muted);margin-top:4px">Deployed ${m.deployCount} time${m.deployCount!==1?'s':''} from this library.</div>` : ''}`;
+
+  modalCallback = () => {
+    const all = getCLMeta();
+    all[key] = {
+      description:     (document.getElementById('clm-desc')?.value || '').trim(),
+      version:         (document.getElementById('clm-ver')?.value  || '').trim(),
+      osType:          document.getElementById('clm-os')?.value    || '',
+      recommendedSpec: document.getElementById('clm-spec')?.value  || '',
+      notes:           (document.getElementById('clm-notes')?.value || '').trim(),
+      deployCount:     m.deployCount || 0,
+    };
+    saveCLMeta(all);
+    toast('Library metadata saved', 'success');
+    renderContentLibrary();
+  };
+  document.getElementById('modal-bg').classList.add('open');
 }
 
 // ── ISO / TEMPLATE LIBRARY ────────────────────────────────
