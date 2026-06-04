@@ -1042,11 +1042,26 @@
         <div style="display:flex;gap:6px;align-items:center">
           <button class="btn small" onclick="openDRSSettingsModal()">⚙ Settings</button>
           <button class="btn small warning" id="drs-dryrun-btn" onclick="toggleDRSDryRun()" title="Toggle dry-run mode">Dry Run: ON</button>
-          <button class="btn small primary" onclick="runDRSAnalysis()">▶ Analyse</button>
-          <button class="btn small success" id="drs-run-all-btn" onclick="runDRSAll()" style="display:none">⚡ Run All</button>
+          <div id="drs-compute-btns" style="display:flex;gap:6px">
+            <button class="btn small primary" onclick="runDRSAnalysis()">▶ Analyse</button>
+            <button class="btn small success" id="drs-run-all-btn" onclick="runDRSAll()" style="display:none">⚡ Run All</button>
+          </div>
+          <div id="drs-storage-btns" style="display:none;gap:6px">
+            <button class="btn small primary" onclick="runStorageDRSAnalysis()">▶ Analyse Storage</button>
+            <button class="btn small success" id="sdrs-run-all-btn" onclick="runStorageDRSAll()" style="display:none">⚡ Run All</button>
+          </div>
         </div>
       </div>
-      <div id="drs-content"><div class="empty">Click <strong>▶ Analyse</strong> to calculate cluster balance and get migration recommendations.</div></div>
+      <div class="dtabs" id="drs-tabs" style="margin-bottom:14px">
+        <div class="dtab active" onclick="switchDRSTab('compute')">Compute DRS</div>
+        <div class="dtab"        onclick="switchDRSTab('storage')">Storage DRS</div>
+      </div>
+      <div id="drs-tab-compute">
+        <div id="drs-content"><div class="empty">Click <strong>▶ Analyse</strong> to calculate cluster balance and get migration recommendations.</div></div>
+      </div>
+      <div id="drs-tab-storage" style="display:none">
+        <div id="drs-storage-content"><div class="empty">Click <strong>▶ Analyse Storage</strong> to find imbalanced datastores and get disk-move recommendations.</div></div>
+      </div>
     </div>
 
     <!-- PCC ADMIN -->
@@ -11128,14 +11143,16 @@ function _drsAffinityLocked(vmid) {
 // ── Settings ──────────────────────────────────────────────
 function getDRSSettings() {
   const defaults = {
-    cpuWeight:     60,    // % weight for CPU in balance score
-    memWeight:     40,    // % weight for RAM
-    diskWeight:    0,     // % weight for node disk (rootfs)
-    threshold:     10,    // imbalance % needed to trigger suggestion
-    minImprovement:5,     // min % improvement required to recommend
-    maxMigrations: 5,     // max recommendations per run
-    excludedVMs:   [],    // VMIDs excluded from DRS
-    dryRun:        true,  // default safe: preview only
+    cpuWeight:        60,   // % weight for CPU in balance score
+    memWeight:        40,   // % weight for RAM
+    diskWeight:       0,    // % weight for node disk (rootfs)
+    threshold:        10,   // imbalance % needed to trigger suggestion
+    minImprovement:   5,    // min % improvement required to recommend
+    maxMigrations:    5,    // max recommendations per run
+    excludedVMs:      [],   // VMIDs excluded from DRS
+    dryRun:           true, // default safe: preview only
+    storageThreshold: 75,   // storage % above which datastore is overfull
+    storageTarget:    50,   // storage % below which datastore is underfull
   };
   try { return {...defaults,...JSON.parse(localStorage.getItem('pve-drs-settings')||'{}')}; }
   catch(e) { return defaults; }
@@ -11428,6 +11445,296 @@ async function runDRSAll() {
   }
 }
 
+// ── DRS Tab switching ─────────────────────────────────────
+
+let _drsTab = 'compute';
+
+function switchDRSTab(tab) {
+  _drsTab = tab;
+  document.querySelectorAll('#drs-tabs .dtab').forEach((t,i)=>{
+    t.classList.toggle('active', ['compute','storage'][i]===tab);
+  });
+  document.getElementById('drs-tab-compute').style.display   = tab==='compute' ? '' : 'none';
+  document.getElementById('drs-tab-storage').style.display   = tab==='storage' ? '' : 'none';
+  document.getElementById('drs-compute-btns').style.display  = tab==='compute' ? 'flex' : 'none';
+  document.getElementById('drs-storage-btns').style.display  = tab==='storage' ? 'flex' : 'none';
+}
+
+// ── Storage DRS ───────────────────────────────────────────
+// Recommends moving VM disks between datastores to balance storage utilisation.
+// Uses:
+//   GET  /api2/json/nodes/{node}/storage/{storage}/content?content=images
+//   GET  /api2/json/nodes/{node}/qemu/{vmid}/config   (to resolve disk slot name)
+//   POST /api2/json/nodes/{node}/qemu/{vmid}/move_disk
+//   POST /api2/json/nodes/{node}/lxc/{vmid}/move_volume
+
+let storageDRSState = { recommendations: [], analysed: false };
+
+async function runStorageDRSAnalysis() {
+  const el = document.getElementById('drs-storage-content');
+  el.innerHTML = '<div class="empty"><span class="loading"></span> Collecting storage utilisation…</div>';
+
+  const cfg       = getDRSSettings();
+  const threshold = cfg.storageThreshold || 75;
+  const target    = cfg.storageTarget    || 50;
+
+  // Gather image-capable storages from cached PVE data (primary cluster)
+  const rawStorages = (PVE.storage || []).filter(s =>
+    s.total && s.total > 0 && s.content && s.content.includes('images')
+  );
+
+  // Also pull from extra connections
+  for (const c of extraConns) {
+    (c.storage || []).filter(s => s.total && s.content && s.content.includes('images'))
+      .forEach(s => rawStorages.push({...s, _connId: c.id}));
+  }
+
+  if (!rawStorages.length) {
+    el.innerHTML = `<div class="empty">No image-capable storage found. Connect to a cluster with VM storage first.</div>`;
+    return;
+  }
+
+  const storages = rawStorages.map(s => ({
+    storage:  s.storage,
+    node:     s.node,
+    usedPct:  (s.used / s.total) * 100,
+    usedGiB:  s.used  / 1073741824,
+    totalGiB: s.total / 1073741824,
+    freeGiB:  (s.avail || s.total - s.used) / 1073741824,
+    type:     s.type || '',
+    shared:   !!s.shared,
+    connId:   s._connId || '',
+  }));
+
+  // Fetch disk volume listings for all image storages
+  el.innerHTML = `<div class="empty"><span class="loading"></span> Loading disk inventory (${storages.length} storages)…</div>`;
+
+  const disksByKey = {};
+  await Promise.all(storages.map(async s => {
+    const key = `${s.node}/${s.storage}`;
+    const conn = resolveConn(s.connId);
+    const get  = conn ? p => connGet(conn, p) : pveGet;
+    try {
+      const res = await get(`/api2/json/nodes/${s.node}/storage/${s.storage}/content?content=images`);
+      disksByKey[key] = (res.data || []).map(d => ({
+        volid:   d.volid,
+        vmid:    d.vmid,
+        sizeGiB: (d.size || 0) / 1073741824,
+        format:  d.format || '',
+      }));
+    } catch { disksByKey[key] = []; }
+  }));
+
+  const recs = _sdrsRecommendations(storages, disksByKey, threshold, target, cfg.maxMigrations || 5);
+  storageDRSState = { recommendations: recs, storages, disksByKey, analysed: true };
+
+  const runAllBtn = document.getElementById('sdrs-run-all-btn');
+  if (runAllBtn) runAllBtn.style.display = recs.length ? '' : 'none';
+
+  _renderStorageDRS(storages, disksByKey, recs, cfg, threshold, target);
+}
+
+function _sdrsRecommendations(storages, disksByKey, threshold, target, maxRecs) {
+  const recs  = [];
+  const moved = new Set();
+  const over  = storages.filter(s => s.usedPct > threshold).sort((a,b) => b.usedPct - a.usedPct);
+  const under = storages.filter(s => s.usedPct < target  ).sort((a,b) => a.usedPct - b.usedPct);
+
+  for (const src of over) {
+    if (recs.length >= maxRecs) break;
+    const disks = (disksByKey[`${src.node}/${src.storage}`] || [])
+      .filter(d => d.vmid && d.sizeGiB > 0.01 && !moved.has(d.volid))
+      .sort((a,b) => b.sizeGiB - a.sizeGiB); // move largest first
+
+    for (const disk of disks) {
+      if (recs.length >= maxRecs) break;
+      // Find a compatible underfull target storage
+      const dst = under.find(d =>
+        `${d.node}/${d.storage}` !== `${src.node}/${src.storage}` &&
+        d.freeGiB > disk.sizeGiB * 1.1 &&     // need 10% headroom
+        d.connId === src.connId                 // same cluster
+      );
+      if (!dst) continue;
+
+      const vm = allVMs().concat(allCTs()).find(v => String(v.vmid) === String(disk.vmid));
+      recs.push({
+        vmid:        disk.vmid,
+        name:        vm ? (vm.name || String(disk.vmid)) : String(disk.vmid),
+        type:        vm ? (vm.type || 'vm') : 'vm',
+        volid:       disk.volid,
+        fromStorage: src.storage,
+        toStorage:   dst.storage,
+        fromNode:    src.node,
+        vmNode:      vm ? vm.node : src.node,  // move_disk runs on the VM's own node
+        sizeGiB:     disk.sizeGiB,
+        connId:      src.connId,
+      });
+      moved.add(disk.volid);
+    }
+  }
+  return recs;
+}
+
+function _renderStorageDRS(storages, disksByKey, recs, cfg, threshold, target) {
+  const el = document.getElementById('drs-storage-content');
+  const dryRun = cfg.dryRun;
+
+  const totalGiB    = storages.reduce((a,s) => a + s.totalGiB, 0);
+  const usedGiB     = storages.reduce((a,s) => a + s.usedGiB,  0);
+  const overCount   = storages.filter(s => s.usedPct > threshold).length;
+  const underCount  = storages.filter(s => s.usedPct < target).length;
+  const balanceScore = Math.max(0, 100 - overCount * 20);
+  const scoreCol    = balanceScore >= 80 ? 'var(--green)' : balanceScore >= 50 ? 'var(--yellow)' : 'var(--red)';
+
+  el.innerHTML = `
+    <!-- Summary -->
+    <div style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);padding:16px 20px;margin-bottom:16px;display:flex;align-items:center;gap:20px;flex-wrap:wrap">
+      <div>
+        <div style="font-size:11px;text-transform:uppercase;letter-spacing:1px;color:var(--muted);margin-bottom:4px">Storage Balance</div>
+        <div style="font-size:38px;font-weight:700;color:${scoreCol};line-height:1">${balanceScore}<span style="font-size:18px">/100</span></div>
+      </div>
+      <div style="flex:1;min-width:200px">
+        <div class="gauge-bar" style="height:14px;border-radius:7px;margin-bottom:6px">
+          <div class="gauge-fill ${balanceScore>=80?'low':balanceScore>=50?'mid':'high'}" style="width:${balanceScore}%;height:100%;border-radius:7px"></div>
+        </div>
+        <div style="font-size:12px;color:var(--muted)">
+          ${storages.length} datastore${storages.length!==1?'s':''} &nbsp;·&nbsp;
+          ${usedGiB.toFixed(0)} GiB used of ${totalGiB.toFixed(0)} GiB total &nbsp;·&nbsp;
+          <span style="color:var(--red)">${overCount} over ${threshold}%</span> &nbsp;·&nbsp;
+          <span style="color:var(--blue)">${underCount} under ${target}%</span>
+        </div>
+      </div>
+      ${dryRun
+        ? `<div style="background:rgba(210,153,34,.1);border:1px solid rgba(210,153,34,.3);border-radius:var(--radius);padding:8px 12px;font-size:12px;color:var(--yellow)">🔒 Dry Run — no moves will execute</div>`
+        : `<div style="background:rgba(248,81,73,.1);border:1px solid rgba(248,81,73,.3);border-radius:var(--radius);padding:8px 12px;font-size:12px;color:var(--red)">⚡ Live Mode — disk moves will execute</div>`}
+    </div>
+
+    <!-- Storage utilisation table -->
+    <div class="section-header" style="margin-bottom:10px"><span class="section-title">Datastore Utilisation</span></div>
+    <div class="table-wrap" style="margin-bottom:20px"><table>
+      <thead><tr><th>Storage</th><th>Node</th><th>Type</th><th>Used</th><th>Free</th><th>Total</th><th>Utilisation</th><th>Status</th></tr></thead>
+      <tbody>${storages.map(s => {
+        const diskCount = (disksByKey[`${s.node}/${s.storage}`] || []).length;
+        const status    = s.usedPct > threshold ? `<span style="color:var(--red);font-weight:600">OVER ${threshold}%</span>`
+          : s.usedPct < target ? `<span style="color:var(--blue)">UNDER ${target}%</span>`
+          : `<span style="color:var(--green)">OK</span>`;
+        return `<tr>
+          <td><strong>${escHtml(s.storage)}</strong>${s.shared?` <span style="font-size:10px;color:var(--muted)">(shared)</span>`:''}</td>
+          <td style="color:var(--muted);font-size:12px">${escHtml(s.node)}</td>
+          <td style="color:var(--muted);font-size:12px">${escHtml(s.type)}</td>
+          <td style="font-size:12px">${s.usedGiB.toFixed(1)} GiB</td>
+          <td style="font-size:12px">${s.freeGiB.toFixed(1)} GiB</td>
+          <td style="font-size:12px">${s.totalGiB.toFixed(1)} GiB</td>
+          <td style="min-width:130px">
+            <div class="gauge-bar" style="margin-bottom:3px"><div class="gauge-fill ${gaugeClass(s.usedPct)}" style="width:${Math.min(s.usedPct,100)}%"></div></div>
+            <span style="font-size:10px;color:var(--muted)">${s.usedPct.toFixed(1)}% &nbsp; ${diskCount} disk${diskCount!==1?'s':''}</span>
+          </td>
+          <td>${status}</td>
+        </tr>`;
+      }).join('')}
+      </tbody></table></div>
+
+    <!-- Recommendations -->
+    <div class="section-header" style="margin-bottom:10px">
+      <span class="section-title">Disk Move Recommendations (${recs.length})</span>
+      ${recs.length ? `<button class="btn small success" onclick="runStorageDRSAll()">⚡ Execute All ${dryRun?'(Dry Run)':''}</button>` : ''}
+    </div>
+    ${recs.length ? `
+    <div class="table-wrap"><table>
+      <thead><tr><th>VM / CT</th><th>Disk (volume)</th><th>Size</th><th>From Storage</th><th>To Storage</th><th>Actions</th></tr></thead>
+      <tbody id="sdrs-recs-body">${recs.map((r,i) => `<tr id="sdrs-rec-${i}">
+        <td>
+          <span class="type-chip ${r.type==='vm'||r.type==='qemu'?'vm':'ct'}" style="font-size:9px">${r.type.toUpperCase()}</span>
+          <strong style="margin-left:6px">${escHtml(r.name)}</strong>
+          <span style="font-size:11px;color:var(--muted)"> ${r.vmid}</span>
+        </td>
+        <td style="font-family:monospace;font-size:11px;color:var(--muted);max-width:200px;overflow:hidden;text-overflow:ellipsis">${escHtml(r.volid.split('/').pop())}</td>
+        <td style="font-size:12px;white-space:nowrap">${r.sizeGiB.toFixed(1)} GiB</td>
+        <td><span style="color:var(--red)">${escHtml(r.fromStorage)}</span></td>
+        <td><span style="color:var(--green)">→ ${escHtml(r.toStorage)}</span></td>
+        <td onclick="event.stopPropagation()"><div class="actions-row">
+          <button class="btn small success" onclick="executeStorageDiskMove(${i})">${dryRun?'🔍 Preview':'⚡ Move'}</button>
+          <button class="btn small warning" onclick="document.getElementById('sdrs-rec-${i}').style.display='none'" title="Skip">✕</button>
+        </div></td>
+      </tr>`).join('')}
+      </tbody></table></div>`
+    : `<div style="background:rgba(63,185,80,.08);border:1px solid rgba(63,185,80,.25);border-radius:var(--radius);padding:14px 18px;font-size:13px;color:var(--green)">
+        ✓ Storage is well-balanced — no disk moves recommended (threshold: over ${threshold}% / under ${target}%)
+      </div>`}`;
+}
+
+async function executeStorageDiskMove(idx) {
+  const rec = storageDRSState.recommendations[idx];
+  if (!rec) return;
+  const cfg = getDRSSettings();
+
+  if (cfg.dryRun) {
+    toast(`DRY RUN: Would move ${rec.volid.split('/').pop()} (${rec.sizeGiB.toFixed(1)} GiB) from ${rec.fromStorage} → ${rec.toStorage}`, 'info');
+    return;
+  }
+
+  const row = document.getElementById(`sdrs-rec-${idx}`);
+  if (row) row.style.opacity = '0.4';
+
+  try {
+    const conn = resolveConn(rec.connId);
+    const get  = conn ? p => connGet(conn, p) : pveGet;
+    const post = conn ? (p,d) => connPost(conn, p, d) : pvePost;
+    const ep   = rec.type === 'lxc' || rec.type === 'ct' ? 'lxc' : 'qemu';
+    const vmNode = rec.vmNode || rec.fromNode;
+
+    // Resolve volid → disk slot name (e.g. virtio0, scsi0, rootfs)
+    const cfgRes = await get(`/api2/json/nodes/${vmNode}/${ep}/${rec.vmid}/config`);
+    const vmCfg  = cfgRes.data || {};
+    let   diskKey = null;
+    for (const [k, v] of Object.entries(vmCfg)) {
+      if (typeof v === 'string' && v.startsWith(rec.volid)) {
+        if (/^(virtio|scsi|ide|sata|efidisk|rootfs|mp)\d*$/.test(k)) { diskKey = k; break; }
+      }
+    }
+    if (!diskKey) {
+      // Also try matching just the storage:filename part (volid may have extra params)
+      const shortVolid = rec.volid.split(',')[0];
+      for (const [k, v] of Object.entries(vmCfg)) {
+        if (typeof v === 'string' && v.includes(shortVolid)) {
+          if (/^(virtio|scsi|ide|sata|efidisk|rootfs|mp)\d*$/.test(k)) { diskKey = k; break; }
+        }
+      }
+    }
+    if (!diskKey) throw new Error(`Cannot find disk slot for volume ${rec.volid} in VM config`);
+
+    const moveEndpoint = ep === 'lxc'
+      ? `/api2/json/nodes/${vmNode}/lxc/${rec.vmid}/move_volume`
+      : `/api2/json/nodes/${vmNode}/qemu/${rec.vmid}/move_disk`;
+    const moveParam = ep === 'lxc' ? 'volume' : 'disk';
+    const res = await post(moveEndpoint, { [moveParam]: diskKey, storage: rec.toStorage, delete: 1 });
+    const upid = res && res.data;
+    if (upid && typeof upid === 'string') {
+      tmRegister(upid, vmNode, `Storage DRS: ${ep.toUpperCase()} ${rec.vmid} ${diskKey} → ${rec.toStorage}`);
+    }
+    toast(`Disk move started: ${rec.name} ${diskKey} → ${rec.toStorage}`, 'success');
+    if (row) row.style.display = 'none';
+  } catch(e) {
+    if (row) row.style.opacity = '1';
+    toast(`Disk move failed: ${e.message}`, 'error');
+  }
+}
+
+async function runStorageDRSAll() {
+  const cfg  = getDRSSettings();
+  const recs = storageDRSState.recommendations;
+  if (!recs.length) return toast('No storage recommendations to execute', 'info');
+  if (cfg.dryRun) {
+    toast(`DRY RUN: Would move ${recs.length} disk(s): ${recs.map(r=>`${r.name}→${r.toStorage}`).join(', ')}`, 'info');
+    return;
+  }
+  if (!confirm(`Execute ${recs.length} disk move(s)? Each VM will briefly pause during migration.`)) return;
+  for (let i = 0; i < recs.length; i++) {
+    await executeStorageDiskMove(i);
+    await new Promise(r => setTimeout(r, 800));
+  }
+}
+
 // ── DRS Settings Modal ────────────────────────────────────
 function openDRSSettingsModal() {
   const cfg=getDRSSettings();
@@ -11465,6 +11772,18 @@ function openDRSSettingsModal() {
       <input id="ds-maxmig" type="number" value="${cfg.maxMigrations}" min="1" max="20" style="width:100px"/>
     </div>
 
+    <div class="section-title" style="font-size:11px;margin:14px 0 10px">Storage DRS Thresholds</div>
+    <div class="create-vm-grid">
+      <div class="form-group"><label>OVERFULL THRESHOLD (%)</label>
+        <input id="ds-stor-over" type="number" value="${cfg.storageThreshold||75}" min="50" max="98"/>
+        <div style="font-size:11px;color:var(--muted);margin-top:3px">Datastores above this % are candidates for disk moves away.</div>
+      </div>
+      <div class="form-group"><label>TARGET THRESHOLD (%)</label>
+        <input id="ds-stor-target" type="number" value="${cfg.storageTarget||50}" min="10" max="80"/>
+        <div style="font-size:11px;color:var(--muted);margin-top:3px">Datastores below this % are candidates to receive disks.</div>
+      </div>
+    </div>
+
     <div class="section-title" style="font-size:11px;margin:14px 0 10px">Exclusions</div>
     <div class="form-group"><label>EXCLUDED VM/CT IDs (comma-separated)</label>
       <input id="ds-excl" value="${cfg.excludedVMs.join(',')}" placeholder="100,101,205"/>
@@ -11484,6 +11803,8 @@ function openDRSSettingsModal() {
       maxMigrations:parseInt(document.getElementById('ds-maxmig')?.value||'5'),
       excludedVMs:excl,
       dryRun:getDRSSettings().dryRun,
+      storageThreshold:parseInt(document.getElementById('ds-stor-over')?.value||'75'),
+      storageTarget:parseInt(document.getElementById('ds-stor-target')?.value||'50'),
     });
     toast('DRS settings saved','success');
     // Update dry-run button text
