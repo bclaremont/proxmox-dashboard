@@ -152,6 +152,8 @@
     .badge.error{background:rgba(248,81,73,.12);color:var(--red);border:1px solid rgba(248,81,73,.25);}
     .badge.warning{background:rgba(210,153,34,.12);color:var(--yellow);border:1px solid rgba(210,153,34,.25);}
     .badge-dot{width:6px;height:6px;border-radius:50%;background:currentColor;}
+    .badge.running .badge-dot{animation:pulse 2s ease-in-out infinite;}
+    @keyframes pulse{0%,100%{opacity:1;transform:scale(1);}50%{opacity:.5;transform:scale(.75);}}
     /* TYPE CHIPS — #6: more saturated, easier to distinguish VM vs CT */
     .type-chip{font-size:11px;padding:2px 8px;border-radius:4px;font-weight:600;letter-spacing:.3px;}
     .type-chip.vm{background:rgba(88,166,255,.15);border:1px solid rgba(88,166,255,.5);color:#79b8ff;}
@@ -205,7 +207,10 @@
     /* MODAL */
     #modal-bg{display:none;position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:600;align-items:center;justify-content:center;}
     #modal-bg.open{display:flex;}
-    #modal{background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:24px;min-width:380px;max-width:500px;}
+    #modal{background:var(--bg2);border:1px solid var(--border);border-top:3px solid var(--accent);border-radius:12px;padding:24px;min-width:380px;max-width:500px;}
+    #modal.modal-danger{border-top-color:var(--red);}
+    #modal.modal-success{border-top-color:var(--green);}
+    #modal.modal-info{border-top-color:var(--blue);}
     #modal h3{font-size:16px;font-weight:700;margin-bottom:16px;}
     .modal-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:20px;}
     /* TOAST */
@@ -223,6 +228,10 @@
     /* View fade-in — plays when a view div becomes visible */
     @keyframes viewFadeIn{from{opacity:0;transform:translateY(5px);}to{opacity:1;transform:translateY(0);}}
     .view-entering{animation:viewFadeIn .15s ease forwards;}
+    /* Quick filter pills */
+    .filter-pill{padding:4px 10px;border-radius:12px;border:1px solid var(--border);background:transparent;color:var(--muted);font-family:var(--font);font-size:11px;cursor:pointer;transition:all .15s;white-space:nowrap;}
+    .filter-pill:hover{border-color:var(--muted);color:var(--text);}
+    .filter-pill.active{background:rgba(249,115,22,.15);border-color:rgba(249,115,22,.5);color:var(--accent);font-weight:600;}
     @keyframes slideIn{from{transform:translateX(20px);opacity:0;}to{transform:translateX(0);opacity:1;}}
     .empty{text-align:center;padding:40px 20px;color:var(--muted);font-size:13px;}
     .actions-row{display:flex;gap:5px;flex-wrap:wrap;}
@@ -857,6 +866,11 @@
             <button class="view-toggle-btn active" id="vms-view-table" onclick="setVMView('table')" title="Table view">≡</button>
             <button class="view-toggle-btn" id="vms-view-cards" onclick="setVMView('cards')" title="Card view">⊞</button>
           </div>
+          <div id="vms-status-pills" style="display:flex;gap:4px">
+            <button class="filter-pill active" id="vms-f-all"     onclick="_vmFilter('all')"    >All</button>
+            <button class="filter-pill"        id="vms-f-running" onclick="_vmFilter('running')" >● Running</button>
+            <button class="filter-pill"        id="vms-f-stopped" onclick="_vmFilter('stopped')" >○ Stopped</button>
+          </div>
           <select id="vms-tag-filter" style="width:120px;padding:5px 8px;font-size:13px" onchange="renderVMTable()"><option value="">All Tags</option></select>
           <button class="btn small primary" onclick="openCreateVMModal()">+ Create VM</button>
           <button class="btn small" onclick="refreshAll()">Refresh</button>
@@ -880,6 +894,11 @@
           <div class="view-toggle">
             <button class="view-toggle-btn active" id="cts-view-table" onclick="setCTView('table')" title="Table view">≡</button>
             <button class="view-toggle-btn" id="cts-view-cards" onclick="setCTView('cards')" title="Card view">⊞</button>
+          </div>
+          <div id="cts-status-pills" style="display:flex;gap:4px">
+            <button class="filter-pill active" id="cts-f-all"     onclick="_ctFilter('all')"    >All</button>
+            <button class="filter-pill"        id="cts-f-running" onclick="_ctFilter('running')" >● Running</button>
+            <button class="filter-pill"        id="cts-f-stopped" onclick="_ctFilter('stopped')" >○ Stopped</button>
           </div>
           <select id="cts-tag-filter" style="width:120px;padding:5px 8px;font-size:13px" onchange="renderCTTable()"><option value="">All Tags</option></select>
           <button class="btn small primary" onclick="openCreateCTWizard()">+ Create CT</button>
@@ -3529,9 +3548,38 @@ function _renderAllTableBody() {
 function renderAllTable() { _renderAllTableBody(); }
 function filterAll(){ _renderAllTableBody(); }
 
+let _vmStatusFilter = 'all';
+let _ctStatusFilter = 'all';
+
+function _vmFilter(f) {
+  _vmStatusFilter = f;
+  ['all','running','stopped'].forEach(s => {
+    document.getElementById(`vms-f-${s}`)?.classList.toggle('active', s === f);
+  });
+  renderVMTable();
+}
+function _ctFilter(f) {
+  _ctStatusFilter = f;
+  ['all','running','stopped'].forEach(s => {
+    document.getElementById(`cts-f-${s}`)?.classList.toggle('active', s === f);
+  });
+  renderCTTable();
+}
+
 function renderVMTable(){
   const tagF = document.getElementById('vms-tag-filter')?.value||'';
-  const sorted = _sortItems(allVMs().filter(x=>!tagF||parseTags(x.tags||'').includes(tagF)), vmSort.col, vmSort.dir);
+  const all  = allVMs().filter(x => !x.template);
+  const run  = all.filter(x => x.status === 'running').length;
+  const stop = all.filter(x => x.status !== 'running').length;
+  // Update pill labels with counts
+  const fa = document.getElementById('vms-f-all');     if(fa) fa.textContent = `All (${all.length})`;
+  const fr = document.getElementById('vms-f-running'); if(fr) fr.textContent = `● Running (${run})`;
+  const fs = document.getElementById('vms-f-stopped'); if(fs) fs.textContent = `○ Stopped (${stop})`;
+
+  const sorted = _sortItems(
+    all .filter(x => !tagF || parseTags(x.tags||'').includes(tagF))
+        .filter(x => _vmStatusFilter === 'all' || x.status === _vmStatusFilter),
+    vmSort.col, vmSort.dir);
   _updateSortIcons('#vms-content table', vmSort.col, vmSort.dir);
   if (vmViewMode==='cards') {
     const c = document.getElementById('vms-content');
@@ -3540,12 +3588,16 @@ function renderVMTable(){
   }
   document.getElementById('vm-table-body').innerHTML = sorted.length
     ? sorted.map(v=>vmRow(v)).join('')
-    : `<tr><td colspan="9" class="empty">No VMs found</td></tr>`;
+    : `<tr><td colspan="9" class="empty">No VMs match</td></tr>`;
 }
 
 function renderCTTable(){
   const tagF = document.getElementById('cts-tag-filter')?.value||'';
-  const sorted = _sortItems(allCTs().filter(x=>!tagF||parseTags(x.tags||'').includes(tagF)), ctSort.col, ctSort.dir);
+  const sorted = _sortItems(
+    allCTs()
+      .filter(x => !tagF || parseTags(x.tags||'').includes(tagF))
+      .filter(x => _ctStatusFilter === 'all' || x.status === _ctStatusFilter),
+    ctSort.col, ctSort.dir);
   _updateSortIcons('#cts-content table', ctSort.col, ctSort.dir);
   if (ctViewMode==='cards') {
     const c = document.getElementById('cts-content');
@@ -17528,6 +17580,28 @@ disconnect = function() {
   if (p) p.style.display = 'none';
   _origDisconnect();
 };
+
+// Auto-colour the modal top strip based on the confirm button type.
+// Runs whenever modal-bg gains the 'open' class.
+(function() {
+  const mo = new MutationObserver(() => {
+    const bg  = document.getElementById('modal-bg');
+    const mod = document.getElementById('modal');
+    if (!bg || !mod) return;
+    mod.classList.remove('modal-danger','modal-success','modal-info');
+    if (bg.classList.contains('open')) {
+      const btn = document.getElementById('modal-confirm-btn');
+      if (btn?.classList.contains('danger'))  mod.classList.add('modal-danger');
+      else if (btn?.classList.contains('success')) mod.classList.add('modal-success');
+      else if (btn?.classList.contains('btn') && !btn.classList.contains('primary')) mod.classList.add('modal-info');
+      // default (primary / orange) uses the CSS default var(--accent) strip
+    }
+  });
+  document.addEventListener('DOMContentLoaded', () => {
+    const bg = document.getElementById('modal-bg');
+    if (bg) mo.observe(bg, { attributes: true, attributeFilter: ['class'] });
+  });
+})();
 
 // ── PAGE INIT ─────────────────────────────────────────────
 // Run backend detection first; if no backend found, show the normal connect view.
