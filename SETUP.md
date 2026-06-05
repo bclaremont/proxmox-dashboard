@@ -1,22 +1,33 @@
 # PCC — Proxmox Command Center
-## Standalone Server Setup Guide
+## Setup Guide
 
-This guide sets up PCC on a **dedicated Debian VM** — the recommended production deployment.
-In standalone mode PCC runs 24/7 as a Node.js service, connects to all your Proxmox clusters
-via stored API tokens, and handles team login, shared settings, scheduled operations and webhooks.
+PCC can be deployed in two ways. Choose the one that fits your situation:
 
-> **Direct mode** (served from the Proxmox host itself on port 8080) is also supported —
-> it requires installing nginx on the PVE host but no separate VM.
-> Full setup instructions are at the bottom of this doc.
-> Use standalone when you manage multiple clusters or need multi-user team access.
+| | **Standalone VM** ✅ Recommended | **Direct mode** |
+|---|---|---|
+| **What it is** | PCC runs on its own Debian VM with a Node.js backend | PCC runs on a Proxmox host, served by nginx |
+| **Separate VM needed** | Yes — any Debian VM (1 vCPU, 512 MB RAM, 10 GB) | No |
+| **nginx** | ✅ Installed automatically by `setup.sh` | ❌ Must install and configure manually |
+| **Node.js backend** | ✅ Installed automatically by `setup.sh` | ❌ Not used |
+| **HTTPS / TLS cert** | ✅ Let's Encrypt, automatic renewal | ❌ Plain HTTP on port 8080 (no cert) |
+| **Setup effort** | One command: `bash setup.sh --domain … --email …` | ~6 manual steps |
+| **Team logins** | ✅ Yes — per-user accounts with roles | ❌ No — anyone who can reach port 8080 has access |
+| **Multi-cluster** | ✅ Yes — all clusters through one URL | ⚠ Only the local PVE host by default |
+| **Scheduled jobs** | ✅ Run 24/7 server-side | ❌ Only while browser is open |
+| **Shared settings** | ✅ Synced across team via SQLite | ❌ Browser-local only |
+| **Best for** | Teams, multiple client sites, production use | Quick single-host testing or personal use |
+
+> **Not sure?** Go standalone — it's actually less work to set up.
 
 ---
 
-## Prerequisites
+## Part A — Standalone VM Setup
+
+### Prerequisites
 
 | Item | Requirement |
 |---|---|
-| **PCC Debian VM** | Debian (any current release), 1 vCPU, 512 MB RAM, 10 GB disk — minimal install |
+| **Debian VM** | Any current Debian release, 1 vCPU, 512 MB RAM, 10 GB disk — minimal install |
 | **Public domain** | A subdomain pointing at the VM's IP (e.g. `pcc.certus.je`) |
 | **Port 80 & 443** | Reachable from the internet for Let's Encrypt certificate issuance |
 | **Port 51820/UDP** | Open inbound for WireGuard (only needed when connecting remote Proxmox hosts) |
@@ -256,7 +267,7 @@ All shared settings (host profiles, affinity rules, saved views, scheduled jobs)
 
 ---
 
-## Ongoing operations
+## Ongoing operations (standalone)
 
 ### Check PCC service status
 ```bash
@@ -326,13 +337,16 @@ For offsite backup, copy `pcc.db` anywhere — it's a single self-contained file
 
 ---
 
-## Direct mode (Proxmox host — no separate VM)
+---
 
-Direct mode runs PCC directly on the Proxmox host, served by nginx on port 8080.
+## Part B — Direct Mode (Proxmox host, no separate VM)
+
+Direct mode runs PCC directly on a Proxmox host, served by nginx on port 8080.
 nginx acts as a reverse proxy to the Proxmox API on port 8006.
 
 > **Note:** Proxmox does **not** include nginx — it uses its own `pveproxy` on port 8006.
-> You need to install and configure nginx from scratch on each PVE host you want to use this way.
+> You need to install and configure nginx from scratch. The `setup.sh` script from Part A
+> is **not used here** — direct mode is fully manual.
 
 ### Direct mode setup (fresh Proxmox host)
 
