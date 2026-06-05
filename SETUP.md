@@ -1,6 +1,34 @@
 # PCC — Proxmox Command Center
 ## Setup Guide
 
+**PCC (Proxmox Command Center)** is an open-source, browser-based management dashboard for
+Proxmox VE. It goes beyond the standard Proxmox web UI to give you a single pane of glass
+across multiple clusters and standalone hosts — whether they're on the same LAN or spread
+across different client sites.
+
+Out of the box PCC gives you:
+
+- **Unified fleet view** — all your VMs, containers, nodes and storage across every connected
+  cluster in one interface, with live resource gauges, heatmaps and cluster graphs
+- **Automation** — scheduled VM operations, DRS (compute and storage), affinity rules,
+  capacity forecasting, and host profile compliance checks
+- **Content Library** — manage VM templates with metadata, customisation specs, and one-click
+  deploy with automatic cloud-init configuration
+- **Team features** — per-user logins, shared settings, webhooks, audit log, and scheduled
+  reports (standalone mode)
+- **vCenter-equivalent features** — maintenance drain, affinity/anti-affinity rules, storage
+  DRS, per-VM alerts, VM customisation specs, host profiles, and more — all free and open source
+
+PCC is a single HTML file at its core, served by either a lightweight Node.js backend
+(standalone mode) or directly from a Proxmox host via nginx (direct mode). There is no
+database to manage beyond a single SQLite file, no Docker, no Kubernetes, no fuss.
+
+> PCC is an independent open-source project and is not affiliated with, endorsed by, or
+> sponsored by Proxmox Server Solutions GmbH. Proxmox® and Proxmox VE® are registered
+> trademarks of Proxmox Server Solutions GmbH.
+
+---
+
 PCC can be deployed in two ways. Choose the one that fits your situation:
 
 | | **Standalone VM** ✅ Recommended | **Direct mode** |
