@@ -210,10 +210,19 @@
     .modal-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:20px;}
     /* TOAST */
     #toast-container{position:fixed;bottom:20px;right:20px;z-index:700;display:flex;flex-direction:column;gap:8px;}
-    .toast{background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);padding:10px 16px;font-size:13px;display:flex;align-items:center;gap:8px;animation:slideIn .2s ease;max-width:360px;}
+    .toast{background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);padding:10px 16px;font-size:13px;display:flex;align-items:center;gap:10px;animation:slideIn .2s ease;max-width:380px;box-shadow:0 4px 16px rgba(0,0,0,.4);}
     .toast.success{border-left:3px solid var(--green);}
-    .toast.error{border-left:3px solid var(--red);}
-    .toast.info{border-left:3px solid var(--blue);}
+    .toast.error  {border-left:3px solid var(--red);}
+    .toast.warning{border-left:3px solid var(--yellow);}
+    .toast.info   {border-left:3px solid var(--blue);}
+    .toast-icon{width:18px;height:18px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;flex-shrink:0;}
+    .toast.success .toast-icon{background:rgba(63,185,80,.2);color:var(--green);}
+    .toast.error   .toast-icon{background:rgba(248,81,73,.2);color:var(--red);}
+    .toast.warning .toast-icon{background:rgba(210,153,34,.2);color:var(--yellow);}
+    .toast.info    .toast-icon{background:rgba(88,166,255,.2);color:var(--blue);}
+    /* View fade-in — plays when a view div becomes visible */
+    @keyframes viewFadeIn{from{opacity:0;transform:translateY(5px);}to{opacity:1;transform:translateY(0);}}
+    .view-entering{animation:viewFadeIn .15s ease forwards;}
     @keyframes slideIn{from{transform:translateX(20px);opacity:0;}to{transform:translateX(0);opacity:1;}}
     .empty{text-align:center;padding:40px 20px;color:var(--muted);font-size:13px;}
     .actions-row{display:flex;gap:5px;flex-wrap:wrap;}
@@ -1692,6 +1701,7 @@ async function pccAutoConnect() {
     loadStoredNotifs();
     updateNotifBadge();
     toast('Connected to ' + clusters.length + ' cluster' + (clusters.length > 1 ? 's' : ''), 'success');
+    _updatePageTitle();
     switchView('overview');
   } catch(e) {
     toast('Auto-connect failed: ' + e.message, 'error');
@@ -2332,6 +2342,7 @@ async function connect() {
     document.getElementById('cts-view-cards')?.classList.toggle('active', ctViewMode==='cards');
     loadStoredNotifs();
     updateNotifBadge();
+    _updatePageTitle();
     switchView('overview');
   } catch(e) {
     toast('Failed to load nodes: '+e.message,'error');
@@ -2346,8 +2357,19 @@ function disconnect() {
   document.getElementById('conn-status').className='pill offline';
   document.getElementById('btn-refresh').disabled=true;
   document.getElementById('btn-disconnect').style.display='none';
+  document.title = 'PCC — Proxmox Command Center';
   switchView('connect');
   toast('Disconnected','info');
+}
+
+function _updatePageTitle() {
+  const nodes = allNodes().map(n => n.node);
+  const extra = extraConns.filter(c => c.status === 'connected').map(c => c.name || c.host);
+  const parts = [...new Set(nodes)].slice(0, 3);
+  if (extra.length) parts.push(...extra.slice(0, 2));
+  document.title = parts.length
+    ? 'PCC — ' + parts.join(', ') + (parts.length < nodes.length + extra.length ? '…' : '')
+    : 'PCC — Proxmox Command Center';
 }
 
 // ── HTTP ──────────────────────────────────────────────────
@@ -3234,7 +3256,17 @@ function switchView(view) {
   const views=['connect','connections','worldmap','savedview','overview','vms','containers','nodes','tasks','syslog','storage','network','heatmap','isolib','contentlib','sdn','capacity','affinity','drs','hostprofiles','customspecs','schedules','pcc-admin','datacenter','pools','ceph','ha','firewall','backups','users','webhooks','certs','audit','reports','clustergraphs','tags','tfa','subscriptions','updates','pbs'];
   views.forEach(v=>{
     const el=document.getElementById('view-'+v);
-    if(el) el.style.display=v===view?'':'none';
+    if(!el) return;
+    if(v===view) {
+      el.style.display='';
+      // Trigger fade-in by toggling class (reflow trick ensures animation replays)
+      el.classList.remove('view-entering');
+      void el.offsetWidth;
+      el.classList.add('view-entering');
+    } else {
+      el.style.display='none';
+      el.classList.remove('view-entering');
+    }
   });
   document.querySelectorAll('.nav-item[data-view]').forEach(el=>{
     el.classList.toggle('active',el.dataset.view===view);
@@ -3913,13 +3945,16 @@ function fmtUptime(s){
   if(d>0)return`${d}d ${h}h`;if(h>0)return`${h}h ${m}m`;return`${m}m`;
 }
 function escHtml(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
-function toast(msg,type='info'){
-  const el=document.createElement('div');
-  el.className=`toast ${type}`;
-  const icons={success:'✓',error:'✗',info:'ℹ'};
-  el.innerHTML=`<span>${icons[type]||'ℹ'}</span><span>${msg}</span>`;
-  document.getElementById('toast-container').appendChild(el);
-  setTimeout(()=>el.remove(),4500);
+function toast(msg, type='info') {
+  const el = document.createElement('div');
+  el.className = `toast ${type}`;
+  const icons = { success:'✓', error:'✕', warning:'⚠', info:'ℹ' };
+  el.innerHTML = `<span class="toast-icon">${icons[type]||'ℹ'}</span><span style="flex:1">${msg}</span>`;
+  const container = document.getElementById('toast-container');
+  container.appendChild(el);
+  // Fade out before removing
+  setTimeout(() => { el.style.transition='opacity .3s'; el.style.opacity='0'; }, 4200);
+  setTimeout(() => el.remove(), 4500);
 }
 
 
