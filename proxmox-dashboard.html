@@ -2852,23 +2852,53 @@ function switchDetailTab(tab) {
 async function loadDetailOverview(item) {
   const el = document.getElementById('dtab-overview');
   el.innerHTML = '<div class="empty"><span class="loading"></span> Loading…</div>';
+  const ep = (item.type==='lxc'||item.type==='ct') ? 'lxc' : 'qemu';
   try {
-    const status = await loadCurrentStatus(item.node, item.type, item.vmid, detailGet);
+    const [status, cfg] = await Promise.all([
+      loadCurrentStatus(item.node, item.type, item.vmid, detailGet),
+      detailGet(`/api2/json/nodes/${item.node}/${ep}/${item.vmid}/config`).catch(()=>({data:{}})),
+    ]);
+    const c      = cfg.data || {};
     const cpuPct = status.cpu?(status.cpu*100).toFixed(1):'0';
     const memPct = status.mem&&status.maxmem?((status.mem/status.maxmem)*100).toFixed(0):0;
-    const diskPct = status.disk&&status.maxdisk?((status.disk/status.maxdisk)*100).toFixed(0):0;
+    const diskPct= status.disk&&status.maxdisk?((status.disk/status.maxdisk)*100).toFixed(0):0;
+
+    // OS type mapping
+    const ostypeMap = {l26:'Linux 2.6+',l24:'Linux 2.4',win11:'Windows 11',win10:'Windows 10 / 2016 / 2019',
+      win8:'Windows 8 / 2012',win7:'Windows 7 / 2008 R2',wxp:'Windows XP',solaris:'Solaris',other:'Other'};
+    const osType = ostypeMap[c.ostype] || c.ostype || '—';
+
+    // CPU config
+    const cores   = c.cores   || status.cpus || '?';
+    const sockets = c.sockets || 1;
+    const cpuDesc = ep==='qemu' ? `${cores} core${cores!==1?'s':''} × ${sockets} socket${sockets!==1?'s':''} = ${cores*sockets} vCPU${cores*sockets!==1?'s':''}` : `${cores} vCPU${cores!==1?'s':''}`;
+
+    // BIOS / machine
+    const bios    = c.bios==='ovmf' ? 'UEFI (OVMF)' : c.bios==='seabios' ? 'SeaBIOS' : c.bios||'SeaBIOS';
+    const machine = c.machine || '—';
+
+    // Description
+    const desc = c.description ? escHtml(c.description).replace(/\n/g,'<br>') : null;
+
+    // Tags
+    const tagList = c.tags ? parseTags(c.tags) : [];
+
+    // IPs — fetch in background, update placeholder when done
+    const ipKey = `${item.connId||''}|${item.node}/${item.vmid}`;
+    const cachedIP = _vmIPCache[ipKey];
+
     el.innerHTML = `
       <div class="two-col">
         <div class="info-box">
           <div class="key">CPU Usage</div>
           <div style="font-size:26px;font-weight:700;color:var(--accent)">${cpuPct}%</div>
-          <div class="gauge-bar" style="margin-top:8px"><div class="gauge-fill ${gaugeClass(parseFloat(cpuPct))}" style="width:${cpuPct}%"></div></div>
-          <div style="margin-top:6px;color:var(--muted);font-size:12px">${status.cpus||item.cpus||'?'} vCPU(s)</div>
+          <div class="gauge-bar" style="margin-top:8px"><div class="gauge-fill ${gaugeClass(parseFloat(cpuPct))}" style="width:${Math.min(cpuPct,100)}%"></div></div>
+          <div style="margin-top:6px;color:var(--muted);font-size:12px">${cpuDesc}</div>
         </div>
         <div class="info-box">
           <div class="key">Memory</div>
           <div style="font-size:26px;font-weight:700;color:var(--blue)">${memPct}%</div>
-          <div class="gauge-bar" style="margin-top:8px"><div class="gauge-fill ${gaugeClass(memPct)}" style="width:${memPct}%"></div></div>
+          <div class="gauge-bar" style="margin-top:8px"><div class="gauge-fill ${gaugeClass(memPct)}" style="width:${Math.min(memPct,100)}%"></div></div>
           <div style="margin-top:6px;color:var(--muted);font-size:12px">${fmtBytes(status.mem)} / ${fmtBytes(status.maxmem)}</div>
         </div>
       </div>
@@ -2876,28 +2906,45 @@ async function loadDetailOverview(item) {
         <div class="info-box">
           <div class="key">Disk Usage</div>
           <div style="font-size:26px;font-weight:700;color:var(--purple)">${diskPct}%</div>
-          <div class="gauge-bar" style="margin-top:8px"><div class="gauge-fill ${gaugeClass(diskPct)}" style="width:${diskPct}%"></div></div>
+          <div class="gauge-bar" style="margin-top:8px"><div class="gauge-fill ${gaugeClass(diskPct)}" style="width:${Math.min(diskPct,100)}%"></div></div>
           <div style="margin-top:6px;color:var(--muted);font-size:12px">${fmtBytes(status.disk)} / ${fmtBytes(status.maxdisk)}</div>
         </div>
         <div class="info-box">
-          <div class="key">Network I/O</div>
-          <div style="font-size:18px;font-weight:700;color:var(--teal)">↓ ${fmtBytes(status.netin||0)}/s</div>
-          <div style="font-size:18px;font-weight:700;color:var(--yellow)">↑ ${fmtBytes(status.netout||0)}/s</div>
-          <div style="margin-top:6px;color:var(--muted);font-size:12px">Uptime: ${fmtUptime(status.uptime)}</div>
+          <div class="key">IP Address</div>
+          <div id="detail-ip-val" style="font-size:${cachedIP?'20':'14'}px;font-weight:700;font-family:monospace;color:var(--teal)">${cachedIP||'<span class="loading" style="width:10px;height:10px"></span>'}</div>
+          <div style="margin-top:6px;color:var(--muted);font-size:12px">Network ↓ ${fmtBytes(status.netin||0)} ↑ ${fmtBytes(status.netout||0)}</div>
+          <div style="margin-top:2px;color:var(--muted);font-size:12px">Uptime: ${fmtUptime(status.uptime)}</div>
         </div>
       </div>
+      ${desc ? `<div style="background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius);padding:10px 14px;margin-bottom:14px;font-size:13px;color:var(--muted);line-height:1.6">${desc}</div>` : ''}
       <table class="config-table" style="background:var(--bg3);border-radius:var(--radius)">
         <tr><td>VM ID</td><td>${status.vmid||item.vmid}</td></tr>
-        <tr><td>Name</td><td>${status.name||item.name||'—'}</td></tr>
-        <tr><td>Node</td><td>${item.node}</td></tr>
+        <tr><td>Name</td><td>${escHtml(status.name||item.name||'—')}</td></tr>
+        <tr><td>Node</td><td>${escHtml(item.node)}</td></tr>
         <tr><td>Status</td><td>${statusBadge(status.status||item.status)}</td></tr>
+        ${ep==='qemu'?`<tr><td>OS Type</td><td>${osType}</td></tr>`:''}
+        <tr><td>CPU</td><td style="font-family:monospace">${cpuDesc}</td></tr>
+        <tr><td>RAM Allocated</td><td>${fmtBytes(status.maxmem||0)}</td></tr>
+        ${ep==='qemu'?`<tr><td>BIOS</td><td>${bios}</td></tr>
+        <tr><td>Machine</td><td style="font-family:monospace">${machine}</td></tr>`:''}
+        ${tagList.length?`<tr><td>Tags</td><td>${renderTagChips(tagList,false)}</td></tr>`:''}
         <tr><td>PID</td><td>${status.pid||'—'}</td></tr>
-        <tr><td>HA State</td><td>${status.ha&&status.ha.managed?'Managed':'Unmanaged'}</td></tr>
-        <tr><td>Disk Read</td><td>${fmtBytes(status.diskread||0)}</td></tr>
-        <tr><td>Disk Write</td><td>${fmtBytes(status.diskwrite||0)}</td></tr>
-        <tr><td>Net In (total)</td><td>${fmtBytes(status.netin||0)}</td></tr>
-        <tr><td>Net Out (total)</td><td>${fmtBytes(status.netout||0)}</td></tr>
+        <tr><td>HA</td><td>${status.ha&&status.ha.managed?'Managed':'Unmanaged'}</td></tr>
+        <tr><td>Disk R/W</td><td>${fmtBytes(status.diskread||0)} / ${fmtBytes(status.diskwrite||0)}</td></tr>
+        <tr><td>Net In/Out</td><td>${fmtBytes(status.netin||0)} / ${fmtBytes(status.netout||0)}</td></tr>
       </table>`;
+
+    // Fetch IP in background if not cached
+    if (!cachedIP) {
+      _getVMIP(item).then(ip => {
+        const ipEl = document.getElementById('detail-ip-val');
+        if (ipEl) {
+          ipEl.innerHTML = ip || 'Not available';
+          ipEl.style.fontSize = ip ? '20px' : '13px';
+          ipEl.style.color = ip ? 'var(--teal)' : 'var(--muted)';
+        }
+      }).catch(()=>{});
+    }
   } catch(e) {
     el.innerHTML=`<div class="empty">Failed to load status: ${e.message}</div>`;
   }
@@ -3543,6 +3590,7 @@ function _renderAllTableBody() {
   if (tbody) tbody.innerHTML = filtered.length
     ? filtered.map(row=>vmRowOverview(row)).join('')
     : `<tr><td colspan="10" class="empty">No VMs or Containers found</td></tr>`;
+  _fetchAndShowIPs(filtered);
 }
 
 function renderAllTable() { _renderAllTableBody(); }
@@ -3589,6 +3637,7 @@ function renderVMTable(){
   document.getElementById('vm-table-body').innerHTML = sorted.length
     ? sorted.map(v=>vmRow(v)).join('')
     : `<tr><td colspan="9" class="empty">No VMs match</td></tr>`;
+  _fetchAndShowIPs(sorted);
 }
 
 function renderCTTable(){
@@ -3607,6 +3656,7 @@ function renderCTTable(){
   document.getElementById('ct-table-body').innerHTML = sorted.length
     ? sorted.map(c=>vmRow(c)).join('')
     : `<tr><td colspan="9" class="empty">No containers found</td></tr>`;
+  _fetchAndShowIPs(sorted);
 }
 
 // Dedicated row for the Overview "All VMs & Containers" table.
@@ -3620,9 +3670,12 @@ function vmRowOverview(x) {
   const cid     = x.connId || '';
   const cluster = cid ? escHtml(getConnName(cid)) : 'Primary';
   const typeVal = x.type === 'lxc' || x.type === 'ct' ? 'lxc' : 'qemu';
+  const ovIpKey  = `${cid}|${x.node}/${x.vmid}`;
+  const ovCachedIP = _vmIPCache[ovIpKey];
+  const ovIpLine = `<div class="vm-ip-cell" data-ipkey="${ovIpKey}" style="font-size:10px;font-family:monospace;margin-top:2px;color:${ovCachedIP?'var(--teal)':'var(--muted)'}">${ovCachedIP||'—'}</div>`;
   return `<tr class="clickable-row" onclick="openDetail(${JSON.stringify(x).replace(/"/g,'&quot;')})">
     <td style="color:var(--muted);font-size:12px">${x.vmid}</td>
-    <td><strong>${escHtml(x.name||'(unnamed)')}</strong></td>
+    <td><strong>${escHtml(x.name||'(unnamed)')}</strong>${ovIpLine}</td>
     <td><span class="type-chip ${typeVal==='lxc'?'ct':'vm'}">${typeVal==='lxc'?'CT':'VM'}</span></td>
     <td style="color:var(--muted);font-size:12px">${escHtml(x.node)}</td>
     <td style="color:var(--muted);font-size:12px">${cluster}</td>
@@ -3663,9 +3716,12 @@ function vmRow(x,showType=false){
   const typeChip=showType?`<span class="type-chip ${x.type}">${x.type==='vm'?'VM':'CT'}</span> `:'';
   const cid=x.connId||'';
   const connLabel=extraConns.length&&cid?`<div style="font-size:10px;color:var(--blue);margin-top:1px">${escHtml(getConnName(cid))}</div>`:'';
+  const ipKey=`${cid}|${x.node}/${x.vmid}`;
+  const cachedIP=_vmIPCache[ipKey];
+  const ipLine=`<div class="vm-ip-cell" data-ipkey="${ipKey}" style="font-size:10px;font-family:monospace;margin-top:2px;color:${cachedIP?'var(--teal)':'var(--muted)'}">${cachedIP||'—'}</div>`;
   return `<tr class="clickable-row" onclick="openDetail(${JSON.stringify(x).replace(/"/g,'&quot;')})">
     <td style="color:var(--muted);font-size:12px">${x.vmid}</td>
-    <td>${typeChip}<strong>${x.name||'(unnamed)'}</strong>${connLabel}</td>
+    <td>${typeChip}<strong>${x.name||'(unnamed)'}</strong>${ipLine}${connLabel}</td>
     ${showType?`<td style="color:var(--muted)">${x.node}</td>`:''}
     <td style="color:var(--muted)">${x.node}</td>
     <td>${statusBadge(x.status)}</td>
@@ -4929,6 +4985,78 @@ function _buildVncWsUrl(conn, node, ep, vmid, wsEndpoint, port, ticket) {
 
   const base = `${wsProto}//${location.host}/api2/json/nodes/${node}/${ep}/${vmid}/${wsEndpoint}`;
   return `${base}?port=${port}&vncticket=${encodeURIComponent(ticket)}&pveauth=${rawPveAuth}`;
+}
+
+// ── VM IP ADDRESS CACHE ───────────────────────────────────
+// Fetches VM/CT IP addresses lazily and caches per session.
+// Sources (in order): QEMU guest agent → cloud-init ipconfig0 → LXC net config
+
+const _vmIPCache = {}; // key: "connId|node/vmid" → "1.2.3.4" | "DHCP" | null
+
+async function _getVMIP(x) {
+  const key  = `${x.connId||''}|${x.node}/${x.vmid}`;
+  if (_vmIPCache[key] !== undefined) return _vmIPCache[key];
+
+  const conn = resolveConn(x.connId || '');
+  const get  = conn ? p => connGet(conn, p) : pveGet;
+  const ep   = (x.type === 'lxc' || x.type === 'ct') ? 'lxc' : 'qemu';
+  const base = `/api2/json/nodes/${x.node}/${ep}/${x.vmid}`;
+
+  try {
+    if (ep === 'qemu') {
+      // 1. QEMU guest agent
+      try {
+        const r = await get(`${base}/agent/network-get-interfaces`);
+        const ifaces = r?.data?.result || [];
+        for (const iface of ifaces) {
+          if (/^lo(opback)?$/.test(iface.name||'')) continue;
+          for (const a of (iface['ip-addresses'] || [])) {
+            if (a.type !== 'ipv4') continue;
+            const ip = a['ip-address'];
+            if (!ip.startsWith('127.') && !ip.startsWith('169.254.')) {
+              _vmIPCache[key] = ip;
+              return ip;
+            }
+          }
+        }
+      } catch {}
+      // 2. Cloud-init config fallback
+      try {
+        const cfg = await get(`${base}/config`);
+        const ic  = cfg?.data?.ipconfig0 || '';
+        const m   = ic.match(/ip=(\d+\.\d+\.\d+\.\d+)/);
+        if (m) { _vmIPCache[key] = m[1]; return m[1]; }
+        if (ic.includes('dhcp')) { _vmIPCache[key] = 'DHCP'; return 'DHCP'; }
+      } catch {}
+    } else {
+      // 3. LXC — parse net0 config directly
+      try {
+        const cfg = await get(`${base}/config`);
+        const net = cfg?.data?.net0 || '';
+        const m   = net.match(/ip=(\d+\.\d+\.\d+\.\d+)/);
+        if (m) { _vmIPCache[key] = m[1]; return m[1]; }
+        if (net.includes('dhcp')) { _vmIPCache[key] = 'DHCP'; return 'DHCP'; }
+      } catch {}
+    }
+  } catch {}
+
+  _vmIPCache[key] = null;
+  return null;
+}
+
+// Fetch IPs for running VMs/CTs in background and update DOM in place
+async function _fetchAndShowIPs(items) {
+  const running = (items || allVMs().concat(allCTs())).filter(x => x.status === 'running' && !x.template);
+  for (let i = 0; i < running.length; i += 6) {
+    await Promise.all(running.slice(i, i + 6).map(async x => {
+      const ip = await _getVMIP(x).catch(() => null);
+      const cellKey = `${x.connId||''}|${x.node}/${x.vmid}`;
+      document.querySelectorAll(`.vm-ip-cell[data-ipkey="${cellKey}"]`).forEach(el => {
+        el.textContent = ip || '—';
+        el.style.color = ip ? 'var(--teal)' : 'var(--muted)';
+      });
+    }));
+  }
 }
 
 // ── SNAPSHOTS ────────────────────────────────────────────
