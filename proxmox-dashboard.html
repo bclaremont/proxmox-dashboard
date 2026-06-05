@@ -233,7 +233,12 @@
     .filter-pill:hover{border-color:var(--muted);color:var(--text);}
     .filter-pill.active{background:rgba(249,115,22,.15);border-color:rgba(249,115,22,.5);color:var(--accent);font-weight:600;}
     @keyframes slideIn{from{transform:translateX(20px);opacity:0;}to{transform:translateX(0);opacity:1;}}
-    .empty{text-align:center;padding:40px 20px;color:var(--muted);font-size:13px;}
+    .empty{text-align:center;padding:32px 20px;color:var(--muted);font-size:13px;line-height:1.6;}
+    /* Rich empty state — for primary view content */
+    .empty-state{display:flex;flex-direction:column;align-items:center;justify-content:center;padding:52px 24px;text-align:center;gap:10px;}
+    .empty-state svg{opacity:.25;margin-bottom:6px;}
+    .empty-state .es-title{font-size:15px;font-weight:600;color:var(--text);}
+    .empty-state .es-msg{font-size:13px;color:var(--muted);max-width:380px;line-height:1.6;}
     .actions-row{display:flex;gap:5px;flex-wrap:wrap;}
     .loading{display:inline-block;width:14px;height:14px;border:2px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:spin .6s linear infinite;vertical-align:middle;}
     @keyframes spin{to{transform:rotate(360deg);}}
@@ -423,9 +428,13 @@
     .notif-hdr{padding:10px 14px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px;background:var(--bg3);}
     .notif-hdr h4{font-size:13px;font-weight:700;flex:1;margin:0;}
     #notif-list{overflow-y:auto;flex:1;}
-    .notif-item{padding:10px 14px;border-bottom:1px solid var(--border);display:flex;align-items:flex-start;gap:10px;}
+    .notif-item{padding:10px 14px;border-bottom:1px solid var(--border);border-left:3px solid transparent;display:flex;align-items:flex-start;gap:10px;transition:background .1s;}
     .notif-item:hover{background:var(--bg3);}
     .notif-item.unread{background:rgba(249,115,22,.04);}
+    .notif-item[data-sev="error"]  {border-left-color:var(--red);}
+    .notif-item[data-sev="warning"]{border-left-color:var(--yellow);}
+    .notif-item[data-sev="info"]   {border-left-color:var(--blue);}
+    .notif-item[data-sev="success"]{border-left-color:var(--green);}
     .notif-icon{font-size:14px;flex-shrink:0;margin-top:1px;}
     .notif-title{font-size:13px;font-weight:600;}
     .notif-msg{font-size:12px;color:var(--muted);margin-top:2px;}
@@ -3646,7 +3655,11 @@ function renderVMTable(){
   }
   document.getElementById('vm-table-body').innerHTML = sorted.length
     ? sorted.map(v=>vmRow(v)).join('')
-    : `<tr><td colspan="9" class="empty">No VMs match</td></tr>`;
+    : `<tr><td colspan="9">${emptyState('<rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/>',
+        _vmStatusFilter !== 'all' ? `No ${_vmStatusFilter} VMs` : 'No VMs',
+        _vmStatusFilter !== 'all' ? `Switch to "All" to see ${_vmStatusFilter==='running'?'stopped':'running'} VMs.` : 'Connect to a cluster or create your first VM.',
+        _vmStatusFilter === 'all' ? `<button class="btn primary" onclick="openCreateVMModal()">+ Create VM</button>` : '')
+      }</td></tr>`;
   _fetchAndShowIPs(sorted);
 }
 
@@ -4093,6 +4106,16 @@ function statusBadge(status){
   return `<span class="badge ${cls}"><span class="badge-dot"></span>${status}</span>`;
 }
 function gaugeClass(pct){return pct>80?'high':pct>60?'mid':'low';}
+
+// Rich empty state HTML — icon (SVG path data), title, message, optional action button HTML
+function emptyState(svgPath, title, msg, action='') {
+  return `<div class="empty-state">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" width="52" height="52">${svgPath}</svg>
+    <div class="es-title">${title}</div>
+    <div class="es-msg">${msg}</div>
+    ${action}
+  </div>`;
+}
 function fmtBytes(bytes,unit){
   if(!bytes&&bytes!==0)return'—';
   if(unit==='GiB')return(bytes/1073741824).toFixed(1);
@@ -5191,37 +5214,53 @@ function renderHeatmap() {
         </div>`;
       }).join('')}
     </div>
-    <div class="section-header" style="margin-top:4px"><span class="section-title">Top Running VMs by CPU Load</span></div>
-    <div class="table-wrap"><table>
-      <thead><tr><th>ID</th><th>Name</th><th>Node</th><th>Type</th><th>CPU %</th><th>Mem %</th><th>Status</th></tr></thead>
-      <tbody>
-        ${allItems.filter(x => x.status === 'running')
-            .sort((a, b) => (b.cpu || 0) - (a.cpu || 0))
-            .map(x => {
-              const cpu = x.cpu ? (x.cpu * 100).toFixed(1) : '0';
-              const mem = x.mem && x.maxmem ? ((x.mem / x.maxmem) * 100).toFixed(0) : 0;
-              return `<tr class="clickable-row" onclick="openDetail(${JSON.stringify(x).replace(/"/g,'&quot;')})">
-                <td style="color:var(--muted);font-size:12px">${x.vmid}</td>
-                <td><strong>${x.name || '—'}</strong></td>
-                <td style="color:var(--muted)">${x.node}</td>
-                <td><span class="type-chip ${x.type}">${x.type.toUpperCase()}</span></td>
-                <td>
-                  <div class="gauge-wrap">
-                    <span style="min-width:36px;font-size:12px">${cpu}%</span>
-                    <div class="gauge-bar"><div class="gauge-fill ${gaugeClass(parseFloat(cpu))}" style="width:${Math.min(parseFloat(cpu),100)}%"></div></div>
-                  </div>
-                </td>
-                <td>
-                  <div class="gauge-wrap">
-                    <span style="min-width:36px;font-size:12px">${mem}%</span>
-                    <div class="gauge-bar"><div class="gauge-fill ${gaugeClass(mem)}" style="width:${Math.min(mem,100)}%"></div></div>
-                  </div>
-                </td>
-                <td>${statusBadge(x.status)}</td>
-              </tr>`;
-            }).join('') || '<tr><td colspan="7" class="empty">No running VMs</td></tr>'}
-      </tbody>
-    </table></div>`;
+    <div class="section-header" style="margin-top:4px">
+      <span class="section-title">Top Running VMs by CPU Load</span>
+      <button class="btn small" onclick="switchView('vms')">All VMs →</button>
+    </div>
+    ${(() => {
+      const top = allItems.filter(x => x.status === 'running' && !x.template)
+        .sort((a,b) => (b.cpu||0)-(a.cpu||0)).slice(0,10);
+      if (!top.length) return emptyState(
+        '<rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/>',
+        'No running VMs',
+        'Start a VM to see resource usage here.',
+        `<button class="btn primary" onclick="openCreateVMModal()">+ Create VM</button>`
+      );
+      return `<div style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;margin-bottom:22px">
+        ${top.map((x,i) => {
+          const cpu    = x.cpu ? x.cpu*100 : 0;
+          const mem    = x.mem && x.maxmem ? (x.mem/x.maxmem)*100 : 0;
+          const cpuW   = Math.min(cpu, 100);
+          const typeC  = x.type === 'lxc' || x.type === 'ct' ? 'ct' : 'vm';
+          return `<div style="display:flex;align-items:center;gap:12px;padding:10px 16px;border-bottom:${i<top.length-1?'1px solid var(--border)':'none'};cursor:pointer;transition:background .1s"
+            onclick="openDetail(${JSON.stringify(x).replace(/"/g,'&quot;')})"
+            onmouseenter="this.style.background='var(--bg3)'" onmouseleave="this.style.background=''">
+            <span class="type-chip ${typeC}" style="flex-shrink:0">${typeC==='ct'?'CT':'VM'}</span>
+            <div style="min-width:0;width:140px;flex-shrink:0">
+              <div style="font-weight:600;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escHtml(x.name||String(x.vmid))}</div>
+              <div style="font-size:10px;color:var(--muted)">${escHtml(x.node)}${x.connId?' · '+escHtml(getConnName(x.connId)):''}</div>
+            </div>
+            <div style="flex:1;min-width:0">
+              <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px">
+                <span style="font-size:11px;color:var(--muted);width:28px;text-align:right;flex-shrink:0">CPU</span>
+                <div style="flex:1;height:8px;background:var(--bg3);border-radius:4px;overflow:hidden">
+                  <div style="height:100%;width:${cpuW}%;background:${cpu>80?'var(--red)':cpu>60?'var(--yellow)':'var(--accent)'};border-radius:4px;transition:width .4s"></div>
+                </div>
+                <span style="font-size:11px;font-weight:600;width:36px;color:${cpu>80?'var(--red)':cpu>60?'var(--yellow)':'var(--text)'}">${cpu.toFixed(0)}%</span>
+              </div>
+              <div style="display:flex;align-items:center;gap:6px">
+                <span style="font-size:11px;color:var(--muted);width:28px;text-align:right;flex-shrink:0">RAM</span>
+                <div style="flex:1;height:8px;background:var(--bg3);border-radius:4px;overflow:hidden">
+                  <div style="height:100%;width:${Math.min(mem,100)}%;background:${mem>80?'var(--red)':mem>60?'var(--yellow)':'var(--blue)'};border-radius:4px;transition:width .4s"></div>
+                </div>
+                <span style="font-size:11px;color:var(--muted);width:36px">${mem.toFixed(0)}%</span>
+              </div>
+            </div>
+          </div>`;
+        }).join('')}
+      </div>`;
+    })()}`;
 }
 
 function heatColor(pct) {
@@ -14762,13 +14801,17 @@ function renderNotifList() {
   const list = document.getElementById('notif-list');
   if (!list) return;
   if (!notifications.length) {
-    list.innerHTML = '<div class="empty" style="padding:24px">No notifications yet</div>';
+    list.innerHTML = `<div class="empty-state" style="padding:32px 16px">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" width="44" height="44"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+      <div class="es-title">No notifications</div>
+      <div class="es-msg">Alerts for high CPU, VM downtime, task failures and custom rules will appear here.</div>
+    </div>`;
     return;
   }
   const icons    = { error:'✗', warning:'⚠', info:'ℹ', success:'✓' };
   const colors   = { error:'var(--red)', warning:'var(--yellow)', info:'var(--blue)', success:'var(--green)' };
   list.innerHTML = notifications.slice(0,50).map(n => `
-    <div class="notif-item${n.read?'':' unread'}">
+    <div class="notif-item${n.read?'':' unread'}" data-sev="${n.severity||'info'}">
       <div class="notif-icon" style="color:${colors[n.severity]||'var(--muted)'}">${icons[n.severity]||'•'}</div>
       <div style="flex:1;min-width:0">
         <div class="notif-title">${escHtml(n.title)}</div>
