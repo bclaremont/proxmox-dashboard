@@ -47,7 +47,94 @@ In your Proxmox web UI:
 
 ---
 
-## Step 2 — DNS record
+## Step 2 — Harden the server
+
+Run these on the **Debian VM** immediately after first login. Takes about 2 minutes.
+
+```bash
+# Update everything first
+apt update && apt upgrade -y
+```
+
+### Firewall (UFW)
+
+Only open the ports PCC actually needs:
+
+```bash
+apt install -y ufw
+
+ufw default deny incoming
+ufw default allow outgoing
+ufw allow ssh          # port 22  — SSH access
+ufw allow 80/tcp       # port 80  — Let's Encrypt certificate challenges
+ufw allow 443/tcp      # port 443 — PCC HTTPS
+ufw allow 51820/udp    # port 51820 — WireGuard (remote Proxmox sites)
+
+ufw --force enable
+ufw status
+```
+
+> If you're not using WireGuard (no remote sites), skip `ufw allow 51820/udp`.
+
+### fail2ban
+
+Bans IPs that repeatedly fail SSH (or other services):
+
+```bash
+apt install -y fail2ban
+
+cat > /etc/fail2ban/jail.local << 'EOF'
+[DEFAULT]
+bantime  = 3600    # ban for 1 hour
+findtime = 600     # within a 10-minute window
+maxretry = 5       # after 5 failures
+
+[sshd]
+enabled = true
+port    = ssh
+EOF
+
+systemctl enable fail2ban
+systemctl restart fail2ban
+
+# Check it's running
+fail2ban-client status
+```
+
+### Automatic security updates
+
+```bash
+apt install -y unattended-upgrades
+
+cat > /etc/apt/apt.conf.d/20auto-upgrades << 'EOF'
+APT::Periodic::Update-Package-Lists "1";
+APT::Periodic::Unattended-Upgrade "1";
+EOF
+```
+
+Security patches will now apply automatically overnight without requiring a reboot for most updates.
+
+### SSH keys (optional but recommended)
+
+If you're accessing this server regularly, switch to key-based SSH authentication:
+
+```bash
+# On your LOCAL machine — generate a key if you don't have one
+ssh-keygen -t ed25519 -C "pcc-server"
+
+# Copy your public key to the server
+ssh-copy-id root@PCC_VM_IP
+
+# Then on the SERVER — disable password login
+sed -i 's/^#*PasswordAuthentication.*/PasswordAuthentication no/' /etc/ssh/sshd_config
+systemctl restart sshd
+```
+
+> ⚠ Make sure you can log in with your key **before** disabling password auth, or you'll lock yourself out.
+
+---
+
+## Step 3 — DNS record
 
 Create an **A record** pointing your chosen subdomain to the VM's IP:
 
@@ -66,7 +153,7 @@ dig +short pcc.certus.je
 
 ---
 
-## Step 3 — Get PCC files onto the Debian VM
+## Step 4 — Get PCC files onto the Debian VM
 
 SSH into the new Debian VM, then run:
 
@@ -112,7 +199,7 @@ ssh root@$PCC_VM_IP "chmod +x /opt/pcc/setup.sh /opt/pcc/add-site.sh"
 
 ---
 
-## Step 4 — Run the setup script
+## Step 5 — Run the setup script
 
 Back on the **Debian VM**:
 
@@ -149,7 +236,7 @@ At the end you'll see:
 
 ---
 
-## Step 5 — First login and change password
+## Step 6 — First login and change password
 
 1. Open `https://pcc.certus.je` in your browser
 2. Log in with `admin` and the password shown after setup
@@ -158,7 +245,7 @@ At the end you'll see:
 
 ---
 
-## Step 6 — Create a Proxmox API token
+## Step 7 — Create a Proxmox API token
 
 Do this on **each Proxmox cluster** you want to manage.
 
@@ -179,7 +266,7 @@ PVEAPIToken=root@pam!pcc=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
 
 ---
 
-## Step 7 — Add your first cluster
+## Step 8 — Add your first cluster
 
 In PCC, go to **Admin → PCC Admin → Clusters → + Add Cluster**:
 
@@ -200,7 +287,7 @@ Click **Add**, then **sign out and back in** — PCC will auto-connect on login.
 
 ---
 
-## Step 8 — Add a remote site via WireGuard
+## Step 9 — Add a remote site via WireGuard
 
 For Proxmox clusters at **different locations** (client sites, remote DCs), use WireGuard so the
 PCC server can reach them securely without exposing the Proxmox API to the internet.
@@ -252,7 +339,7 @@ Repeat for each additional site, incrementing the WireGuard IP:
 
 ---
 
-## Step 9 — Add team members
+## Step 10 — Add team members
 
 Go to **Admin → PCC Admin → Users → + Add User**:
 
