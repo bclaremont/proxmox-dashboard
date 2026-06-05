@@ -28,7 +28,7 @@ PCC can be deployed in two ways. Choose the one that fits your situation:
 | Item | Requirement |
 |---|---|
 | **Debian VM** | Any current Debian release, 1 vCPU, 512 MB RAM, 10 GB disk — minimal install |
-| **Public domain** | A subdomain pointing at the VM's IP (e.g. `pcc.certus.je`) |
+| **Public domain** | A subdomain pointing at the VM's IP (e.g. `pcc.yourdomain.com`) |
 | **Port 80 & 443** | Reachable from the internet for Let's Encrypt certificate issuance |
 | **Port 51820/UDP** | Open inbound for WireGuard (only needed when connecting remote Proxmox hosts) |
 | **Git repo** | `https://github.com/bclaremont/proxmox-dashboard` — the source of all files |
@@ -170,7 +170,7 @@ aa-status | grep nginx
 Create an **A record** pointing your chosen subdomain to the VM's IP:
 
 ```
-pcc.certus.je  →  192.168.x.x   (or your public IP if internet-facing)
+pcc.yourdomain.com  →  192.168.x.x   (or your public IP if internet-facing)
 ```
 
 If the VM is behind NAT, forward **ports 80 and 443** from your router to the VM before
@@ -179,7 +179,7 @@ running the setup script (Let's Encrypt needs port 80 to issue the certificate).
 Wait a minute or two for DNS to propagate, then verify:
 
 ```bash
-dig +short pcc.certus.je
+dig +short pcc.yourdomain.com
 ```
 
 ---
@@ -236,13 +236,13 @@ Back on the **Debian VM**:
 
 ```bash
 cd /opt/pcc
-sudo bash setup.sh --domain pcc.certus.je --email bart@certus.je
+sudo bash setup.sh --domain pcc.yourdomain.com --email you@yourdomain.com
 ```
 
 Or to set your admin password upfront:
 
 ```bash
-sudo bash setup.sh --domain pcc.certus.je --email bart@certus.je --admin-pw MySecretPassword
+sudo bash setup.sh --domain pcc.yourdomain.com --email you@yourdomain.com --admin-pw MySecretPassword
 ```
 
 The script will:
@@ -259,7 +259,7 @@ At the end you'll see:
 ===================================
   PCC is now running!
 
-  URL:   https://pcc.certus.je
+  URL:   https://pcc.yourdomain.com
   User:  admin
   Pass:  <generated or your password>
 ===================================
@@ -269,7 +269,7 @@ At the end you'll see:
 
 ## Step 6 — First login and change password
 
-1. Open `https://pcc.certus.je` in your browser
+1. Open `https://pcc.yourdomain.com` in your browser
 2. Log in with `admin` and the password shown after setup
 3. Go to **Admin → PCC Admin → My Account → Change Password** and set a strong password
 4. Optionally add team members under **Admin → PCC Admin → Users**
@@ -348,7 +348,7 @@ The output looks like:
 
   [Peer]  # PCC hub
   PublicKey           = <hub-pubkey>
-  Endpoint            = pcc.certus.je:51820
+  Endpoint            = pcc.yourdomain.com:51820
   AllowedIPs          = 10.99.0.1/32
   PersistentKeepalive = 25
   WGEOF
@@ -380,7 +380,7 @@ Go to **Admin → PCC Admin → Users → + Add User**:
 | Password | Min 8 characters — user should change on first login |
 | Role | `admin` = full access · `user` = view + operate, no cluster/user management |
 
-Each team member logs into `https://pcc.certus.je` with their own credentials.
+Each team member logs into `https://pcc.yourdomain.com` with their own credentials.
 All shared settings (host profiles, affinity rules, saved views, scheduled jobs) sync across the team automatically.
 
 ---
@@ -436,7 +436,7 @@ For offsite backup, copy `pcc.db` anywhere — it's a single self-contained file
 |---|---|
 | PCC won't start | `journalctl -u pcc -n 50` — usually a missing .env or bad JWT_SECRET |
 | `502 Bad Gateway` | `systemctl status pcc` — the Node.js process may have crashed |
-| Let's Encrypt failed | Verify port 80 is reachable: `curl http://pcc.certus.je` from outside |
+| Let's Encrypt failed | Verify port 80 is reachable: `curl http://pcc.yourdomain.com` from outside |
 | Can't reach Proxmox | Check WireGuard: `wg show` — look for latest handshake time |
 | WireGuard no handshake | Port 51820/UDP must be open inbound on the PCC VM |
 | Console not working | Browser must be able to reach PCC server; WireGuard tunnel must be up |
