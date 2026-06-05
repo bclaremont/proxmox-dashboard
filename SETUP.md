@@ -1,7 +1,7 @@
 # PCC — Proxmox Command Center
 ## Standalone Server Setup Guide
 
-This guide sets up PCC on a **dedicated Debian 12 VM** — the recommended production deployment.
+This guide sets up PCC on a **dedicated Debian VM** — the recommended production deployment.
 In standalone mode PCC runs 24/7 as a Node.js service, connects to all your Proxmox clusters
 via stored API tokens, and handles team login, shared settings, scheduled operations and webhooks.
 
@@ -15,7 +15,7 @@ via stored API tokens, and handles team login, shared settings, scheduled operat
 
 | Item | Requirement |
 |---|---|
-| **PCC Debian VM** | Debian 12 (Bookworm), 1 vCPU, 512 MB RAM, 10 GB disk — minimal install |
+| **PCC Debian VM** | Debian (any current release), 1 vCPU, 512 MB RAM, 10 GB disk — minimal install |
 | **Public domain** | A subdomain pointing at the VM's IP (e.g. `pcc.certus.je`) |
 | **Port 80 & 443** | Reachable from the internet for Let's Encrypt certificate issuance |
 | **Port 51820/UDP** | Open inbound for WireGuard (only needed when connecting remote Proxmox hosts) |
@@ -23,11 +23,11 @@ via stored API tokens, and handles team login, shared settings, scheduled operat
 
 ---
 
-## Step 1 — Create the Debian 12 VM
+## Step 1 — Create the Debian VM
 
 In your Proxmox web UI:
 
-1. **Create VM** — use the Debian 12 net-install ISO (or a cloud image)
+1. **Create VM** — use the Debian net-install ISO (or a cloud image)
 2. **Recommended spec:** 1 vCPU · 1 GB RAM · 10 GB disk
 3. **Network:** assign a static IP or reserve via DHCP on your router/switch
 4. Install Debian with **SSH server** enabled, no desktop environment

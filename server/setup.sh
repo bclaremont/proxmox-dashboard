@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # PCC — Proxmox Command Center
-# Standalone Debian 12 setup script
+# Standalone Debian setup script
 #
 # Usage:
 #   sudo bash setup.sh --domain pcc.example.com --email admin@example.com
@@ -38,7 +38,7 @@ done
 JWT_SECRET="$(openssl rand -base64 48)"
 
 echo "==================================================================="
-echo "  PCC Setup — Debian 12"
+echo "  PCC Setup — Debian"
 echo "  Domain : $DOMAIN"
 echo "  Email  : $EMAIL"
 echo "==================================================================="
