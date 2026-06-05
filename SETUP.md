@@ -5,9 +5,10 @@ This guide sets up PCC on a **dedicated Debian VM** — the recommended producti
 In standalone mode PCC runs 24/7 as a Node.js service, connects to all your Proxmox clusters
 via stored API tokens, and handles team login, shared settings, scheduled operations and webhooks.
 
-> **Direct mode** (served from the Proxmox host itself on port 8080) still works and needs no
-> extra VM — it is covered at the bottom of this doc. Use standalone when you manage multiple
-> clusters or need multi-user access.
+> **Direct mode** (served from the Proxmox host itself on port 8080) is also supported —
+> it requires installing nginx on the PVE host but no separate VM.
+> Full setup instructions are at the bottom of this doc.
+> Use standalone when you manage multiple clusters or need multi-user team access.
 
 ---
 
@@ -327,15 +328,60 @@ For offsite backup, copy `pcc.db` anywhere — it's a single self-contained file
 
 ## Direct mode (Proxmox host — no separate VM)
 
-If you just want PCC on a single Proxmox host without a dedicated VM, the nginx proxy
-approach is already set up at `http://your-pve-ip:8080`. No installation needed — just:
+Direct mode runs PCC directly on the Proxmox host, served by nginx on port 8080.
+nginx acts as a reverse proxy to the Proxmox API on port 8006.
 
-1. Copy `proxmox-dashboard.html` to `/var/www/proxmox-dashboard/index.html`
-2. Copy `console.html` to `/var/www/proxmox-dashboard/console.html`
-3. Ensure nginx is running: `systemctl status nginx`
-4. Open `http://your-pve-ip:8080` and connect with PVE credentials
+> **Note:** Proxmox does **not** include nginx — it uses its own `pveproxy` on port 8006.
+> You need to install and configure nginx from scratch on each PVE host you want to use this way.
 
-Limitations of direct mode vs standalone:
+### Direct mode setup (fresh Proxmox host)
+
+Run these commands **on the Proxmox host** as root:
+
+```bash
+# 1. Install nginx
+apt install -y nginx
+
+# 2. Clone the repo (or copy files from another host)
+apt install -y git
+git clone https://github.com/bclaremont/proxmox-dashboard.git /tmp/pcc-src
+
+# 3. Copy the HTML files to the web root
+mkdir -p /var/www/proxmox-dashboard
+cp /tmp/pcc-src/proxmox-dashboard.html /var/www/proxmox-dashboard/index.html
+cp /tmp/pcc-src/console.html           /var/www/proxmox-dashboard/console.html
+
+# 4. Copy the nginx configs
+cp /tmp/pcc-src/nginx/proxmox-dashboard.conf /etc/nginx/sites-available/proxmox-dashboard
+cp /tmp/pcc-src/nginx/pcc-vnc-map.conf       /etc/nginx/conf.d/pcc-vnc-map.conf
+
+# 5. Enable the site and reload nginx
+ln -sf /etc/nginx/sites-available/proxmox-dashboard /etc/nginx/sites-enabled/proxmox-dashboard
+rm -f  /etc/nginx/sites-enabled/default
+nginx -t && systemctl reload nginx
+
+# 6. Clean up
+rm -rf /tmp/pcc-src
+```
+
+PCC is now available at `http://your-pve-ip:8080`.
+
+Open it in your browser and connect with your Proxmox credentials (username e.g. `root@pam`).
+
+### Keeping direct mode up to date
+
+When a new version of PCC is released:
+
+```bash
+git clone https://github.com/bclaremont/proxmox-dashboard.git /tmp/pcc-update
+cp /tmp/pcc-update/proxmox-dashboard.html /var/www/proxmox-dashboard/index.html
+cp /tmp/pcc-update/console.html           /var/www/proxmox-dashboard/console.html
+rm -rf /tmp/pcc-update
+```
+
+No nginx restart needed — the HTML is served as static files.
+
+### Limitations of direct mode vs standalone
 - No team login — anyone who can reach port 8080 has access
 - Shared settings (profiles, rules, schedules) are browser-local only
 - Scheduled operations only run while the browser is open
