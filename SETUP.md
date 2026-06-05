@@ -132,6 +132,37 @@ systemctl restart sshd
 
 > ⚠ Make sure you can log in with your key **before** disabling password auth, or you'll lock yourself out.
 
+### AppArmor
+
+AppArmor is already installed on Debian but may not be active. Enabling it enforces mandatory
+access control profiles on system services — nginx in particular has a well-tested profile that
+limits what it can read, write and execute.
+
+```bash
+apt install -y apparmor apparmor-utils apparmor-profiles apparmor-profiles-extra
+
+systemctl enable apparmor
+systemctl start apparmor
+
+# Check status — should show profiles in enforce mode
+aa-status
+```
+
+After the PCC setup is complete and nginx is running, confirm its profile is enforcing:
+
+```bash
+aa-status | grep nginx
+# Should show: /usr/sbin/nginx (enforce)
+```
+
+> **What about the PCC Node.js backend?**
+> Writing a tight AppArmor profile for a Node.js application that makes outbound connections
+> to Proxmox hosts on dynamic IPs and ports is non-trivial. Getting it wrong causes silent
+> failures that are hard to debug. The backend runs as a dedicated `pcc` system user with
+> no shell and no login, which already limits its blast radius. A custom profile is possible
+> but is an advanced step beyond the scope of this guide. UFW + fail2ban + the `pcc` system
+> user provides a solid baseline for most deployments.
+
 ---
 
 ## Step 3 — DNS record
