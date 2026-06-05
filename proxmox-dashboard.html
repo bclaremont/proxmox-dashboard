@@ -3521,7 +3521,7 @@ function renderOverview() {
     </div>
     <div class="table-wrap">
       <table>
-        <thead><tr><th>ID</th><th>Name</th><th>Type</th><th>Node</th><th>Status</th><th>CPU</th><th>Memory</th><th>Uptime</th><th>Actions</th></tr></thead>
+        <thead><tr><th>ID</th><th>Name</th><th>Type</th><th>Node</th><th>Cluster</th><th>Status</th><th>CPU</th><th>Memory</th><th>Uptime</th><th>Actions</th></tr></thead>
         <tbody id="all-table-body"></tbody>
       </table>
     </div>`;
@@ -3541,8 +3541,8 @@ function _renderAllTableBody() {
   });
   const tbody = document.getElementById('all-table-body');
   if (tbody) tbody.innerHTML = filtered.length
-    ? filtered.map(row=>vmRow(row,true)).join('')
-    : `<tr><td colspan="9" class="empty">No VMs or Containers found</td></tr>`;
+    ? filtered.map(row=>vmRowOverview(row)).join('')
+    : `<tr><td colspan="10" class="empty">No VMs or Containers found</td></tr>`;
 }
 
 function renderAllTable() { _renderAllTableBody(); }
@@ -3607,6 +3607,50 @@ function renderCTTable(){
   document.getElementById('ct-table-body').innerHTML = sorted.length
     ? sorted.map(c=>vmRow(c)).join('')
     : `<tr><td colspan="9" class="empty">No containers found</td></tr>`;
+}
+
+// Dedicated row for the Overview "All VMs & Containers" table.
+// 10 columns: ID | Name | Type | Node | Cluster | Status | CPU | Memory | Uptime | Actions
+function vmRowOverview(x) {
+  const cpuPct  = x.cpu ? (x.cpu*100).toFixed(1) : '—';
+  const memPct  = x.mem && x.maxmem ? ((x.mem/x.maxmem)*100).toFixed(0) : 0;
+  const memStr  = x.mem && x.maxmem ? `${fmtBytes(x.mem)}/${fmtBytes(x.maxmem)}` : '—';
+  const uptime  = x.uptime ? fmtUptime(x.uptime) : '—';
+  const running = x.status === 'running';
+  const cid     = x.connId || '';
+  const cluster = cid ? escHtml(getConnName(cid)) : 'Primary';
+  const typeVal = x.type === 'lxc' || x.type === 'ct' ? 'lxc' : 'qemu';
+  return `<tr class="clickable-row" onclick="openDetail(${JSON.stringify(x).replace(/"/g,'&quot;')})">
+    <td style="color:var(--muted);font-size:12px">${x.vmid}</td>
+    <td><strong>${escHtml(x.name||'(unnamed)')}</strong></td>
+    <td><span class="type-chip ${typeVal==='lxc'?'ct':'vm'}">${typeVal==='lxc'?'CT':'VM'}</span></td>
+    <td style="color:var(--muted);font-size:12px">${escHtml(x.node)}</td>
+    <td style="color:var(--muted);font-size:12px">${cluster}</td>
+    <td>${statusBadge(x.status)}</td>
+    <td>
+      <div class="gauge-wrap">
+        <span style="min-width:36px;text-align:right;font-size:12px">${cpuPct}%</span>
+        <div class="gauge-bar"><div class="gauge-fill ${gaugeClass(parseFloat(cpuPct)||0)}" style="width:${Math.min(parseFloat(cpuPct)||0,100)}%"></div></div>
+      </div>
+    </td>
+    <td>
+      <div class="gauge-wrap">
+        <span style="min-width:36px;text-align:right;font-size:12px">${memPct}%</span>
+        <div class="gauge-bar"><div class="gauge-fill ${gaugeClass(memPct)}" style="width:${Math.min(memPct,100)}%"></div></div>
+      </div>
+      <div style="font-size:11px;color:var(--muted)">${memStr}</div>
+    </td>
+    <td style="font-size:12px;color:var(--muted)">${x.uptime?`<span title="Since ${new Date(Date.now()-x.uptime*1000).toLocaleString()}">${uptime}</span>`:uptime}</td>
+    <td onclick="event.stopPropagation()">
+      <div class="actions-row">
+        ${running
+          ?`<button class="btn small warning" onclick="confirmAction('${x.node}','${x.vmid}','${x.type}','shutdown','${cid}')" title="Shutdown">⏻</button>
+             <button class="btn small danger"  onclick="confirmAction('${x.node}','${x.vmid}','${x.type}','stop','${cid}')"     title="Force stop">■</button>`
+          :`<button class="btn small success"  onclick="vmAction('${x.node}','${x.vmid}','${x.type}','start','${cid}')"         title="Start">▶</button>`}
+        ${running?`<button class="btn small" onclick="openConsole('${x.node}','${x.vmid}','${x.type||typeVal}')" title="Console">⌨</button>`:''}
+      </div>
+    </td>
+  </tr>`;
 }
 
 function vmRow(x,showType=false){
