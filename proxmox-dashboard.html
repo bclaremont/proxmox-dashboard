@@ -337,6 +337,16 @@
     .sidebar-collapsed .nav-item{font-size:0!important;padding:10px 0!important;gap:0!important;justify-content:center!important;position:relative;}
     .sidebar-collapsed .nav-item svg{width:20px!important;height:20px!important;flex-shrink:0;}
     .sidebar-collapsed .nav-item .nav-badge{font-size:9px!important;position:absolute;top:4px;right:4px;min-width:14px;height:14px;padding:0 3px;line-height:14px;}
+    /* Collapsed sidebar tooltips */
+    .sidebar-collapsed .nav-item[data-tip]:hover::after{content:attr(data-tip);position:absolute;left:calc(100% + 10px);top:50%;transform:translateY(-50%);background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:5px 10px;font-size:12px;white-space:nowrap;color:var(--text);z-index:300;box-shadow:0 2px 10px rgba(0,0,0,.4);pointer-events:none;}
+    /* Task row colour coding */
+    .task-row-err>td{background:rgba(248,81,73,.05)!important;}
+    .task-row-err>td:first-child{box-shadow:inset 3px 0 0 var(--red);}
+    .task-row-run>td{background:rgba(210,153,34,.05)!important;}
+    .task-row-run>td:first-child{box-shadow:inset 3px 0 0 var(--yellow);}
+    /* Copyable IP cells */
+    .vm-ip-cell[data-ipkey]{cursor:pointer;border-radius:3px;padding:1px 3px;transition:background .15s;}
+    .vm-ip-cell[data-ipkey]:hover{background:rgba(88,166,255,.12);}
     /* Home area in collapsed mode */
     .sidebar-collapsed #sidebar-home-area{padding:2px 5px 6px!important;justify-content:center!important;}
     /* Toggle row */
@@ -3720,7 +3730,7 @@ function vmRow(x,showType=false){
   const cachedIP=_vmIPCache[ipKey];
   const ipLine=`<div class="vm-ip-cell" data-ipkey="${ipKey}" style="font-size:10px;font-family:monospace;margin-top:2px;color:${cachedIP?'var(--teal)':'var(--muted)'}">${cachedIP||'—'}</div>`;
   return `<tr class="clickable-row" onclick="openDetail(${JSON.stringify(x).replace(/"/g,'&quot;')})">
-    <td style="color:var(--muted);font-size:12px">${x.vmid}</td>
+    <td style="color:var(--muted);font-size:12px;cursor:pointer" data-copy="${x.vmid}" title="Click to copy VMID">${x.vmid}</td>
     <td>${typeChip}<strong>${x.name||'(unnamed)'}</strong>${ipLine}${connLabel}</td>
     ${showType?`<td style="color:var(--muted)">${x.node}</td>`:''}
     <td style="color:var(--muted)">${x.node}</td>
@@ -17753,6 +17763,39 @@ disconnect = function() {
   _origDisconnect();
 };
 
+// Sidebar collapsed tooltips — reads each nav item's label text and
+// stores it in data-tip so the CSS ::after tooltip can display it.
+function _initSidebarTooltips() {
+  document.querySelectorAll('#sidebar .nav-item').forEach(item => {
+    const clone = item.cloneNode(true);
+    clone.querySelectorAll('svg, .nav-badge').forEach(el => el.remove());
+    const text = clone.textContent.replace(/\s+/g, ' ').trim();
+    if (text) item.setAttribute('data-tip', text);
+  });
+}
+
+// Click-to-copy on IP cells and anywhere else with data-copy attribute
+document.addEventListener('click', e => {
+  const ipCell = e.target.closest('.vm-ip-cell[data-ipkey]');
+  if (ipCell) {
+    const val = ipCell.textContent.trim();
+    if (!val || val === '—') return;
+    navigator.clipboard?.writeText(val)
+      .then(()  => toast(`Copied: ${val}`, 'success'))
+      .catch(() => toast(val, 'info'));
+    e.stopPropagation();
+    return;
+  }
+  const copyEl = e.target.closest('[data-copy]');
+  if (copyEl) {
+    const val = copyEl.getAttribute('data-copy') || copyEl.textContent.trim();
+    navigator.clipboard?.writeText(val)
+      .then(()  => toast(`Copied: ${val}`, 'success'))
+      .catch(() => toast(val, 'info'));
+    e.stopPropagation();
+  }
+});
+
 // Auto-colour the modal top strip based on the confirm button type.
 // Runs whenever modal-bg gains the 'open' class.
 (function() {
@@ -17772,6 +17815,7 @@ disconnect = function() {
   document.addEventListener('DOMContentLoaded', () => {
     const bg = document.getElementById('modal-bg');
     if (bg) mo.observe(bg, { attributes: true, attributeFilter: ['class'] });
+    _initSidebarTooltips();
   });
 })();
 
