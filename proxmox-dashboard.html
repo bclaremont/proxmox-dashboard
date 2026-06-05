@@ -1188,7 +1188,7 @@
       </div>
       <div style="background:rgba(88,166,255,.08);border:1px solid rgba(88,166,255,.3);border-radius:var(--radius);padding:10px 14px;margin-bottom:16px;font-size:13px;color:var(--muted)">
         ℹ Customisation specs are applied to new VMs after cloning from a cloud-init template.
-        They set hostname, IP, DNS, user and SSH keys — equivalent to vCenter Guest Customization.
+        They set hostname, IP, DNS, user and SSH keys — applied automatically on first boot via cloud-init.
         Clone any cloud-init VM and choose a spec, or use the <strong style="color:var(--text)">⎘ Clone</strong> button on any VM.
       </div>
       <div id="customspecs-content"><div class="empty">Loading…</div></div>
@@ -5182,7 +5182,7 @@ function deleteSnapshot(node, vmid, type, snapname) {
 }
 
 // ── HEATMAP ───────────────────────────────────────────────
-// Shows resource usage across all nodes at a glance — like vCenter resource view
+// Shows resource usage across all nodes at a glance
 function renderHeatmap() {
   const el = document.getElementById('heatmap-content');
   if (!PVE.nodeStatuses.length) { el.innerHTML = '<div class="empty">No nodes loaded — connect first</div>'; return; }
@@ -10140,7 +10140,7 @@ function _schedTypeChange() {
 }
 
 // ── VM CUSTOMISATION SPECS ────────────────────────────────
-// Named cloud-init configuration templates — like vCenter Guest Customization Specs.
+// Named cloud-init configuration templates for automating per-VM post-deploy configuration.
 // Applied to new VMs after cloning from a cloud-init-capable template.
 //
 // Spec schema:
@@ -12611,7 +12611,7 @@ async function enforceAllRules() {
 // ── DRS — DYNAMIC RESOURCE SCHEDULING ────────────────────
 // Analyses cluster resource imbalance across nodes and recommends
 // (or automatically executes) VM/CT migrations to restore balance.
-// Inspired by ProxLB and VMware DRS.
+// Inspired by ProxLB and enterprise DRS implementations.
 
 let drsState = {
   recommendations: [],
@@ -14948,7 +14948,7 @@ async function requestNotifPermission() {
 }
 
 // ── HOST PROFILES ─────────────────────────────────────────
-// VMware-style host profile system: capture a reference node's config,
+// Host profile system: capture a reference node's config,
 // detect drift across all nodes, and apply settings at scale.
 // Stored in localStorage (no native PVE API for this concept).
 // Settings covered: DNS, timezone, NTP server, custom hosts entries,

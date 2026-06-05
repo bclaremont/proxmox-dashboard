@@ -16,8 +16,8 @@ Out of the box PCC gives you:
   deploy with automatic cloud-init configuration
 - **Team features** — per-user logins, shared settings, webhooks, audit log, and scheduled
   reports (standalone mode)
-- **vCenter-equivalent features** — maintenance drain, affinity/anti-affinity rules, storage
-  DRS, per-VM alerts, VM customisation specs, host profiles, and more — all free and open source
+- **Advanced fleet management** — maintenance drain, affinity/anti-affinity rules, storage
+  DRS, per-VM alerts, VM customisation specs, host profiles, scheduled operations, and more — all free and open source
 
 PCC is a single HTML file at its core, served by either a lightweight Node.js backend
 (standalone mode) or directly from a Proxmox host via nginx (direct mode). There is no
