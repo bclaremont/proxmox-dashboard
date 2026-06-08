@@ -1872,16 +1872,30 @@ async function _renderPCCAdminTab() {
     const rows = await r.json();
     if (!rows.length) { el.innerHTML='<div class="empty">No audit entries yet.</div>'; return; }
     el.innerHTML = `<div class="table-wrap"><table>
-      <thead><tr><th>Time</th><th>User</th><th>Method</th><th>Path</th><th>Cluster</th></tr></thead>
-      <tbody>${rows.map(row => `<tr>
-        <td style="font-size:11px;color:var(--muted);white-space:nowrap">${new Date(row.ts*1000).toLocaleString()}</td>
-        <td><strong>${escHtml(row.username)}</strong></td>
-        <td><span style="font-family:monospace;font-size:11px;color:${
-          row.method==='DELETE'?'var(--red)':row.method==='POST'?'var(--green)':row.method==='PUT'?'var(--teal)':'var(--muted)'
-        }">${row.method}</span></td>
-        <td style="font-family:monospace;font-size:11px;color:var(--muted)">${escHtml(row.path)}</td>
-        <td style="font-size:11px;color:var(--muted)">${row.cluster_id?escHtml(row.cluster_id):'—'}</td>
-      </tr>`).join('')}</tbody></table></div>`;
+      <thead><tr><th>Time</th><th>User</th><th>Event</th><th>Path</th><th>Status</th><th>Detail</th></tr></thead>
+      <tbody>${rows.map(row => {
+        const isFail    = row.status === 401 || row.status === 429;
+        const isBlock   = row.status === 429;
+        const isLogin   = row.path === '/api/auth/login';
+        const rowStyle  = isFail ? `background:rgba(248,81,73,.05)` : '';
+        const leftBar   = isFail ? `box-shadow:inset 3px 0 0 ${isBlock?'var(--yellow)':'var(--red)'}` : '';
+        const detail    = row.detail ? (() => { try { const d=JSON.parse(row.detail); return d.ip?`IP: ${escHtml(d.ip)}`:(d.reason?escHtml(d.reason):''); } catch { return ''; } })() : '';
+        const eventLabel = isLogin && isFail
+          ? `<span style="color:${isBlock?'var(--yellow)':'var(--red)'};font-size:11px;font-weight:600">${isBlock?'⊘ BLOCKED':'✕ FAIL'} login</span>`
+          : isLogin
+          ? `<span style="color:var(--green);font-size:11px;font-weight:600">✓ login</span>`
+          : `<span style="font-family:monospace;font-size:11px;color:${
+              row.method==='DELETE'?'var(--red)':row.method==='POST'?'var(--green)':row.method==='PUT'?'var(--teal)':'var(--muted)'
+            }">${row.method}</span>`;
+        return `<tr style="${rowStyle}">
+          <td style="font-size:11px;color:var(--muted);white-space:nowrap;${leftBar}">${new Date(row.ts*1000).toLocaleString()}</td>
+          <td><strong>${escHtml(row.username)}</strong></td>
+          <td>${eventLabel}</td>
+          <td style="font-family:monospace;font-size:11px;color:var(--muted)">${escHtml(row.path)}</td>
+          <td style="font-size:11px;color:${isFail?'var(--red)':'var(--muted)'}">${row.status||'—'}</td>
+          <td style="font-size:11px;color:var(--muted)">${detail}</td>
+        </tr>`;
+      }).join('')}</tbody></table></div>`;
     return;
   }
 

@@ -174,17 +174,64 @@ const parseJson = express.json();
 const parseForm = express.urlencoded({ extended: true });
 function bodyParser(req, res, next) { parseJson(req, res, () => parseForm(req, res, next)); }
 
+// ── LOGIN RATE LIMITER ────────────────────────────────────
+// In-memory per-IP counter. Allows 10 attempts per 15-minute window.
+// No external dependency — resets on server restart (acceptable for our threat model).
+
+const _loginAttempts = new Map(); // ip → { count, resetAt }
+const LOGIN_MAX      = 10;
+const LOGIN_WINDOW   = 15 * 60 * 1000; // 15 minutes
+
+function loginRateLimit(req, res, next) {
+  const ip  = req.headers['x-forwarded-for']?.split(',')[0].trim() || req.socket.remoteAddress || 'unknown';
+  const now = Date.now();
+  let entry = _loginAttempts.get(ip);
+
+  if (!entry || now > entry.resetAt) {
+    entry = { count: 0, resetAt: now + LOGIN_WINDOW };
+    _loginAttempts.set(ip, entry);
+  }
+
+  entry.count++;
+
+  if (entry.count > LOGIN_MAX) {
+    const retryAfter = Math.ceil((entry.resetAt - now) / 1000);
+    res.set('Retry-After', retryAfter);
+    // Log the block
+    audit('__ratelimit__', 'POST', '/api/auth/login', null, 429, { ip, attempts: entry.count });
+    return res.status(429).json({ error: `Too many login attempts — try again in ${Math.ceil(retryAfter / 60)} minute(s)` });
+  }
+
+  next();
+}
+
+// Clean up stale entries every 30 minutes to prevent unbounded memory growth
+setInterval(() => {
+  const now = Date.now();
+  for (const [ip, e] of _loginAttempts) {
+    if (now > e.resetAt) _loginAttempts.delete(ip);
+  }
+}, 30 * 60 * 1000);
+
 // ── AUTH ──────────────────────────────────────────────────
 
 app.get('/api/health', (req, res) => res.json({ ok: true, version: '1.0.0' }));
 
-app.post('/api/auth/login', bodyParser, (req, res) => {
+app.post('/api/auth/login', loginRateLimit, bodyParser, (req, res) => {
   const { username, password } = req.body || {};
+  const ip = req.headers['x-forwarded-for']?.split(',')[0].trim() || req.socket.remoteAddress || 'unknown';
+
   if (!username || !password) return res.status(400).json({ error: 'username and password required' });
 
   const user = db.prepare('SELECT * FROM users WHERE username = ?').get(username);
-  if (!user || !bcrypt.compareSync(password, user.password_hash))
+  if (!user || !bcrypt.compareSync(password, user.password_hash)) {
+    // Log failed attempt with IP — visible in audit log for monitoring
+    audit(username || '__unknown__', 'POST', '/api/auth/login', null, 401, { ip, reason: 'invalid credentials' });
     return res.status(401).json({ error: 'Invalid credentials' });
+  }
+
+  // Successful login — reset rate limit counter for this IP
+  _loginAttempts.delete(ip);
 
   db.prepare('UPDATE users SET last_login = unixepoch() WHERE id = ?').run(user.id);
   const token = jwt.sign(
@@ -192,7 +239,7 @@ app.post('/api/auth/login', bodyParser, (req, res) => {
     JWT_SECRET,
     { expiresIn: '12h' }
   );
-  audit(username, 'POST', '/api/auth/login', null, 200, null);
+  audit(username, 'POST', '/api/auth/login', null, 200, { ip });
   res.json({ token, username: user.username, role: user.role });
 });
 
