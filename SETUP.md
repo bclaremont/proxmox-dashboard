@@ -1,7 +1,7 @@
-# PCC — Proxmox Command Center
+# PCC
 ## Setup Guide
 
-**PCC (Proxmox Command Center)** is an open-source, browser-based management dashboard for
+**PCC** is an open-source, browser-based management dashboard for
 Proxmox VE. It goes beyond the standard Proxmox web UI to give you a single pane of glass
 across multiple clusters and standalone hosts — whether they're on the same LAN or spread
 across different client sites.
@@ -233,6 +233,7 @@ cp /tmp/pcc-src/server/add-site.sh     /opt/pcc/add-site.sh
 
 cp /tmp/pcc-src/proxmox-dashboard.html /opt/pcc/public/index.html
 cp /tmp/pcc-src/console.html           /opt/pcc/public/console.html
+cp -r /tmp/pcc-src/vendor              /opt/pcc/public/vendor
 
 chmod +x /opt/pcc/setup.sh /opt/pcc/add-site.sh
 
@@ -253,6 +254,7 @@ scp /opt/proxmox-dashboard/server/setup.sh      root@$PCC_VM_IP:/opt/pcc/setup.s
 scp /opt/proxmox-dashboard/server/add-site.sh   root@$PCC_VM_IP:/opt/pcc/add-site.sh
 scp /opt/proxmox-dashboard/proxmox-dashboard.html  root@$PCC_VM_IP:/opt/pcc/public/index.html
 scp /opt/proxmox-dashboard/console.html            root@$PCC_VM_IP:/opt/pcc/public/console.html
+scp -r /opt/proxmox-dashboard/vendor               root@$PCC_VM_IP:/opt/pcc/public/vendor
 ssh root@$PCC_VM_IP "chmod +x /opt/pcc/setup.sh /opt/pcc/add-site.sh"
 ```
 
@@ -435,6 +437,7 @@ cp /tmp/pcc-update/server/server.js       /opt/pcc/server.js
 cp /tmp/pcc-update/server/package.json    /opt/pcc/package.json
 cp /tmp/pcc-update/proxmox-dashboard.html /opt/pcc/public/index.html
 cp /tmp/pcc-update/console.html           /opt/pcc/public/console.html
+cp -r /tmp/pcc-update/vendor              /opt/pcc/public/vendor
 
 cd /opt/pcc && npm install --omit=dev
 systemctl restart pcc
@@ -510,6 +513,7 @@ git clone https://github.com/bclaremont/proxmox-dashboard.git /tmp/pcc-src
 mkdir -p /var/www/proxmox-dashboard
 cp /tmp/pcc-src/proxmox-dashboard.html /var/www/proxmox-dashboard/index.html
 cp /tmp/pcc-src/console.html           /var/www/proxmox-dashboard/console.html
+cp -r /tmp/pcc-src/vendor              /var/www/proxmox-dashboard/vendor
 
 # 4. Copy the nginx configs
 cp /tmp/pcc-src/nginx/proxmox-dashboard.conf /etc/nginx/sites-available/proxmox-dashboard
@@ -536,6 +540,7 @@ When a new version of PCC is released:
 git clone https://github.com/bclaremont/proxmox-dashboard.git /tmp/pcc-update
 cp /tmp/pcc-update/proxmox-dashboard.html /var/www/proxmox-dashboard/index.html
 cp /tmp/pcc-update/console.html           /var/www/proxmox-dashboard/console.html
+cp -r /tmp/pcc-update/vendor              /var/www/proxmox-dashboard/vendor
 rm -rf /tmp/pcc-update
 ```
 

@@ -64,6 +64,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cp "$SCRIPT_DIR/server.js"    /opt/pcc/server.js
 cp "$SCRIPT_DIR/package.json" /opt/pcc/package.json
 [[ -f "$SCRIPT_DIR/public/index.html" ]] && cp "$SCRIPT_DIR/public/index.html" /opt/pcc/public/index.html
+# Vendor libraries — served locally so no external CDN requests (GDPR)
+[[ -d "$SCRIPT_DIR/public/vendor" ]] && cp -r "$SCRIPT_DIR/public/vendor" /opt/pcc/public/vendor
 
 # npm install
 cd /opt/pcc
