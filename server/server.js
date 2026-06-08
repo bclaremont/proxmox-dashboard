@@ -18,6 +18,7 @@ const http     = require('http');
 const path     = require('path');
 const url      = require('url');
 const net      = require('net');
+const crypto   = require('crypto');
 
 const PORT       = parseInt(process.env.PORT || '3000');
 const JWT_SECRET = process.env.JWT_SECRET;
@@ -77,6 +78,54 @@ if (db.prepare('SELECT COUNT(*) AS c FROM users').get().c === 0) {
   db.prepare('INSERT INTO users (username, password_hash, role) VALUES (?,?,?)').run('admin', hash, 'admin');
   console.log('Created default admin user — change your password on first login.');
 }
+
+// ── ENCRYPTION AT REST ────────────────────────────────────
+// Cluster auth_value (Proxmox API tokens) are encrypted in the DB
+// using AES-256-GCM with a key derived from JWT_SECRET.
+// Stored format: enc:<iv_hex>:<authtag_hex>:<ciphertext_hex>
+// Legacy plaintext values are detected by absence of 'enc:' prefix
+// and migrated automatically on first startup after this change.
+
+function _encKey() {
+  return crypto.createHash('sha256').update(JWT_SECRET).digest();
+}
+
+function encryptValue(plaintext) {
+  const key     = _encKey();
+  const iv      = crypto.randomBytes(12);
+  const cipher  = crypto.createCipheriv('aes-256-gcm', key, iv);
+  const enc     = Buffer.concat([cipher.update(plaintext, 'utf8'), cipher.final()]);
+  const tag     = cipher.getAuthTag();
+  return `enc:${iv.toString('hex')}:${tag.toString('hex')}:${enc.toString('hex')}`;
+}
+
+function decryptValue(stored) {
+  if (!stored || !stored.startsWith('enc:')) return stored; // legacy plaintext passthrough
+  const parts = stored.split(':');
+  if (parts.length < 4) return stored;
+  const [, ivHex, tagHex, ...dataParts] = parts;
+  const key     = _encKey();
+  const iv      = Buffer.from(ivHex, 'hex');
+  const tag     = Buffer.from(tagHex, 'hex');
+  const data    = Buffer.from(dataParts.join(':'), 'hex'); // rejoin in case data had colons
+  const decipher = crypto.createDecipheriv('aes-256-gcm', key, iv);
+  decipher.setAuthTag(tag);
+  return decipher.update(data).toString('utf8') + decipher.final('utf8');
+}
+
+// Migrate any existing plaintext auth_values to encrypted on startup
+(function migrateSecrets() {
+  const clusters = db.prepare('SELECT id, auth_value FROM clusters').all();
+  const upd = db.prepare('UPDATE clusters SET auth_value = ? WHERE id = ?');
+  let n = 0;
+  for (const c of clusters) {
+    if (c.auth_value && !c.auth_value.startsWith('enc:')) {
+      upd.run(encryptValue(c.auth_value), c.id);
+      n++;
+    }
+  }
+  if (n > 0) console.log(`Encrypted ${n} cluster secret(s) at rest.`);
+})();
 
 // ── HELPERS ───────────────────────────────────────────────
 
@@ -227,7 +276,7 @@ app.post('/api/clusters', authMiddleware, adminOnly, bodyParser, (req, res) => {
     return res.status(400).json({ error: 'name, host and auth_value are required' });
   const id = 'cluster-' + Date.now();
   db.prepare('INSERT INTO clusters (id, name, host, auth_type, auth_value, sort_order) VALUES (?,?,?,?,?,?)')
-    .run(id, name.trim(), host.trim().replace(/\/$/, ''), auth_type || 'token', auth_value.trim(), parseInt(sort_order) || 0);
+    .run(id, name.trim(), host.trim().replace(/\/$/, ''), auth_type || 'token', encryptValue(auth_value.trim()), parseInt(sort_order) || 0);
   audit(req.user.username, 'POST', '/api/clusters', id, 200, { name, host });
   res.status(201).json({ id, name, host, auth_type: auth_type || 'token' });
 });
@@ -243,7 +292,8 @@ app.put('/api/clusters/:id', authMiddleware, adminOnly, bodyParser, (req, res) =
     auth_value = COALESCE(?, auth_value),
     sort_order = COALESCE(?, sort_order)
     WHERE id = ?`
-  ).run(name || null, host || null, auth_type || null, auth_value || null,
+  ).run(name || null, host || null, auth_type || null,
+    auth_value ? encryptValue(auth_value) : null,
     sort_order != null ? parseInt(sort_order) : null, req.params.id);
   audit(req.user.username, 'PUT', '/api/clusters/' + req.params.id, req.params.id, 200, { name, host });
   res.json({ ok: true });
@@ -304,7 +354,7 @@ app.all('/proxy/:clusterId/*', authMiddleware, (req, res) => {
     headers[k] = v;
   }
   if (cluster.auth_type === 'token') {
-    headers['Authorization'] = cluster.auth_value;
+    headers['Authorization'] = decryptValue(cluster.auth_value);
   }
 
   // Audit write operations (best-effort, body not yet consumed)
@@ -383,7 +433,7 @@ server.on('upgrade', (req, socket, head) => {
     `Connection: Upgrade`,
     `Sec-WebSocket-Key: ${req.headers['sec-websocket-key'] || 'dGhlIHNhbXBsZSBub25jZQ=='}`,
     `Sec-WebSocket-Version: ${req.headers['sec-websocket-version'] || '13'}`,
-    `Authorization: ${cluster.auth_value}`,
+    `Authorization: ${decryptValue(cluster.auth_value)}`,
     '',
     ''
   ].join('\r\n');
@@ -489,7 +539,7 @@ async function runScheduledAction(s, cluster) {
     const opts = {
       hostname: targetUrl.hostname, port: parseInt(targetUrl.port) || (isHttps ? 443 : 80),
       path, method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'Authorization': cluster.auth_value, 'Content-Length': Buffer.byteLength(bodyStr) },
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'Authorization': decryptValue(cluster.auth_value), 'Content-Length': Buffer.byteLength(bodyStr) },
       rejectUnauthorized: false,
     };
     const req = transport.request(opts, res => {
