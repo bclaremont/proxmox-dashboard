@@ -127,6 +127,21 @@ function decryptValue(stored) {
   if (n > 0) console.log(`Encrypted ${n} cluster secret(s) at rest.`);
 })();
 
+// ── JWT REVOCATION ────────────────────────────────────────
+// In-memory blacklist keyed by JTI (unique token ID).
+// Tokens are added on logout; pruned hourly when their expiry passes.
+// Survives only for the life of the process — acceptable because
+// tokens expire in 4h anyway, and a restart is a natural session boundary.
+
+const _revokedTokens = new Map(); // jti → expiresAt (ms)
+
+setInterval(() => {
+  const now = Date.now();
+  for (const [jti, exp] of _revokedTokens) {
+    if (now > exp) _revokedTokens.delete(jti);
+  }
+}, 60 * 60 * 1000); // prune hourly
+
 // ── HELPERS ───────────────────────────────────────────────
 
 function authMiddleware(req, res, next) {
@@ -134,7 +149,10 @@ function authMiddleware(req, res, next) {
   const token  = header.startsWith('Bearer ') ? header.slice(7) : null;
   if (!token) return res.status(401).json({ error: 'Not authenticated' });
   try {
-    req.user = jwt.verify(token, JWT_SECRET);
+    const payload = jwt.verify(token, JWT_SECRET);
+    if (payload.jti && _revokedTokens.has(payload.jti))
+      return res.status(401).json({ error: 'Session ended — please log in again' });
+    req.user = payload;
     next();
   } catch {
     res.status(401).json({ error: 'Token expired or invalid' });
@@ -258,10 +276,11 @@ app.post('/api/auth/login', loginRateLimit, bodyParser, (req, res) => {
   _accountLockout.delete(username);
 
   db.prepare('UPDATE users SET last_login = unixepoch() WHERE id = ?').run(user.id);
+  const jti   = crypto.randomBytes(16).toString('hex');
   const token = jwt.sign(
-    { id: user.id, username: user.username, role: user.role },
+    { id: user.id, username: user.username, role: user.role, jti },
     JWT_SECRET,
-    { expiresIn: '12h' }
+    { expiresIn: '4h' }
   );
   audit(username, 'POST', '/api/auth/login', null, 200, { ip });
   res.json({ token, username: user.username, role: user.role });
@@ -269,6 +288,26 @@ app.post('/api/auth/login', loginRateLimit, bodyParser, (req, res) => {
 
 app.get('/api/auth/me', authMiddleware, (req, res) => {
   res.json({ username: req.user.username, role: req.user.role });
+});
+
+// Logout — revokes the current token server-side
+app.post('/api/auth/logout', authMiddleware, (req, res) => {
+  if (req.user.jti) _revokedTokens.set(req.user.jti, (req.user.exp || 0) * 1000);
+  audit(req.user.username, 'POST', '/api/auth/logout', null, 200, null);
+  res.json({ ok: true });
+});
+
+// Refresh — issues a new 4h token, revokes the old one
+app.post('/api/auth/refresh', authMiddleware, (req, res) => {
+  if (req.user.jti) _revokedTokens.set(req.user.jti, (req.user.exp || 0) * 1000);
+  const jti   = crypto.randomBytes(16).toString('hex');
+  const token = jwt.sign(
+    { id: req.user.id, username: req.user.username, role: req.user.role, jti },
+    JWT_SECRET,
+    { expiresIn: '4h' }
+  );
+  audit(req.user.username, 'POST', '/api/auth/refresh', null, 200, null);
+  res.json({ token });
 });
 
 app.post('/api/auth/change-password', authMiddleware, bodyParser, (req, res) => {

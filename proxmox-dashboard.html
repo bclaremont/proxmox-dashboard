@@ -1587,9 +1587,40 @@
 // and auth uses a PCC JWT instead of Proxmox tickets/tokens.
 // Falls back to direct mode transparently when no backend is detected.
 
-let PCC_BACKEND = false;
-let PCC_TOKEN   = sessionStorage.getItem('pcc-token') || null;
-let PCC_USER    = null;   // { username, role }
+let PCC_BACKEND      = false;
+let PCC_TOKEN        = sessionStorage.getItem('pcc-token') || null;
+let PCC_USER         = null;
+let _pccRefreshTimer = null;
+
+// Parse JWT expiry without a library (public payload, no sig check needed here)
+function _jwtExp(token) {
+  try { return JSON.parse(atob(token.split('.')[1])).exp * 1000; } catch { return null; }
+}
+
+// Schedule a token refresh 10 minutes before the 4h JWT expires
+function _schedulePCCRefresh(token) {
+  if (_pccRefreshTimer) clearTimeout(_pccRefreshTimer);
+  const exp   = _jwtExp(token);
+  if (!exp) return;
+  const delay = exp - Date.now() - 10 * 60 * 1000; // 10 min before expiry
+  if (delay <= 0) return;
+  _pccRefreshTimer = setTimeout(_doTokenRefresh, delay);
+}
+
+async function _doTokenRefresh() {
+  if (!PCC_BACKEND || !PCC_TOKEN) return;
+  try {
+    const r = await fetch('/api/auth/refresh', {
+      method: 'POST',
+      headers: { Authorization: 'Bearer ' + PCC_TOKEN }
+    });
+    if (!r.ok) { pccLogout(); return; } // expired or revoked
+    const d  = await r.json();
+    PCC_TOKEN = d.token;
+    sessionStorage.setItem('pcc-token', PCC_TOKEN);
+    _schedulePCCRefresh(PCC_TOKEN); // schedule next refresh
+  } catch { /* network error — will retry next scheduled tick */ }
+}
 
 const PCC_SHARED_KEYS = new Set([
   'pve-affinity-rules','pve-drs-settings','pve-host-profiles',
@@ -1645,6 +1676,7 @@ async function pccLogin() {
     PCC_TOKEN = d.token;
     PCC_USER  = { username: d.username, role: d.role };
     sessionStorage.setItem('pcc-token', PCC_TOKEN);
+    _schedulePCCRefresh(PCC_TOKEN);
     pccHideLogin();
     await pccPostLogin();
   } catch(e) {
@@ -1656,6 +1688,7 @@ async function pccLogin() {
 
 async function pccLogout() {
   try { await fetch('/api/auth/logout', { method: 'POST', headers: { Authorization: 'Bearer ' + PCC_TOKEN } }); } catch {}
+  if (_pccRefreshTimer) { clearTimeout(_pccRefreshTimer); _pccRefreshTimer = null; }
   PCC_TOKEN = null; PCC_USER = null;
   sessionStorage.removeItem('pcc-token');
   // clear all cluster connections
@@ -1771,6 +1804,7 @@ async function pccInit() {
 
   const valid = await pccVerifySession();
   if (valid) {
+    _schedulePCCRefresh(PCC_TOKEN); // start auto-refresh for restored session
     await pccPostLogin();
   } else {
     PCC_TOKEN = null;

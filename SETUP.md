@@ -461,6 +461,51 @@ For offsite backup, copy `pcc.db` anywhere — it's a single self-contained file
 
 ---
 
+## Security reference
+
+PCC includes several layers of protection out of the box. This section summarises what is built in so you know what is and isn't covered.
+
+### Authentication
+
+| Feature | Detail |
+|---|---|
+| **Password hashing** | bcrypt (cost factor 10) — passwords are never stored in plaintext |
+| **Session tokens** | JWT, 4-hour expiry, unique JTI per token |
+| **Token revocation** | Logout invalidates the token server-side immediately |
+| **Auto-refresh** | Tokens are automatically refreshed 10 minutes before expiry — no mid-session logouts |
+| **Login rate limiting** | 10 attempts per IP per 15-minute window → 429 Too Many Requests |
+| **Account lockout** | 10 consecutive failures locks the account for 30 minutes, regardless of source IP |
+| **Audit log** | Every login attempt (success, failure, rate-limit, lockout) is logged with source IP |
+
+### Data protection
+
+| Feature | Detail |
+|---|---|
+| **Proxmox API tokens** | Encrypted at rest using AES-256-GCM with a key derived from `JWT_SECRET` |
+| **No CDN requests** | All JS libraries (Chart.js, Leaflet, noVNC, qrcodejs) are self-hosted — no external requests on page load |
+| **Map tiles** | EU-hosted (FOSSGIS e.V., Germany) with a consent gate — tiles only load after explicit user action |
+| **`X-Powered-By`** | Removed — Express does not advertise itself in response headers |
+
+### Network / server
+
+| Feature | Detail |
+|---|---|
+| **HTTPS** | Standalone mode: Let's Encrypt with automatic renewal. Direct mode: HTTP only (see note below) |
+| **Security headers** | `X-Frame-Options`, `X-Content-Type-Options`, `Referrer-Policy`, `X-XSS-Protection`, `Permissions-Policy` on all responses |
+| **HSTS** | Enabled in standalone mode (HTTPS). Not applicable in direct mode (HTTP) |
+| **Firewall** | UFW configured in Step 2 — only ports 22/80/443/51820 open |
+| **fail2ban** | SSH brute-force protection configured in Step 2 |
+| **AppArmor** | Enabled in Step 2 — nginx profile enforced |
+| **System user** | PCC backend runs as `pcc` system user (no shell, no login) |
+
+### What is NOT covered (and why)
+
+- **Content Security Policy** — PCC uses inline `<script>` blocks throughout the single-file HTML. A meaningful CSP would require a large refactor and is not yet implemented.
+- **JWT revocation across restarts** — the revocation blacklist is in-memory. A server restart clears it. Acceptable because tokens expire in 4h anyway.
+- **Direct mode HTTPS** — adding TLS to the direct mode nginx requires a certificate. Add one (self-signed or Let's Encrypt) if you need HTTPS on port 8080.
+
+---
+
 ## Troubleshooting
 
 | Symptom | Check |
