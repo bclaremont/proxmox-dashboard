@@ -1874,14 +1874,16 @@ async function _renderPCCAdminTab() {
     el.innerHTML = `<div class="table-wrap"><table>
       <thead><tr><th>Time</th><th>User</th><th>Event</th><th>Path</th><th>Status</th><th>Detail</th></tr></thead>
       <tbody>${rows.map(row => {
-        const isFail    = row.status === 401 || row.status === 429;
-        const isBlock   = row.status === 429;
+        const isFail    = row.status === 401 || row.status === 429 || row.status === 423;
+        const isBlock   = row.status === 429 || row.status === 423;
         const isLogin   = row.path === '/api/auth/login';
         const rowStyle  = isFail ? `background:rgba(248,81,73,.05)` : '';
         const leftBar   = isFail ? `box-shadow:inset 3px 0 0 ${isBlock?'var(--yellow)':'var(--red)'}` : '';
         const detail    = row.detail ? (() => { try { const d=JSON.parse(row.detail); return d.ip?`IP: ${escHtml(d.ip)}`:(d.reason?escHtml(d.reason):''); } catch { return ''; } })() : '';
         const eventLabel = isLogin && isFail
           ? `<span style="color:${isBlock?'var(--yellow)':'var(--red)'};font-size:11px;font-weight:600">${isBlock?'⊘ BLOCKED':'✕ FAIL'} login</span>`
+          : row.status === 423
+          ? `<span style="color:var(--yellow);font-size:11px;font-weight:600">🔒 LOCKED</span>`
           : isLogin
           ? `<span style="color:var(--green);font-size:11px;font-weight:600">✓ login</span>`
           : `<span style="font-family:monospace;font-size:11px;color:${

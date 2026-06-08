@@ -168,6 +168,7 @@ function sanitiseBody(body) {
 // ── APP ───────────────────────────────────────────────────
 
 const app = express();
+app.disable('x-powered-by'); // don't reveal Express in response headers
 
 // Body parsers applied only to non-proxy routes so the proxy can stream raw bodies
 const parseJson = express.json();
@@ -178,9 +179,12 @@ function bodyParser(req, res, next) { parseJson(req, res, () => parseForm(req, r
 // In-memory per-IP counter. Allows 10 attempts per 15-minute window.
 // No external dependency — resets on server restart (acceptable for our threat model).
 
-const _loginAttempts = new Map(); // ip → { count, resetAt }
-const LOGIN_MAX      = 10;
-const LOGIN_WINDOW   = 15 * 60 * 1000; // 15 minutes
+const _loginAttempts  = new Map(); // ip      → { count, resetAt }
+const _accountLockout = new Map(); // username → lockedUntil (ms)
+const LOGIN_MAX       = 10;
+const LOGIN_WINDOW    = 15 * 60 * 1000; // 15 minutes per IP
+const LOCKOUT_THRESH  = 10;             // consecutive failures before account lock
+const LOCKOUT_WINDOW  = 30 * 60 * 1000; // lock duration: 30 minutes
 
 function loginRateLimit(req, res, next) {
   const ip  = req.headers['x-forwarded-for']?.split(',')[0].trim() || req.socket.remoteAddress || 'unknown';
@@ -219,19 +223,39 @@ app.get('/api/health', (req, res) => res.json({ ok: true, version: '1.0.0' }));
 
 app.post('/api/auth/login', loginRateLimit, bodyParser, (req, res) => {
   const { username, password } = req.body || {};
-  const ip = req.headers['x-forwarded-for']?.split(',')[0].trim() || req.socket.remoteAddress || 'unknown';
+  const ip  = req.headers['x-forwarded-for']?.split(',')[0].trim() || req.socket.remoteAddress || 'unknown';
+  const now = Date.now();
 
   if (!username || !password) return res.status(400).json({ error: 'username and password required' });
 
+  // Check account lockout (per-username, complements IP rate limit)
+  const lockedUntil = _accountLockout.get(username);
+  if (lockedUntil && now < lockedUntil) {
+    const retryMins = Math.ceil((lockedUntil - now) / 60000);
+    audit(username, 'POST', '/api/auth/login', null, 423, { ip, reason: 'account locked', retryMins });
+    return res.status(423).json({ error: `Account temporarily locked — try again in ${retryMins} minute(s)` });
+  }
+
   const user = db.prepare('SELECT * FROM users WHERE username = ?').get(username);
   if (!user || !bcrypt.compareSync(password, user.password_hash)) {
-    // Log failed attempt with IP — visible in audit log for monitoring
-    audit(username || '__unknown__', 'POST', '/api/auth/login', null, 401, { ip, reason: 'invalid credentials' });
+    // Track per-account failures for lockout
+    const failKey  = `fail:${username}`;
+    const failures = (_loginAttempts.get(failKey) || 0) + 1;
+    _loginAttempts.set(failKey, failures);
+    if (failures >= LOCKOUT_THRESH) {
+      _accountLockout.set(username, now + LOCKOUT_WINDOW);
+      _loginAttempts.delete(failKey);
+      audit(username, 'POST', '/api/auth/login', null, 423, { ip, reason: 'account locked after repeated failures' });
+      return res.status(423).json({ error: `Too many failed attempts — account locked for 30 minutes` });
+    }
+    audit(username || '__unknown__', 'POST', '/api/auth/login', null, 401, { ip, reason: 'invalid credentials', failCount: failures });
     return res.status(401).json({ error: 'Invalid credentials' });
   }
 
-  // Successful login — reset rate limit counter for this IP
+  // Successful login — clear all failure counters for this user and IP
+  _loginAttempts.delete(`fail:${username}`);
   _loginAttempts.delete(ip);
+  _accountLockout.delete(username);
 
   db.prepare('UPDATE users SET last_login = unixepoch() WHERE id = ?').run(user.id);
   const token = jwt.sign(
