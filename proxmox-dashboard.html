@@ -4264,10 +4264,11 @@ function openMigrateModal(node, vmid, type, connId='') {
 
 // Build storage <option> list for a given target node
 // Uses GET /api2/json/nodes/{node}/storage — already cached in PVE.storage
-function buildStorageOpts(targetNode) {
-  const pools = PVE.storage.filter(s => {
+function buildStorageOpts(targetNode, connId='') {
+  const conn  = connId ? resolveConn(connId) : null;
+  const store = conn ? (conn.storage||[]) : PVE.storage;
+  const pools = store.filter(s => {
     if (targetNode && s.node !== targetNode) return false;
-    // Only show pools that can hold disk images or rootdirs
     const ct = s.content || '';
     return ct.includes('images') || ct.includes('rootdir') || !ct;
   });
@@ -4279,8 +4280,7 @@ function buildStorageOpts(targetNode) {
       opts += `<option value="${s.storage}">${s.storage} [${s.type||'?'}]${used}</option>`;
     });
   } else {
-    // Fallback: show all storage if we can't filter by node
-    const all = [...new Set(PVE.storage.map(s => s.storage))];
+    const all = [...new Set(store.map(s => s.storage))];
     all.forEach(name => { opts += `<option value="${name}">${name}</option>`; });
   }
   return opts;
@@ -7446,16 +7446,28 @@ function openCreateCTWizard() {
 
 function openCreateVMModal() { openCreateVMWizard(); }
 
-function wizConnChanged() {
+async function wizConnChanged() {
   const connId = (document.getElementById('wiz-conn')||{}).value || '';
   const conn = resolveConn(connId);
   wiz.d.connId = connId;
   wiz.isoLoaded = false; wiz.tmplLoaded = false;
   const nodeList = conn ? (conn.nodes||[]) : PVE.nodes;
   wiz.d.node = nodeList[0] ? nodeList[0].node : '';
+
+  // Fetch storage for remote connections if not yet cached
+  if (conn && (!conn.storage || !conn.storage.length)) {
+    try {
+      const all = [];
+      await Promise.all(nodeList.map(async n => {
+        const d = await connGet(conn, `/api2/json/nodes/${n.node}/storage`).catch(() => ({data:[]}));
+        (d.data||[]).forEach(s => all.push({...s, node: n.node}));
+      }));
+      conn.storage = all;
+    } catch {}
+  }
+
   const storList = conn ? (conn.storage||[]) : PVE.storage;
   wiz.d.storage = (storList.find(s=>(s.content||'').includes('images'))||{}).storage || 'local-lvm';
-  // Re-render just the node dropdown
   const nodeEl = document.getElementById('wiz-node');
   if (nodeEl) nodeEl.innerHTML = nodeList.map(n=>`<option value="${n.node}">${n.node}</option>`).join('');
 }
@@ -7515,7 +7527,7 @@ function wizNext() {
 
 function wizBack() { wizSave(); wiz.step--; wizRender(); }
 
-function wizRender() {
+async function wizRender() {
   const labels = wiz.type==='vm' ? WIZ_LABELS_VM : WIZ_LABELS_CT;
   document.getElementById('wiz-steps').innerHTML = labels.map((lbl,i) => {
     const n=i+1, cls=n===wiz.step?'active':n<wiz.step?'done':'';
@@ -7592,6 +7604,20 @@ function wizRender() {
   } else if (wiz.step===4) {
     const node = d.node || (PVE.nodes[0]&&PVE.nodes[0].node);
     const wizConn4 = resolveConn(d.connId);
+
+    // Fetch storage fresh for remote connections if not cached
+    if (wizConn4 && (!wizConn4.storage || !wizConn4.storage.length)) {
+      try {
+        const nodeList4 = wizConn4.nodes||[];
+        const all = [];
+        await Promise.all(nodeList4.map(async n => {
+          const dr = await connGet(wizConn4, `/api2/json/nodes/${n.node}/storage`).catch(() => ({data:[]}));
+          (dr.data||[]).forEach(s => all.push({...s, node: n.node}));
+        }));
+        wizConn4.storage = all;
+      } catch {}
+    }
+
     const storList4 = wizConn4 ? (wizConn4.storage||[]) : PVE.storage;
     const storOpts = storList4
       .filter(s=>(!node||s.node===node)&&((s.content||'').includes('images')||(s.content||'').includes('rootdir')))
