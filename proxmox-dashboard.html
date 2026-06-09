@@ -4971,7 +4971,9 @@ async function applyNetworkChanges() {
 }
 
 function cidrFromMask(mask) {
-  // Convert netmask like 255.255.255.0 to CIDR prefix /24
+  // Proxmox sometimes returns netmask already as a CIDR number (e.g. "24")
+  if (/^\d+$/.test(mask)) return parseInt(mask);
+  // Otherwise convert dotted-decimal (e.g. 255.255.255.0) to CIDR prefix /24
   return mask.split('.').reduce((a,o)=>a+(parseInt(o).toString(2).match(/1/g)||[]).length,0);
 }
 
