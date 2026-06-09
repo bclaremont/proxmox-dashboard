@@ -851,7 +851,10 @@
     <div id="view-subscriptions" style="display:none">
       <div class="section-header">
         <span class="section-title">Subscription Management</span>
-        <button class="btn small" onclick="loadSubscriptions()">Refresh</button>
+        <div style="display:flex;gap:6px;align-items:center">
+          <select class="conn-sel" id="subs-conn" style="width:140px;padding:5px 8px;font-size:13px" onchange="loadSubscriptions()"><option value="">Primary</option></select>
+          <button class="btn small" onclick="loadSubscriptions()">Refresh</button>
+        </div>
       </div>
       <div id="subscriptions-content"><div class="empty">Loading…</div></div>
     </div>
@@ -1420,6 +1423,7 @@
       <div class="section-header">
         <span class="section-title">Package Updates</span>
         <div style="display:flex;gap:6px;align-items:center">
+          <select class="conn-sel" id="updates-conn" style="width:140px;padding:5px 8px;font-size:13px" onchange="loadUpdates()"><option value="">Primary</option></select>
           <select id="updates-node-filter" style="width:140px;padding:5px 8px;font-size:13px" onchange="renderUpdates()">
             <option value="">All Nodes</option>
           </select>
@@ -14366,12 +14370,17 @@ async function loadUpdates() {
   const el = document.getElementById('updates-content');
   el.innerHTML = '<div class="empty"><span class="loading"></span> Loading available updates…</div>';
 
-  const nf = document.getElementById('updates-node-filter');
-  if (nf) nf.innerHTML = '<option value="">All Nodes</option>' + PVE.nodes.map(n=>`<option value="${n.node}">${n.node}</option>`).join('');
+  const conn  = getViewConn('updates-conn');
+  const get   = conn ? (p=>connGet(conn,p)) : pveGet;
+  const nodes = conn ? (conn.nodes||[]) : PVE.nodes;
 
+  const nf = document.getElementById('updates-node-filter');
+  if (nf) nf.innerHTML = '<option value="">All Nodes</option>' + nodes.map(n=>`<option value="${n.node}">${n.node}</option>`).join('');
+
+  rawUpdates = {};
   try {
-    await Promise.all(PVE.nodes.map(async n => {
-      const d = await pveGet(`/api2/json/nodes/${n.node}/apt/update`).catch(()=>({data:[]}));
+    await Promise.all(nodes.map(async n => {
+      const d = await get(`/api2/json/nodes/${n.node}/apt/update`).catch(()=>({data:[]}));
       rawUpdates[n.node] = d.data || [];
     }));
     const total = Object.values(rawUpdates).reduce((a,v)=>a+v.length, 0);
@@ -16641,9 +16650,26 @@ function renderPools() {
     return;
   }
 
-  // Pool cards
-  let html = stats + '<div class="node-grid">';
-  poolsData.forEach(p => {
+  // Pool cards — grouped by cluster when multi-cluster
+  let html = stats;
+  const clusterGroups = multi
+    ? [...new Map(poolsData.map(p => [p.connId, p.connName])).entries()]
+    : [['', 'Primary']];
+
+  const _POOL_COLOURS = ['var(--accent)','var(--blue)','var(--purple)','var(--teal)','var(--yellow)','var(--green)'];
+
+  clusterGroups.forEach(([connId, connName], gi) => {
+    const groupPools = multi ? poolsData.filter(p => p.connId === connId) : poolsData;
+    if (!groupPools.length) return;
+    const col = _POOL_COLOURS[gi % _POOL_COLOURS.length];
+    if (multi) html += `
+      <div style="border-left:4px solid ${col};background:var(--bg2);border-radius:var(--radius);padding:8px 14px;margin-bottom:10px;display:flex;align-items:center;gap:10px">
+        <div style="width:8px;height:8px;border-radius:50%;background:${col};flex-shrink:0"></div>
+        <span style="font-size:13px;font-weight:700;color:var(--text)">${escHtml(connName)}</span>
+        <span style="font-size:12px;color:var(--muted)">${groupPools.length} pool${groupPools.length!==1?'s':''}</span>
+      </div>`;
+    html += '<div class="node-grid" style="margin-bottom:20px">';
+    groupPools.forEach(p => {
     const vms  = (p.members||[]).filter(m=>m.type==='qemu');
     const cts  = (p.members||[]).filter(m=>m.type==='lxc');
     const stor = (p.members||[]).filter(m=>m.type==='storage');
@@ -16666,8 +16692,9 @@ function renderPools() {
         <button class="btn small danger" onclick="confirmDeletePool('${escHtml(p.poolid)}','${p.connId}')">Delete</button>
       </div>
     </div>`;
+    });
+    html += '</div>';
   });
-  html += '</div>';
 
   // Expanded pool detail
   if (activePool) {
@@ -17440,12 +17467,18 @@ async function loadSubscriptions() {
   el.innerHTML = '<div class="empty"><span class="loading"></span> Loading subscription status…</div>';
   subData = [];
 
-  await Promise.all(PVE.nodes.map(async n => {
-    const d = await pveGet(`/api2/json/nodes/${n.node}/subscription`).catch(()=>({data:{}}));
-    subData.push({ node:n.node, connId:'', connName:'Primary', data:d.data||{} });
+  const conn  = getViewConn('subs-conn');
+  const get   = conn ? (p=>connGet(conn,p)) : pveGet;
+  const nodes = conn ? (conn.nodes||[]) : PVE.nodes;
+  const cName = conn ? (conn.name||conn.host) : 'Primary';
+  const cId   = conn ? (extraConns.find(c=>c===conn)||{}).id||'' : '';
+
+  await Promise.all(nodes.map(async n => {
+    const d = await get(`/api2/json/nodes/${n.node}/subscription`).catch(()=>({data:{}}));
+    subData.push({ node:n.node, connId:cId, connName:cName, data:d.data||{} });
   }));
 
-  await Promise.all(extraConns.map(async conn => {
+  if (!conn) await Promise.all(extraConns.map(async conn => {
     await Promise.all((conn.nodes||[]).map(async n => {
       const d = await connGet(conn, `/api2/json/nodes/${n.node}/subscription`).catch(()=>({data:{}}));
       subData.push({ node:n.node, connId:conn.id, connName:conn.name||conn.host, data:d.data||{} });
