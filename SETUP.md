@@ -439,8 +439,28 @@ systemctl restart pcc
 ```
 
 ### Update PCC to latest version
+
+**Quick update — UI / dashboard changes only** (most updates)
+
+No service restart needed. Hard-refresh your browser (`Ctrl+Shift+R`) after running:
+
 ```bash
-# On the PCC VM
+# On the PCC Debian VM
+git clone https://github.com/bclaremont/proxmox-dashboard.git /tmp/pcc-update
+
+cp /tmp/pcc-update/proxmox-dashboard.html /opt/pcc/public/index.html
+cp /tmp/pcc-update/console.html           /opt/pcc/public/console.html
+cp -r /tmp/pcc-update/vendor              /opt/pcc/public/vendor
+
+rm -rf /tmp/pcc-update
+```
+
+**Full update — backend changes** (when server.js or package.json changed)
+
+A service restart is required when the Node.js backend is updated:
+
+```bash
+# On the PCC Debian VM
 git clone https://github.com/bclaremont/proxmox-dashboard.git /tmp/pcc-update
 
 cp /tmp/pcc-update/server/server.js       /opt/pcc/server.js
@@ -454,6 +474,8 @@ systemctl restart pcc
 
 rm -rf /tmp/pcc-update
 ```
+
+> **Not sure which to use?** Run the full update — it's safe to restart the service at any time.
 
 ### TLS certificate renewal
 Certbot renews automatically via a systemd timer. To force a renewal:
