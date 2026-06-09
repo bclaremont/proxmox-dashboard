@@ -4095,10 +4095,48 @@ function confirmAction(node,vmid,type,action,connId=''){
 }
 
 function openMigrateModal(node, vmid, type, connId='') {
+  // If called with no connId (e.g. sidebar button), find the first cluster with 2+ nodes
+  if (!connId && !node) {
+    const allConns = [
+      { id: '', name: 'Primary', nodes: PVE.nodes },
+      ...extraConns.map(c => ({ id: c.id, name: c.name||c.host, nodes: c.nodes||[] }))
+    ];
+    const eligible = allConns.filter(c => c.nodes.length >= 2);
+    if (!eligible.length) {
+      toast('Migration requires at least 2 nodes in a cluster — none of your connected clusters have multiple nodes', 'error');
+      return;
+    }
+    // If multiple eligible clusters, let user pick
+    if (eligible.length === 1) {
+      connId = eligible[0].id;
+    } else {
+      // Show cluster picker first
+      document.getElementById('modal-title').textContent = 'Migrate VM / Container';
+      const clusterOpts = eligible.map(c => `<option value="${c.id}">${escHtml(c.name)} (${c.nodes.length} nodes)</option>`).join('');
+      document.getElementById('modal-body').innerHTML = `
+        <div class="form-group">
+          <label>SELECT CLUSTER</label>
+          <select id="mig-cluster-pick">${clusterOpts}</select>
+        </div>
+        <div style="font-size:12px;color:var(--muted);margin-top:4px">Choose the cluster to migrate within, then click Next.</div>`;
+      const btn = document.getElementById('modal-confirm-btn');
+      btn.textContent = 'Next →'; btn.disabled = false;
+      btn.onclick = () => {
+        const picked = document.getElementById('mig-cluster-pick')?.value || '';
+        btn.onclick = confirmModal; btn.textContent = 'Confirm'; btn.disabled = false;
+        document.getElementById('modal-bg').classList.remove('open');
+        openMigrateModal(undefined, undefined, undefined, picked);
+      };
+      document.getElementById('modal-bg').classList.add('open');
+      return;
+    }
+  }
+
   const conn = resolveConn(connId);
   const nodeList = conn ? conn.nodes : PVE.nodes;
   if (nodeList.length < 2) {
-    toast('Migration requires at least 2 nodes in the cluster', 'error');
+    const clusterName = conn ? (conn.name||conn.host) : 'Primary';
+    toast(`Migration requires at least 2 nodes — "${clusterName}" only has ${nodeList.length} node. Add more nodes to this cluster to enable migration.`, 'error');
     return;
   }
 
@@ -4112,9 +4150,11 @@ function openMigrateModal(node, vmid, type, connId='') {
   const initialTarget = nodeList.find(n => n.node !== node);
   const initialTgtNode = initialTarget ? initialTarget.node : '';
   const storageOpts = buildStorageOpts(initialTgtNode);
+  const connLabel = conn ? (conn.name||conn.host) : 'Primary';
 
   document.getElementById('modal-title').textContent = 'Migrate VM / Container';
   document.getElementById('modal-body').innerHTML = `
+    ${conn ? `<div style="font-size:12px;color:var(--blue);margin-bottom:12px;font-weight:600">Cluster: ${escHtml(connLabel)}</div>` : ''}
     <div class="form-group">
       <label>VM / CT ID</label>
       <input id="mig-vmid" value="${vmid || ''}" placeholder="e.g. 100"/>
