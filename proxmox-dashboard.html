@@ -4265,33 +4265,35 @@ function migTypeChanged() {
   if (vmOpts) vmOpts.style.display = mt === 'vm' ? '' : 'none';
 }
 
-function openBulkModal(){
-  const all     = allVMs().concat(allCTs());
-  const running = all.filter(x=>x.status==='running');
-  const stopped = all.filter(x=>x.status==='stopped');
-  const nodes   = [...new Set(all.map(x=>x.node))];
-  const nodeOpts= nodes.map(n=>`<option value="${n}">${n}</option>`).join('');
+function openBulkModal() {
+  const clusterOpts = [
+    `<option value="">Primary</option>`,
+    ...extraConns.map(c => `<option value="${c.id}">${escHtml(c.name||c.host)}</option>`)
+  ].join('');
 
-  document.getElementById('modal-title').textContent='Bulk Action';
-  document.getElementById('modal-body').innerHTML=`
+  document.getElementById('modal-title').textContent = 'Bulk Action';
+  document.getElementById('modal-body').innerHTML = `
+    <div class="create-vm-grid" style="margin-bottom:4px">
+      <div class="form-group"><label>CLUSTER</label>
+        <select id="bulk-cluster" onchange="_bulkClusterChanged()">${clusterOpts}</select>
+      </div>
+      <div class="form-group"><label>NODE</label>
+        <select id="bulk-node" onchange="_bulkRefreshCounts()">
+          <option value="_all">All nodes</option>
+        </select>
+      </div>
+    </div>
     <div class="form-group"><label>ACTION</label>
-      <select id="bulk-action" onchange="bulkActionChanged()">
-        <option value="shutdown">Shutdown all running (${running.length})</option>
-        <option value="start">Start all stopped (${stopped.length})</option>
-        <option value="stop">Force stop all running (${running.length})</option>
+      <select id="bulk-action" onchange="_bulkActionChanged()">
+        <option value="shutdown">Shutdown running VMs/CTs</option>
+        <option value="start">Start stopped VMs/CTs</option>
+        <option value="stop">Force stop running VMs/CTs</option>
         <option value="migrate">Migrate — move all VMs/CTs to another node</option>
       </select>
     </div>
     <div id="bulk-migrate-opts" style="display:none">
-      <div class="form-row">
-        <div class="form-group">
-          <label>SOURCE NODE (migrate from)</label>
-          <select id="bulk-mig-src">${nodeOpts}</select>
-        </div>
-        <div class="form-group">
-          <label>TARGET NODE (migrate to)</label>
-          <select id="bulk-mig-tgt">${nodeOpts}</select>
-        </div>
+      <div class="form-group"><label>TARGET NODE</label>
+        <select id="bulk-mig-tgt"></select>
       </div>
       <div class="form-group">
         <label><input type="checkbox" id="bulk-mig-online" checked style="width:auto;height:auto;padding:0;margin-right:6px"> Online migration (keep VMs running)</label>
@@ -4300,42 +4302,97 @@ function openBulkModal(){
         <label><input type="checkbox" id="bulk-mig-local" checked style="width:auto;height:auto;padding:0;margin-right:6px"> With local disks</label>
       </div>
     </div>
-    <p style="color:var(--red);font-size:12px;margin-top:8px" id="bulk-warning">⚠ Affects ALL matching VMs and containers across all nodes.</p>`;
+    <div id="bulk-count-info" style="background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius);padding:8px 12px;font-size:12px;margin-top:4px"></div>
+    <p style="color:var(--red);font-size:12px;margin-top:8px" id="bulk-warning"></p>`;
+
+  _bulkClusterChanged();
 
   modalCallback = async () => {
-    const action = document.getElementById('bulk-action').value;
-    if (action==='migrate') {
-      const src    = document.getElementById('bulk-mig-src').value;
-      const tgt    = document.getElementById('bulk-mig-tgt').value;
-      const online = document.getElementById('bulk-mig-online').checked;
-      const local  = document.getElementById('bulk-mig-local').checked;
-      if (src===tgt) return toast('Source and target nodes must be different','error');
-      const targets = all.filter(x=>x.node===src);
-      if (!targets.length) return toast(`No VMs or CTs on node ${src}`,'error');
-      toast(`Starting migration of ${targets.length} guest(s) from ${src} → ${tgt}…`,'info');
+    const action  = document.getElementById('bulk-action').value;
+    const targets = _bulkGetTargets(action);
+    if (!targets.length) return toast('No matching VMs/CTs for this selection', 'error');
+    if (action === 'migrate') {
+      const tgt    = document.getElementById('bulk-mig-tgt')?.value;
+      const online = document.getElementById('bulk-mig-online')?.checked;
+      const local  = document.getElementById('bulk-mig-local')?.checked;
+      if (!tgt) return toast('Select a target node', 'error');
+      const badSrc = targets.filter(x => x.node === tgt);
+      if (badSrc.length) return toast(`${badSrc.length} VM(s) already on ${tgt} — change source node filter`, 'error');
+      toast(`Migrating ${targets.length} guest(s) → ${tgt}…`, 'info');
       for (const x of targets) {
-        await migrateVM(src, x.vmid, x.type, tgt, online, local, '_keep', x.connId||'');
-        await new Promise(r=>setTimeout(r,500));
+        await migrateVM(x.node, x.vmid, x.type, tgt, online, local, '_keep', x.connId||'');
+        await new Promise(r => setTimeout(r, 500));
       }
     } else {
-      const targets = action==='start' ? stopped : running;
+      toast(`Running ${action} on ${targets.length} guest(s)…`, 'info');
       for (const x of targets) {
         await vmAction(x.node, x.vmid, x.type, action, x.connId||'');
-        await new Promise(r=>setTimeout(r,300));
+        await new Promise(r => setTimeout(r, 300));
       }
     }
   };
   document.getElementById('modal-bg').classList.add('open');
 }
 
-function bulkActionChanged() {
-  const action = document.getElementById('bulk-action').value;
+function _bulkGetVMs() {
+  const connId = document.getElementById('bulk-cluster')?.value || '';
+  const node   = document.getElementById('bulk-node')?.value   || '_all';
+  const conn   = resolveConn(connId);
+  const pool   = conn ? (conn.vms||[]).concat(conn.containers||[]) : PVE.vms.concat(PVE.containers);
+  return node === '_all' ? pool : pool.filter(x => x.node === node);
+}
+
+function _bulkGetTargets(action) {
+  const all = _bulkGetVMs();
+  if (action === 'start')    return all.filter(x => x.status !== 'running');
+  if (action === 'migrate')  return all; // all VMs on source node(s)
+  return all.filter(x => x.status === 'running'); // shutdown / stop
+}
+
+function _bulkClusterChanged() {
+  const connId = document.getElementById('bulk-cluster')?.value || '';
+  const conn   = resolveConn(connId);
+  const nodes  = conn ? (conn.nodes||[]) : PVE.nodes;
+  const nodeEl = document.getElementById('bulk-node');
+  if (nodeEl) {
+    nodeEl.innerHTML = `<option value="_all">All nodes</option>` +
+      nodes.map(n => `<option value="${n.node}">${n.node}</option>`).join('');
+  }
+  _bulkActionChanged();
+}
+
+function _bulkActionChanged() {
+  const action   = document.getElementById('bulk-action')?.value;
   const migrOpts = document.getElementById('bulk-migrate-opts');
-  const warning  = document.getElementById('bulk-warning');
-  if (migrOpts) migrOpts.style.display = action==='migrate' ? '' : 'none';
-  if (warning) warning.textContent = action==='migrate'
-    ? '⚠ Migrates ALL VMs and containers on the source node. Ensure the target has enough resources.'
-    : '⚠ Affects ALL matching VMs and containers across all nodes.';
+  if (migrOpts) migrOpts.style.display = action === 'migrate' ? '' : 'none';
+  if (action === 'migrate') {
+    // Populate target node dropdown with nodes in the selected cluster (excluding selected source node)
+    const connId = document.getElementById('bulk-cluster')?.value || '';
+    const conn   = resolveConn(connId);
+    const nodes  = conn ? (conn.nodes||[]) : PVE.nodes;
+    const tgtEl  = document.getElementById('bulk-mig-tgt');
+    if (tgtEl) tgtEl.innerHTML = nodes.map(n => `<option value="${n.node}">${n.node}</option>`).join('');
+  }
+  _bulkRefreshCounts();
+}
+
+function _bulkRefreshCounts() {
+  const action  = document.getElementById('bulk-action')?.value || 'shutdown';
+  const targets = _bulkGetTargets(action);
+  const all     = _bulkGetVMs();
+  const running = all.filter(x => x.status === 'running').length;
+  const stopped = all.filter(x => x.status !== 'running').length;
+  const connId  = document.getElementById('bulk-cluster')?.value || '';
+  const node    = document.getElementById('bulk-node')?.value || '_all';
+  const conn    = resolveConn(connId);
+  const scope   = `${conn ? (conn.name||conn.host) : 'Primary'}${node !== '_all' ? ' › ' + node : ''}`;
+  const infoEl  = document.getElementById('bulk-count-info');
+  const warnEl  = document.getElementById('bulk-warning');
+  if (infoEl) infoEl.innerHTML = `<strong style="color:var(--text)">${scope}</strong> &nbsp;·&nbsp; ${running} running &nbsp;·&nbsp; ${stopped} stopped &nbsp;·&nbsp; ${all.length} total`;
+  if (warnEl) warnEl.textContent = targets.length
+    ? `⚠ Will affect ${targets.length} VM/CT${targets.length!==1?'s':''}.`
+    : '✓ No matching VMs/CTs for this selection.';
+  if (warnEl) warnEl.style.color = targets.length ? 'var(--red)' : 'var(--green)';
 }
 
 function confirmModal(){
