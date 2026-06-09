@@ -7590,11 +7590,18 @@ async function wizLoadISOs() {
     try {
       const all = [];
       const isoConn = resolveConn(wiz.d.connId);
-      const isoGet = isoConn ? (p=>connGet(isoConn,p)) : pveGet;
+      const isoGet  = isoConn ? (p=>connGet(isoConn,p)) : pveGet;
       const isoNodes = isoConn ? (isoConn.nodes||[]) : PVE.nodes;
-      const isoStorage = isoConn ? (isoConn.storage||[]) : PVE.storage;
+
       await Promise.all(isoNodes.map(async n => {
-        const stores = isoStorage.filter(s => s.node===n.node && (s.content||'').includes('iso'));
+        let stores;
+        if (isoConn) {
+          // Remote connection: fetch storage fresh — conn.storage may not be cached yet
+          const sr = await isoGet(`/api2/json/nodes/${n.node}/storage`).catch(()=>({data:[]}));
+          stores = (sr.data||[]).filter(s => (s.content||'').includes('iso'));
+        } else {
+          stores = (PVE.storage||[]).filter(s => s.node===n.node && (s.content||'').includes('iso'));
+        }
         await Promise.all(stores.map(async s => {
           const d = await isoGet(`/api2/json/nodes/${n.node}/storage/${s.storage}/content?content=iso`).catch(()=>({data:[]}));
           (d.data||[]).forEach(item => all.push({ volid:item.volid, node:n.node, storage:s.storage, name:(item.volid||'').split('/').pop(), size:item.size||0 }));
