@@ -3768,25 +3768,52 @@ function _toggleCTGroup() {
 // Group sorted VM/CT items by cluster → node, returning interleaved header+row HTML
 function _renderGrouped(items, rowFn, colSpan) {
   if (!items.length) return '';
-  const multiCluster = new Set(items.map(x => x.connId||'')).size > 1 || extraConns.length > 0;
-  const groups = [];
-  const seen = new Map();
+  const multiCluster = extraConns.length > 0;
+  const _GRP_COLOURS = ['var(--accent)','var(--blue)','var(--purple)','var(--teal)','var(--yellow)','var(--green)'];
+
+  // Build cluster → nodes → items hierarchy
+  const clusterOrder = [];
+  const clusterMap   = new Map(); // connId → { label, colour, nodes: Map(node → items[]) }
   for (const x of items) {
-    const clusterLabel = x.connId ? getConnName(x.connId) : 'Primary';
-    const key = `${x.connId||''}||${x.node}`;
-    if (!seen.has(key)) { seen.set(key, true); groups.push({ key, cluster: clusterLabel, node: x.node, connId: x.connId||'' }); }
+    const cid   = x.connId || '';
+    const label = cid ? getConnName(cid) : 'Primary';
+    if (!clusterMap.has(cid)) {
+      const idx = clusterOrder.length;
+      clusterMap.set(cid, { label, colour: _GRP_COLOURS[idx % _GRP_COLOURS.length], nodes: new Map() });
+      clusterOrder.push(cid);
+    }
+    const cEntry = clusterMap.get(cid);
+    if (!cEntry.nodes.has(x.node)) cEntry.nodes.set(x.node, []);
+    cEntry.nodes.get(x.node).push(x);
   }
+
   let html = '';
-  for (const g of groups) {
-    const groupItems = items.filter(x => (x.connId||'') === g.connId && x.node === g.node);
-    const label = multiCluster ? `${g.cluster}  ›  ${g.node}` : g.node;
-    const running = groupItems.filter(x => x.status === 'running').length;
-    html += `<tr class="vm-group-row"><td colspan="${colSpan}">
-      ${label}
-      <span style="font-weight:400;color:var(--green);margin-left:10px">${running} running</span>
-      <span style="font-weight:400;color:var(--muted);margin-left:6px">/ ${groupItems.length} total</span>
-    </td></tr>`;
-    html += groupItems.map(x => rowFn(x)).join('');
+  for (const cid of clusterOrder) {
+    const { label, colour, nodes } = clusterMap.get(cid);
+    const clusterItems = [...nodes.values()].flat();
+    const clusterRunning = clusterItems.filter(x => x.status === 'running').length;
+
+    // Cluster header bar (only shown when multiple clusters)
+    if (multiCluster) {
+      html += `<tr><td colspan="${colSpan}" style="padding:0;border:none">
+        <div style="display:flex;align-items:center;gap:10px;background:var(--bg2);border-left:4px solid ${colour};border-radius:var(--radius);padding:7px 14px;margin:6px 0 2px">
+          <div style="width:8px;height:8px;border-radius:50%;background:${colour};flex-shrink:0"></div>
+          <strong style="font-size:13px;color:var(--text)">${escHtml(label)}</strong>
+          <span style="font-size:12px;color:var(--muted)">${clusterRunning} running / ${clusterItems.length} total</span>
+        </div>
+      </td></tr>`;
+    }
+
+    // Node sub-groups within this cluster
+    for (const [node, nodeItems] of nodes) {
+      const running = nodeItems.filter(x => x.status === 'running').length;
+      html += `<tr class="vm-group-row"><td colspan="${colSpan}">
+        ${multiCluster ? `<span style="color:${colour};margin-right:6px">›</span>` : ''}${escHtml(node)}
+        <span style="font-weight:400;color:var(--green);margin-left:10px">${running} running</span>
+        <span style="font-weight:400;color:var(--muted);margin-left:6px">/ ${nodeItems.length} total</span>
+      </td></tr>`;
+      html += nodeItems.map(x => rowFn(x)).join('');
+    }
   }
   return html;
 }
