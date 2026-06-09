@@ -3724,8 +3724,8 @@ function filterAll(){ _renderAllTableBody(); }
 
 let _vmStatusFilter = 'all';
 let _ctStatusFilter = 'all';
-let _vmGrouped = localStorage.getItem('pve-vm-group') === '1';
-let _ctGrouped = localStorage.getItem('pve-ct-group') === '1';
+let _vmGrouped = localStorage.getItem('pve-vm-group') !== '0'; // default ON
+let _ctGrouped = localStorage.getItem('pve-ct-group') !== '0'; // default ON
 
 function _toggleVMGroup() {
   _vmGrouped = !_vmGrouped;
