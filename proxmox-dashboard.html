@@ -1778,6 +1778,9 @@ async function pccAutoConnect() {
     nodeStatuses: [], vms: [], containers: [], storage: [], nodes: [], tasks: []
   }));
 
+  // Populate all .conn-sel dropdowns now that extraConns is set
+  populateConnSelectors();
+
   // Connect using the existing flow
   try {
     await loadNodes();
