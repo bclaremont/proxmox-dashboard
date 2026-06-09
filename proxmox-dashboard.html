@@ -3748,12 +3748,17 @@ function renderVMTable(){
     all .filter(x => !tagF || parseTags(x.tags||'').includes(tagF))
         .filter(x => _vmStatusFilter === 'all' || x.status === _vmStatusFilter),
     vmSort.col, vmSort.dir);
-  _updateSortIcons('#vms-content table', vmSort.col, vmSort.dir);
   if (vmViewMode==='cards') {
     const c = document.getElementById('vms-content');
     if (c) c.innerHTML = _renderVMCards(sorted);
     return;
   }
+  // Restore table structure if card view replaced it
+  if (!document.getElementById('vm-table-body')) {
+    const c = document.getElementById('vms-content');
+    if (c) c.innerHTML = `<div class="table-wrap"><table><thead><tr><th class="sortable" onclick="sortVMTable('vmid')">ID<span class="sort-icon">↕</span></th><th class="sortable" onclick="sortVMTable('name')">Name<span class="sort-icon">↕</span></th><th class="sortable" onclick="sortVMTable('node')">Node<span class="sort-icon">↕</span></th><th class="sortable" onclick="sortVMTable('status')">Status<span class="sort-icon">↕</span></th><th class="sortable" onclick="sortVMTable('cpu')">CPU<span class="sort-icon">↕</span></th><th class="sortable" onclick="sortVMTable('mem')">Memory<span class="sort-icon">↕</span></th><th>Disk</th><th class="sortable" onclick="sortVMTable('uptime')">Uptime<span class="sort-icon">↕</span></th><th>Tags</th><th>Actions</th></tr></thead><tbody id="vm-table-body"></tbody></table></div>`;
+  }
+  _updateSortIcons('#vms-content table', vmSort.col, vmSort.dir);
   document.getElementById('vm-table-body').innerHTML = sorted.length
     ? sorted.map(v=>vmRow(v)).join('')
     : `<tr><td colspan="9">${emptyState('<rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/>',
@@ -3771,12 +3776,17 @@ function renderCTTable(){
       .filter(x => !tagF || parseTags(x.tags||'').includes(tagF))
       .filter(x => _ctStatusFilter === 'all' || x.status === _ctStatusFilter),
     ctSort.col, ctSort.dir);
-  _updateSortIcons('#cts-content table', ctSort.col, ctSort.dir);
   if (ctViewMode==='cards') {
     const c = document.getElementById('cts-content');
     if (c) c.innerHTML = _renderVMCards(sorted);
     return;
   }
+  // Restore table structure if card view replaced it
+  if (!document.getElementById('ct-table-body')) {
+    const c = document.getElementById('cts-content');
+    if (c) c.innerHTML = `<div class="table-wrap"><table><thead><tr><th class="sortable" onclick="sortCTTable('vmid')">ID<span class="sort-icon">↕</span></th><th class="sortable" onclick="sortCTTable('name')">Name<span class="sort-icon">↕</span></th><th class="sortable" onclick="sortCTTable('node')">Node<span class="sort-icon">↕</span></th><th class="sortable" onclick="sortCTTable('status')">Status<span class="sort-icon">↕</span></th><th class="sortable" onclick="sortCTTable('cpu')">CPU<span class="sort-icon">↕</span></th><th class="sortable" onclick="sortCTTable('mem')">Memory<span class="sort-icon">↕</span></th><th>Disk</th><th class="sortable" onclick="sortCTTable('uptime')">Uptime<span class="sort-icon">↕</span></th><th>Tags</th><th>Actions</th></tr></thead><tbody id="ct-table-body"></tbody></table></div>`;
+  }
+  _updateSortIcons('#cts-content table', ctSort.col, ctSort.dir);
   document.getElementById('ct-table-body').innerHTML = sorted.length
     ? sorted.map(c=>vmRow(c)).join('')
     : `<tr><td colspan="9" class="empty">No containers found</td></tr>`;
