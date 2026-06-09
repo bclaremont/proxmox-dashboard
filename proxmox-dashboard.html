@@ -960,8 +960,7 @@
 
     <!-- NODES -->
     <div id="view-nodes" style="display:none">
-      <div class="section-header"><span class="section-title">Cluster Nodes</span></div>
-      <div class="node-grid" id="node-cards"></div>
+      <div id="node-cards"></div>
     </div>
 
     <!-- TASKS -->
@@ -3971,25 +3970,36 @@ function renderNodes(){
     </div>`;
   };
 
+  const _CLUSTER_COLOURS = ['var(--accent)','var(--blue)','var(--purple)','var(--teal)','var(--yellow)','var(--green)'];
+
   if (!multiCluster) {
-    document.getElementById('node-cards').innerHTML = `<div class="node-grid">${nodes.map(_nodeCard).join('')}</div>`;
+    document.getElementById('node-cards').innerHTML =
+      `<div class="section-header"><span class="section-title">Nodes</span></div><div class="node-grid">${nodes.map(_nodeCard).join('')}</div>`;
     return;
   }
 
-  // Group by cluster with a section header per cluster
   const clusters = [
-    { label: 'Primary', connId: '', nodes: PVE.nodeStatuses },
+    { label: 'Primary', nodes: PVE.nodeStatuses },
     ...extraConns.filter(c => (c.nodeStatuses||[]).length)
-                 .map(c => ({ label: c.name || c.host, connId: c.id, nodes: c.nodeStatuses||[] }))
+                 .map(c => ({ label: c.name || c.host, nodes: c.nodeStatuses||[] }))
   ].filter(g => g.nodes.length);
 
-  document.getElementById('node-cards').innerHTML = clusters.map(g => `
-    <div class="section-header" style="margin-top:8px">
-      <span class="section-title">${escHtml(g.label)}</span>
-      <span style="font-size:12px;color:var(--muted)">${g.nodes.length} node${g.nodes.length!==1?'s':''}</span>
-    </div>
-    <div class="node-grid">${g.nodes.map(_nodeCard).join('')}</div>
-  `).join('');
+  document.getElementById('node-cards').innerHTML = clusters.map((g, i) => {
+    const col = _CLUSTER_COLOURS[i % _CLUSTER_COLOURS.length];
+    const running = g.nodes.reduce((a, n) => {
+      const vms = allVMs().concat(allCTs()).filter(x => x.node === n.node);
+      return a + vms.filter(x => x.status === 'running').length;
+    }, 0);
+    return `
+      <div style="border-left:4px solid ${col};background:var(--bg2);border-radius:var(--radius);padding:10px 16px;margin-bottom:8px;display:flex;align-items:center;gap:12px">
+        <div style="width:10px;height:10px;border-radius:50%;background:${col};flex-shrink:0"></div>
+        <div style="flex:1">
+          <span style="font-size:14px;font-weight:700;color:var(--text)">${escHtml(g.label)}</span>
+          <span style="font-size:12px;color:var(--muted);margin-left:10px">${g.nodes.length} node${g.nodes.length!==1?'s':''} · ${running} VM/CT running</span>
+        </div>
+      </div>
+      <div class="node-grid" style="margin-bottom:20px">${g.nodes.map(_nodeCard).join('')}</div>`;
+  }).join('');
 }
 
 function renderSidebarNodes(){
@@ -5402,6 +5412,8 @@ function renderHeatmap() {
     </div>`;
   };
 
+  const _HM_COLOURS = ['var(--accent)','var(--blue)','var(--purple)','var(--teal)','var(--yellow)','var(--green)'];
+
   const clusters = multiCluster
     ? [ { label:'Primary', nodes: PVE.nodeStatuses },
         ...extraConns.filter(c=>(c.nodeStatuses||[]).length).map(c=>({ label: c.name||c.host, nodes: c.nodeStatuses||[] })) ]
@@ -5409,12 +5421,17 @@ function renderHeatmap() {
     : [ { label: null, nodes } ];
 
   el.innerHTML = `
-    ${clusters.map(g => `
-      <div class="section-header" style="margin-top:4px">
-        <span class="section-title">${g.label ? escHtml(g.label) + ' — Node Resource Usage' : 'Node Resource Usage'}</span>
-      </div>
-      <div class="heatmap-grid">${g.nodes.map(_heatCard).join('')}</div>
-    `).join('')}
+    ${clusters.map((g, i) => {
+      const col = _HM_COLOURS[i % _HM_COLOURS.length];
+      const header = g.label
+        ? `<div style="border-left:4px solid ${col};background:var(--bg2);border-radius:var(--radius);padding:8px 14px;margin-bottom:10px;display:flex;align-items:center;gap:10px">
+             <div style="width:8px;height:8px;border-radius:50%;background:${col};flex-shrink:0"></div>
+             <span style="font-size:13px;font-weight:700;color:var(--text)">${escHtml(g.label)}</span>
+             <span style="font-size:12px;color:var(--muted)">— Node Resource Usage</span>
+           </div>`
+        : `<div class="section-header" style="margin-top:4px"><span class="section-title">Node Resource Usage</span></div>`;
+      return `${header}<div class="heatmap-grid" style="margin-bottom:20px">${g.nodes.map(_heatCard).join('')}</div>`;
+    }).join('')}
     <div class="section-header" style="margin-top:4px">
       <span class="section-title">Top Running VMs by CPU Load</span>
       <button class="btn small" onclick="switchView('vms')">All VMs →</button>
