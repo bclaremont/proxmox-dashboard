@@ -2508,9 +2508,32 @@ function _handleAuthError() {
   }
 }
 
+// In standalone mode a 401 could be a PCC JWT error OR Proxmox rejecting
+// the API token — they're both HTTP 401 but mean different things.
+// PCC backend errors have a specific {"error":"..."} format we can detect.
+async function _handle401(res) {
+  if (PCC_BACKEND) {
+    // Try to read the response body to distinguish PCC vs Proxmox 401
+    let body = {};
+    try { body = await res.clone().json(); } catch {}
+    const pccErrors = ['Not authenticated','Token expired','Session ended','Token revoked'];
+    const isPCCError = body.error && pccErrors.some(e => body.error.includes(e));
+    if (isPCCError) {
+      _handleAuthError();
+      throw new Error('Session expired — please reconnect');
+    }
+    // Proxmox API token rejected — show a useful error, not a fake session expiry
+    const detail = body.error || (body.errors ? Object.values(body.errors)[0] : null) || 'Permission denied';
+    throw new Error(`Proxmox API error: ${detail} — check your API token in PCC Admin → Clusters`);
+  }
+  // Direct mode: 401 always means PVE session expired
+  _handleAuthError();
+  throw new Error('Session expired — please reconnect');
+}
+
 async function pveGet(path) {
   const res = await fetch(PVE.host+path,{headers:pveHeaders()});
-  if (res.status === 401) { _handleAuthError(); throw new Error('Session expired — please reconnect'); }
+  if (res.status === 401) { await _handle401(res); }
   if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText}`);
   return res.json();
 }
@@ -2649,7 +2672,7 @@ async function pvePost(path,data={},noAuth=false) {
     : pveHeaders({'Content-Type':'application/x-www-form-urlencoded'});
   const body = Object.entries(data).map(([k,v])=>`${encodeURIComponent(k)}=${encodeURIComponent(v)}`).join('&');
   const res = await fetch(PVE.host+path,{method:'POST',headers,body});
-  if (res.status === 401 && !noAuth) { _handleAuthError(); throw new Error('Session expired — please reconnect'); }
+  if (res.status === 401 && !noAuth) { await _handle401(res); }
   if (!res.ok){const t=await res.text();throw new Error(`HTTP ${res.status}: ${t}`);}
   return res.json();
 }
