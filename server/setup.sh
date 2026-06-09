@@ -59,13 +59,14 @@ apt-get install -y -q nodejs nginx certbot python3-certbot-nginx wireguard build
 echo "--- [2/6] Setting up /opt/pcc ---"
 mkdir -p /opt/pcc/data /opt/pcc/public
 
-# Copy server files if running from source directory
+# Copy server files only when running from the repo (not already in /opt/pcc)
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-cp "$SCRIPT_DIR/server.js"    /opt/pcc/server.js
-cp "$SCRIPT_DIR/package.json" /opt/pcc/package.json
-[[ -f "$SCRIPT_DIR/public/index.html" ]] && cp "$SCRIPT_DIR/public/index.html" /opt/pcc/public/index.html
-# Vendor libraries — served locally so no external CDN requests (GDPR)
-[[ -d "$SCRIPT_DIR/public/vendor" ]] && cp -r "$SCRIPT_DIR/public/vendor" /opt/pcc/public/vendor
+if [[ "$SCRIPT_DIR" != "/opt/pcc" ]]; then
+  cp "$SCRIPT_DIR/server.js"    /opt/pcc/server.js
+  cp "$SCRIPT_DIR/package.json" /opt/pcc/package.json
+  [[ -f "$SCRIPT_DIR/public/index.html" ]] && cp "$SCRIPT_DIR/public/index.html" /opt/pcc/public/index.html
+  [[ -d "$SCRIPT_DIR/public/vendor"     ]] && cp -r "$SCRIPT_DIR/public/vendor"  /opt/pcc/public/vendor
+fi
 
 # npm install
 cd /opt/pcc
