@@ -1087,6 +1087,10 @@
             <option value="iso">ISO Images</option>
             <option value="vztmpl">CT Templates</option>
           </select>
+          <select id="isolib-conn" style="width:130px;padding:5px 8px;font-size:13px" onchange="loadISOLibrary()">
+            <option value="_all">All Clusters</option>
+            <option value="">Primary</option>
+          </select>
           <select id="isolib-node" style="width:120px;padding:5px 8px;font-size:13px" onchange="if(isoLib.loaded)renderISOLibrary()">
             <option value="">All Nodes</option>
           </select>
@@ -10905,13 +10909,13 @@ async function loadContentLibrary() {
   storageItems.forEach(i => {
     const type = i.contentType === 'iso' ? 'iso' : 'vztmpl';
     _clItems.push({
-      key:     _clKey('', i.node, type, i.volid),
+      key:     _clKey(i.connId||'', i.node, type, i.volid),
       type,
       name:    i.name,
       id:      i.volid,
       node:    i.node,
-      connId:  '',
-      cluster: 'Primary',
+      connId:  i.connId||'',
+      cluster: i.connId ? getConnName(i.connId) : 'Primary',
       size:    i.size || 0,
       tags:    [],
       volid:   i.volid,
@@ -10926,12 +10930,13 @@ async function loadContentLibrary() {
 async function _fetchStorageItems() {
   const items = [];
   try {
+    // Fetch from primary cluster
     await Promise.all(PVE.nodes.map(async n => {
       const storRes = await pveGet(`/api2/json/nodes/${n.node}/storage`).catch(() => ({ data: [] }));
       await Promise.all((storRes.data || []).map(async s => {
         const d = await pveGet(`/api2/json/nodes/${n.node}/storage/${s.storage}/content`).catch(() => ({ data: [] }));
         (d.data || []).filter(i => i.content === 'iso' || i.content === 'vztmpl').forEach(item => {
-          items.push({
+          items.push({ connId: '',
             volid: item.volid, node: n.node, storage: s.storage,
             contentType: item.content, name: (item.volid || '').split('/').pop(),
             size: item.size || 0, ctime: item.ctime || 0,
@@ -10939,6 +10944,23 @@ async function _fetchStorageItems() {
         });
       }));
     }));
+
+    // Fetch from extra connections (remote clusters)
+    for (const conn of extraConns) {
+      await Promise.all((conn.nodes||[]).map(async n => {
+        const storRes = await connGet(conn, `/api2/json/nodes/${n.node}/storage`).catch(() => ({ data: [] }));
+        await Promise.all((storRes.data || []).map(async s => {
+          const d = await connGet(conn, `/api2/json/nodes/${n.node}/storage/${s.storage}/content`).catch(() => ({ data: [] }));
+          (d.data || []).filter(i => i.content === 'iso' || i.content === 'vztmpl').forEach(item => {
+            items.push({ connId: conn.id,
+              volid: item.volid, node: n.node, storage: s.storage,
+              contentType: item.content, name: (item.volid || '').split('/').pop(),
+              size: item.size || 0, ctime: item.ctime || 0,
+            });
+          });
+        }));
+      }));
+    }
   } catch {}
   return items;
 }
@@ -11244,25 +11266,48 @@ async function loadISOLibrary() {
   const el = document.getElementById('isolib-content');
   el.innerHTML = '<div class="empty"><span class="loading"></span> Loading ISO images and CT templates…</div>';
   isoLib.items = []; isoLib.loaded = false;
+
+  // Populate cluster selector
+  const connSel = document.getElementById('isolib-conn');
+  if (connSel) {
+    const cur = connSel.value;
+    connSel.innerHTML = `<option value="_all">All Clusters</option><option value="">Primary</option>` +
+      extraConns.map(c=>`<option value="${c.id}"${c.id===cur?' selected':''}>${escHtml(c.name||c.host)}</option>`).join('');
+    if (cur) connSel.value = cur;
+  }
+
+  const selectedConn = connSel ? connSel.value : '_all';
+
+  // Build list of {node, get, connId} pairs to fetch from
+  const fetchList = [];
+  if (selectedConn === '_all' || selectedConn === '') {
+    PVE.nodes.forEach(n => fetchList.push({node:n.node, get:pveGet, connId:''}));
+  }
+  if (selectedConn === '_all') {
+    extraConns.forEach(c => (c.nodes||[]).forEach(n => fetchList.push({node:n.node, get:p=>connGet(c,p), connId:c.id})));
+  } else if (selectedConn !== '') {
+    const conn = resolveConn(selectedConn);
+    if (conn) (conn.nodes||[]).forEach(n => fetchList.push({node:n.node, get:p=>connGet(conn,p), connId:conn.id}));
+  }
+
+  // Update node filter dropdown
   const nf = document.getElementById('isolib-node');
-  if (nf) nf.innerHTML = '<option value="">All Nodes</option>'+PVE.nodes.map(n=>`<option value="${n.node}">${n.node}</option>`).join('');
+  if (nf) {
+    const nodeNames = [...new Set(fetchList.map(f=>f.node))];
+    nf.innerHTML = '<option value="">All Nodes</option>'+nodeNames.map(n=>`<option value="${n}">${n}</option>`).join('');
+  }
 
   const diagLines = [];
-  diagLines.push(`Nodes: ${PVE.nodes.map(n=>n.node).join(', ')||'NONE — not connected?'}`);
+  diagLines.push(`Fetching from: ${fetchList.map(f=>f.node).join(', ')||'NONE'}`);
 
   try {
-    await Promise.all(PVE.nodes.map(async n => {
-      const storRes = await pveGet(`/api2/json/nodes/${n.node}/storage`).catch(e=>{diagLines.push(`Storage list failed (${n.node}): ${e.message}`);return {data:[]};});
+    await Promise.all(fetchList.map(async ({node, get, connId}) => {
+      const storRes = await get(`/api2/json/nodes/${node}/storage`).catch(e=>{diagLines.push(`Storage failed (${node}): ${e.message}`);return {data:[]};});
       const stores = storRes.data || [];
-      diagLines.push(`${n.node}: ${stores.length} pools — ${stores.map(s=>`${s.storage}[${s.content||'?'}]`).join(', ')}`);
-
       await Promise.all(stores.map(async s => {
-        const d = await pveGet(`/api2/json/nodes/${n.node}/storage/${s.storage}/content`).catch(e=>{diagLines.push(`  ${s.storage} content failed: ${e.message}`);return {data:[]};});
-        const all = d.data || [];
-        const matched = all.filter(i => i.content==='iso' || i.content==='vztmpl');
-        diagLines.push(`  ${s.storage}: ${all.length} items, ${matched.length} iso/tmpl (sample: ${all.slice(0,2).map(i=>i.content+'='+i.volid).join(', ')||'empty'})`);
-        matched.forEach(item => isoLib.items.push({
-          volid:item.volid, node:n.node, storage:s.storage,
+        const d = await get(`/api2/json/nodes/${node}/storage/${s.storage}/content`).catch(()=>({data:[]}));
+        (d.data||[]).filter(i=>i.content==='iso'||i.content==='vztmpl').forEach(item => isoLib.items.push({
+          volid:item.volid, node, storage:s.storage, connId,
           contentType:item.content, name:(item.volid||'').split('/').pop(),
           size:item.size||0, ctime:item.ctime||0
         }));
@@ -11292,9 +11337,10 @@ async function loadISOLibrary() {
 
 function renderISOLibrary() {
   if (!isoLib.loaded) return;
-  const typeF = (document.getElementById('isolib-type')||{}).value||'';
-  const nodeF = (document.getElementById('isolib-node')||{}).value||'';
-  const q = ((document.getElementById('isolib-q')||{}).value||'').toLowerCase();
+  const typeF  = (document.getElementById('isolib-type')||{}).value||'';
+  const nodeF  = (document.getElementById('isolib-node')||{}).value||'';
+  const q      = ((document.getElementById('isolib-q')||{}).value||'').toLowerCase();
+  const multiCluster = extraConns.length > 0;
   const items = isoLib.items.filter(i => {
     if (typeF && i.contentType!==typeF) return false;
     if (nodeF && i.node!==nodeF) return false;
@@ -11314,10 +11360,11 @@ function renderISOLibrary() {
       <div class="stat-card accent-orange"><div class="label">Library Size</div><div class="value" style="font-size:20px">${fmtBytes(libSize)}</div><div class="sub">total on disk</div></div>
     </div>`;
   if (!items.length) { el.innerHTML=stats+'<div class="empty">No items match. Try clearing the search/filter, or upload ISOs via the Storage view.</div>'; return; }
-  const tHead = '<thead><tr><th></th><th>File</th><th>Node</th><th>Storage</th><th>Type</th><th>Size</th><th>Date</th><th>Action</th></tr></thead>';
+  const tHead = `<thead><tr><th></th><th>File</th>${multiCluster?'<th>Cluster</th>':''}<th>Node</th><th>Storage</th><th>Type</th><th>Size</th><th>Date</th><th>Action</th></tr></thead>`;
   const mkRows = arr => arr.map(item=>`<tr>
     <td style="font-size:18px;width:30px;text-align:center">${item.contentType==='iso'?'💿':'📦'}</td>
     <td><strong style="font-size:13px">${escHtml(item.name)}</strong><div style="font-size:10px;color:var(--muted)">${escHtml(item.volid)}</div></td>
+    ${multiCluster?`<td style="color:var(--blue);font-size:12px;font-weight:600">${escHtml(item.connId?getConnName(item.connId):'Primary')}</td>`:''}
     <td style="color:var(--muted);font-size:12px">${escHtml(item.node)}</td>
     <td style="color:var(--muted);font-size:12px">${escHtml(item.storage)}</td>
     <td><span class="type-chip ${item.contentType==='iso'?'vm':'ct'}">${item.contentType==='iso'?'ISO':'CT template'}</span></td>
