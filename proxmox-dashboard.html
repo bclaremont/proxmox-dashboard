@@ -232,6 +232,10 @@
     .filter-pill{padding:4px 10px;border-radius:12px;border:1px solid var(--border);background:transparent;color:var(--muted);font-family:var(--font);font-size:11px;cursor:pointer;transition:all .15s;white-space:nowrap;}
     .filter-pill:hover{border-color:var(--muted);color:var(--text);}
     .filter-pill.active{background:rgba(249,115,22,.15);border-color:rgba(249,115,22,.5);color:var(--accent);font-weight:600;}
+    /* VM group header rows */
+    .vm-group-row td{background:var(--bg3)!important;padding:6px 14px!important;font-size:10px;text-transform:uppercase;letter-spacing:1.2px;color:var(--muted);font-weight:700;border-bottom:1px solid var(--border);border-top:2px solid var(--border);}
+    .vm-group-row:hover td{background:var(--bg3)!important;}
+    .vm-group-row:first-child td{border-top:none;}
     @keyframes slideIn{from{transform:translateX(20px);opacity:0;}to{transform:translateX(0);opacity:1;}}
     .empty{text-align:center;padding:32px 20px;color:var(--muted);font-size:13px;line-height:1.6;}
     /* Rich empty state — for primary view content */
@@ -907,6 +911,7 @@
             <button class="filter-pill"        id="vms-f-running" onclick="_vmFilter('running')" >● Running</button>
             <button class="filter-pill"        id="vms-f-stopped" onclick="_vmFilter('stopped')" >○ Stopped</button>
           </div>
+          <button class="filter-pill" id="vms-group-btn" onclick="_toggleVMGroup()" title="Group by cluster / node">⊞ Group</button>
           <select id="vms-tag-filter" style="width:120px;padding:5px 8px;font-size:13px" onchange="renderVMTable()"><option value="">All Tags</option></select>
           <button class="btn small primary" onclick="openCreateVMModal()">+ Create VM</button>
           <button class="btn small" onclick="refreshAll()">Refresh</button>
@@ -936,6 +941,7 @@
             <button class="filter-pill"        id="cts-f-running" onclick="_ctFilter('running')" >● Running</button>
             <button class="filter-pill"        id="cts-f-stopped" onclick="_ctFilter('stopped')" >○ Stopped</button>
           </div>
+          <button class="filter-pill" id="cts-group-btn" onclick="_toggleCTGroup()" title="Group by cluster / node">⊞ Group</button>
           <select id="cts-tag-filter" style="width:120px;padding:5px 8px;font-size:13px" onchange="renderCTTable()"><option value="">All Tags</option></select>
           <button class="btn small primary" onclick="openCreateCTWizard()">+ Create CT</button>
           <button class="btn small success" onclick="openDownloadTemplatesModal()">↓ Download Templates</button>
@@ -3718,6 +3724,49 @@ function filterAll(){ _renderAllTableBody(); }
 
 let _vmStatusFilter = 'all';
 let _ctStatusFilter = 'all';
+let _vmGrouped = localStorage.getItem('pve-vm-group') === '1';
+let _ctGrouped = localStorage.getItem('pve-ct-group') === '1';
+
+function _toggleVMGroup() {
+  _vmGrouped = !_vmGrouped;
+  localStorage.setItem('pve-vm-group', _vmGrouped ? '1' : '0');
+  const btn = document.getElementById('vms-group-btn');
+  if (btn) btn.classList.toggle('active', _vmGrouped);
+  renderVMTable();
+}
+function _toggleCTGroup() {
+  _ctGrouped = !_ctGrouped;
+  localStorage.setItem('pve-ct-group', _ctGrouped ? '1' : '0');
+  const btn = document.getElementById('cts-group-btn');
+  if (btn) btn.classList.toggle('active', _ctGrouped);
+  renderCTTable();
+}
+
+// Group sorted VM/CT items by cluster → node, returning interleaved header+row HTML
+function _renderGrouped(items, rowFn, colSpan) {
+  if (!items.length) return '';
+  const multiCluster = new Set(items.map(x => x.connId||'')).size > 1 || extraConns.length > 0;
+  const groups = [];
+  const seen = new Map();
+  for (const x of items) {
+    const clusterLabel = x.connId ? getConnName(x.connId) : 'Primary';
+    const key = `${x.connId||''}||${x.node}`;
+    if (!seen.has(key)) { seen.set(key, true); groups.push({ key, cluster: clusterLabel, node: x.node, connId: x.connId||'' }); }
+  }
+  let html = '';
+  for (const g of groups) {
+    const groupItems = items.filter(x => (x.connId||'') === g.connId && x.node === g.node);
+    const label = multiCluster ? `${g.cluster}  ›  ${g.node}` : g.node;
+    const running = groupItems.filter(x => x.status === 'running').length;
+    html += `<tr class="vm-group-row"><td colspan="${colSpan}">
+      ${label}
+      <span style="font-weight:400;color:var(--green);margin-left:10px">${running} running</span>
+      <span style="font-weight:400;color:var(--muted);margin-left:6px">/ ${groupItems.length} total</span>
+    </td></tr>`;
+    html += groupItems.map(x => rowFn(x)).join('');
+  }
+  return html;
+}
 
 function _vmFilter(f) {
   _vmStatusFilter = f;
@@ -3759,8 +3808,10 @@ function renderVMTable(){
     if (c) c.innerHTML = `<div class="table-wrap"><table><thead><tr><th class="sortable" onclick="sortVMTable('vmid')">ID<span class="sort-icon">↕</span></th><th class="sortable" onclick="sortVMTable('name')">Name<span class="sort-icon">↕</span></th><th class="sortable" onclick="sortVMTable('node')">Node<span class="sort-icon">↕</span></th><th class="sortable" onclick="sortVMTable('status')">Status<span class="sort-icon">↕</span></th><th class="sortable" onclick="sortVMTable('cpu')">CPU<span class="sort-icon">↕</span></th><th class="sortable" onclick="sortVMTable('mem')">Memory<span class="sort-icon">↕</span></th><th>Disk</th><th class="sortable" onclick="sortVMTable('uptime')">Uptime<span class="sort-icon">↕</span></th><th>Tags</th><th>Actions</th></tr></thead><tbody id="vm-table-body"></tbody></table></div>`;
   }
   _updateSortIcons('#vms-content table', vmSort.col, vmSort.dir);
+  const vgBtn = document.getElementById('vms-group-btn');
+  if (vgBtn) vgBtn.classList.toggle('active', _vmGrouped);
   document.getElementById('vm-table-body').innerHTML = sorted.length
-    ? sorted.map(v=>vmRow(v)).join('')
+    ? (_vmGrouped ? _renderGrouped(sorted, v=>vmRow(v), 10) : sorted.map(v=>vmRow(v)).join(''))
     : `<tr><td colspan="9">${emptyState('<rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/>',
         _vmStatusFilter !== 'all' ? `No ${_vmStatusFilter} VMs` : 'No VMs',
         _vmStatusFilter !== 'all' ? `Switch to "All" to see ${_vmStatusFilter==='running'?'stopped':'running'} VMs.` : 'Connect to a cluster or create your first VM.',
@@ -3787,8 +3838,10 @@ function renderCTTable(){
     if (c) c.innerHTML = `<div class="table-wrap"><table><thead><tr><th class="sortable" onclick="sortCTTable('vmid')">ID<span class="sort-icon">↕</span></th><th class="sortable" onclick="sortCTTable('name')">Name<span class="sort-icon">↕</span></th><th class="sortable" onclick="sortCTTable('node')">Node<span class="sort-icon">↕</span></th><th class="sortable" onclick="sortCTTable('status')">Status<span class="sort-icon">↕</span></th><th class="sortable" onclick="sortCTTable('cpu')">CPU<span class="sort-icon">↕</span></th><th class="sortable" onclick="sortCTTable('mem')">Memory<span class="sort-icon">↕</span></th><th>Disk</th><th class="sortable" onclick="sortCTTable('uptime')">Uptime<span class="sort-icon">↕</span></th><th>Tags</th><th>Actions</th></tr></thead><tbody id="ct-table-body"></tbody></table></div>`;
   }
   _updateSortIcons('#cts-content table', ctSort.col, ctSort.dir);
+  const cgBtn = document.getElementById('cts-group-btn');
+  if (cgBtn) cgBtn.classList.toggle('active', _ctGrouped);
   document.getElementById('ct-table-body').innerHTML = sorted.length
-    ? sorted.map(c=>vmRow(c)).join('')
+    ? (_ctGrouped ? _renderGrouped(sorted, c=>vmRow(c), 10) : sorted.map(c=>vmRow(c)).join(''))
     : `<tr><td colspan="9" class="empty">No containers found</td></tr>`;
   _fetchAndShowIPs(sorted);
 }
