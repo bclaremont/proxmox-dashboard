@@ -594,10 +594,19 @@ rm -rf /tmp/pcc-update
 ```
 
 ### TLS certificate renewal
-Certbot renews automatically via a systemd timer. To force a renewal:
+
+**This is fully automatic** — you don't need to do anything. `setup.sh` configured certbot's
+systemd timer which checks twice daily and renews any cert within 30 days of expiry. nginx
+reloads automatically after each renewal via the post-renewal hook.
+
+To verify auto-renewal is working:
 ```bash
-certbot renew --force-renewal
-systemctl reload nginx
+systemctl status certbot.timer
+```
+
+If you ever need to force a manual renewal (e.g. after changing DNS):
+```bash
+certbot renew --force-renewal && systemctl reload nginx
 ```
 
 ### Backup the database
