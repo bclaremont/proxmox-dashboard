@@ -379,22 +379,22 @@ The output looks like:
 ```
 === Run these commands on the Proxmox host at Client A ===
 
-  apt install -y wireguard
+apt install -y wireguard
 
-  cat > /etc/wireguard/wg0.conf << 'WGEOF'
-  [Interface]
-  PrivateKey = <generated>
-  Address    = 10.99.0.2/24
+cat > /etc/wireguard/wg0.conf << 'WGEOF'
+[Interface]
+PrivateKey = <generated>
+Address    = 10.99.0.2/24
 
-  [Peer]  # PCC hub
-  PublicKey           = <hub-pubkey>
-  Endpoint            = pcc.yourdomain.com:51820
-  AllowedIPs          = 10.99.0.1/32
-  PersistentKeepalive = 25
-  WGEOF
+[Peer]  # PCC hub
+PublicKey           = <hub-pubkey>
+Endpoint            = pcc.yourdomain.com:51820
+AllowedIPs          = 10.99.0.1/32
+PersistentKeepalive = 25
+WGEOF
 
-  chmod 600 /etc/wireguard/wg0.conf
-  systemctl enable --now wg-quick@wg0
+chmod 600 /etc/wireguard/wg0.conf
+systemctl enable --now wg-quick@wg0
 
 === Then add the cluster in PCC Admin → Clusters ===
   Name  : Client A
