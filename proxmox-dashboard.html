@@ -3946,13 +3946,13 @@ function vmRow(x,showType=false){
 function renderNodes(){
   const nodes = allNodes();
   const multiCluster = extraConns.length > 0;
-  document.getElementById('node-cards').innerHTML=nodes.map(n=>{
+
+  const _nodeCard = n => {
     const s=n.statusData||{};
     const cpuPct=s.cpu?(s.cpu*100).toFixed(1):(n.cpu?(n.cpu*100).toFixed(1):'—');
     const memPct=s.memory?((s.memory.used/s.memory.total)*100).toFixed(0):'—';
     const memStr=s.memory?`${fmtBytes(s.memory.used)}/${fmtBytes(s.memory.total)}`:'—';
     const online=n.status==='online'||(s&&Object.keys(s).length>0);
-    const clusterLabel = n.connId ? getConnName(n.connId) : 'Primary';
     return `<div class="node-card ${online?'online':'offline'}" onclick="openNodeDetail(${JSON.stringify(n).replace(/"/g,'&quot;')})">
       <div class="node-card-header"><span class="node-name">${n.node}</span>
         <div style="display:flex;gap:5px;align-items:center">
@@ -3960,7 +3960,6 @@ function renderNodes(){
           ${isMaintenanceMode(n.node)?'<span class="badge warning" style="font-size:9px">🔧 MAINTENANCE</span>':''}
         </div>
       </div>
-      ${multiCluster?`<div style="font-size:10px;color:var(--blue);margin-bottom:6px;font-weight:600">${escHtml(clusterLabel)}</div>`:''}
       <div class="node-metric"><span class="key">CPU</span><span>${cpuPct}%</span></div>
       <div class="gauge-bar" style="margin-bottom:10px"><div class="gauge-fill ${gaugeClass(parseFloat(cpuPct)||0)}" style="width:${Math.min(parseFloat(cpuPct)||0,100)}%"></div></div>
       <div class="node-metric"><span class="key">Memory</span><span>${memPct}%</span></div>
@@ -3970,7 +3969,27 @@ function renderNodes(){
       <div class="node-metric"><span class="key">Uptime</span><span style="color:var(--muted)">${fmtUptime(s.uptime||n.uptime)}</span></div>
       <div style="margin-top:10px;color:var(--muted);font-size:11px">Click for details & graphs →</div>
     </div>`;
-  }).join('');
+  };
+
+  if (!multiCluster) {
+    document.getElementById('node-cards').innerHTML = `<div class="node-grid">${nodes.map(_nodeCard).join('')}</div>`;
+    return;
+  }
+
+  // Group by cluster with a section header per cluster
+  const clusters = [
+    { label: 'Primary', connId: '', nodes: PVE.nodeStatuses },
+    ...extraConns.filter(c => (c.nodeStatuses||[]).length)
+                 .map(c => ({ label: c.name || c.host, connId: c.id, nodes: c.nodeStatuses||[] }))
+  ].filter(g => g.nodes.length);
+
+  document.getElementById('node-cards').innerHTML = clusters.map(g => `
+    <div class="section-header" style="margin-top:8px">
+      <span class="section-title">${escHtml(g.label)}</span>
+      <span style="font-size:12px;color:var(--muted)">${g.nodes.length} node${g.nodes.length!==1?'s':''}</span>
+    </div>
+    <div class="node-grid">${g.nodes.map(_nodeCard).join('')}</div>
+  `).join('');
 }
 
 function renderSidebarNodes(){
@@ -5360,34 +5379,42 @@ function renderHeatmap() {
   const multiCluster = extraConns.length > 0;
   if (!nodes.length) { el.innerHTML = '<div class="empty">No nodes loaded — connect first</div>'; return; }
 
+  const _heatCard = n => {
+    const s = n.statusData || {};
+    const cpu = s.cpu ? s.cpu * 100 : (n.cpu ? n.cpu * 100 : 0);
+    const mem = s.memory ? (s.memory.used / s.memory.total * 100) : 0;
+    const disk = s.rootfs ? (s.rootfs.used / s.rootfs.total * 100) : 0;
+    const topColor = cpu > 80 || mem > 80 ? 'var(--red)' : cpu > 60 || mem > 60 ? 'var(--yellow)' : 'var(--green)';
+    const nodeVMs = allItems.filter(x => x.node === n.node && (x.connId||'') === (n.connId||''));
+    const running = nodeVMs.filter(x => x.status === 'running').length;
+    return `<div class="heat-card" style="border-top:3px solid ${topColor};cursor:pointer" onclick="openNodeDetail(${JSON.stringify(n).replace(/"/g,'&quot;')})">
+      <strong style="font-size:14px">${n.node}</strong>
+      <div style="margin-top:10px;font-size:11px;color:var(--muted)">CPU</div>
+      <div class="heat-bar" style="background:${heatColor(cpu)}"></div>
+      <div style="font-size:15px;font-weight:700">${cpu.toFixed(1)}%</div>
+      <div style="margin-top:8px;font-size:11px;color:var(--muted)">Memory</div>
+      <div class="heat-bar" style="background:${heatColor(mem)}"></div>
+      <div style="font-size:15px;font-weight:700">${mem.toFixed(0)}%</div>
+      <div style="margin-top:8px;font-size:11px;color:var(--muted)">Root FS</div>
+      <div class="heat-bar" style="background:${heatColor(disk)}"></div>
+      <div style="font-size:15px;font-weight:700">${disk.toFixed(0)}%</div>
+      <div style="margin-top:10px;font-size:11px;color:var(--muted)">${running} running / ${nodeVMs.length} total</div>
+    </div>`;
+  };
+
+  const clusters = multiCluster
+    ? [ { label:'Primary', nodes: PVE.nodeStatuses },
+        ...extraConns.filter(c=>(c.nodeStatuses||[]).length).map(c=>({ label: c.name||c.host, nodes: c.nodeStatuses||[] })) ]
+      .filter(g => g.nodes.length)
+    : [ { label: null, nodes } ];
+
   el.innerHTML = `
-    <div class="section-header" style="margin-top:4px"><span class="section-title">Node Resource Usage</span></div>
-    <div class="heatmap-grid">
-      ${nodes.map(n => {
-        const s = n.statusData || {};
-        const cpu = s.cpu ? s.cpu * 100 : (n.cpu ? n.cpu * 100 : 0);
-        const mem = s.memory ? (s.memory.used / s.memory.total * 100) : 0;
-        const disk = s.rootfs ? (s.rootfs.used / s.rootfs.total * 100) : 0;
-        const topColor = cpu > 80 || mem > 80 ? 'var(--red)' : cpu > 60 || mem > 60 ? 'var(--yellow)' : 'var(--green)';
-        const nodeVMs = allItems.filter(x => x.node === n.node && (x.connId||'') === (n.connId||''));
-        const running = nodeVMs.filter(x => x.status === 'running').length;
-        const clusterLabel = n.connId ? getConnName(n.connId) : 'Primary';
-        return `<div class="heat-card" style="border-top:3px solid ${topColor};cursor:pointer" onclick="openNodeDetail(${JSON.stringify(n).replace(/"/g,'&quot;')})">
-          <strong style="font-size:14px">${n.node}</strong>
-          ${multiCluster?`<div style="font-size:10px;color:var(--blue);font-weight:600;margin-top:2px">${escHtml(clusterLabel)}</div>`:''}
-          <div style="margin-top:10px;font-size:11px;color:var(--muted)">CPU</div>
-          <div class="heat-bar" style="background:${heatColor(cpu)}"></div>
-          <div style="font-size:15px;font-weight:700">${cpu.toFixed(1)}%</div>
-          <div style="margin-top:8px;font-size:11px;color:var(--muted)">Memory</div>
-          <div class="heat-bar" style="background:${heatColor(mem)}"></div>
-          <div style="font-size:15px;font-weight:700">${mem.toFixed(0)}%</div>
-          <div style="margin-top:8px;font-size:11px;color:var(--muted)">Root FS</div>
-          <div class="heat-bar" style="background:${heatColor(disk)}"></div>
-          <div style="font-size:15px;font-weight:700">${disk.toFixed(0)}%</div>
-          <div style="margin-top:10px;font-size:11px;color:var(--muted)">${running} running / ${nodeVMs.length} total</div>
-        </div>`;
-      }).join('')}
-    </div>
+    ${clusters.map(g => `
+      <div class="section-header" style="margin-top:4px">
+        <span class="section-title">${g.label ? escHtml(g.label) + ' — Node Resource Usage' : 'Node Resource Usage'}</span>
+      </div>
+      <div class="heatmap-grid">${g.nodes.map(_heatCard).join('')}</div>
+    `).join('')}
     <div class="section-header" style="margin-top:4px">
       <span class="section-title">Top Running VMs by CPU Load</span>
       <button class="btn small" onclick="switchView('vms')">All VMs →</button>
