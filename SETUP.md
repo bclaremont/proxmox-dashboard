@@ -385,8 +385,10 @@ cat > /etc/wireguard/wg0.conf << 'WGEOF'
 [Interface]
 PrivateKey = <generated>
 Address    = 10.99.0.2/24
-PostUp     = iptables -I INPUT -s 10.99.0.0/24 -j ACCEPT
-PreDown    = iptables -D INPUT -s 10.99.0.0/24 -j ACCEPT
+# Allow PCC hub to reach Proxmox API (only if Proxmox host firewall is DISABLED)
+# If the Proxmox firewall IS enabled, add this rule via Datacenter → Firewall instead
+PostUp     = iptables -I INPUT -s 10.99.0.1/32 -p tcp --dport 8006 -j ACCEPT
+PreDown    = iptables -D INPUT -s 10.99.0.1/32 -p tcp --dport 8006 -j ACCEPT
 
 [Peer]  # PCC hub
 PublicKey           = <hub-pubkey>
