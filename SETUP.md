@@ -320,10 +320,20 @@ In the **Proxmox web UI** (`https://your-pve-host:8006`):
 3. Click **Add**
 4. **Copy the token secret** shown — it is only displayed once
 
-The token will look like:
+> ⚠️ **The Proxmox UI shows the full token string once and never again. Copy it immediately.**
+
+The token is a single string in this exact format — paste it exactly as shown, including the `PVEAPIToken=` prefix:
+
 ```
 PVEAPIToken=root@pam!pcc=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+│            │        │   │
+│            │        │   └─ Secret UUID (shown after you click Add)
+│            │        └───── Token ID you chose (e.g. pcc)
+│            └────────────── Proxmox user
+└─────────────────────────── Literal prefix — must be included
 ```
+
+Common mistakes: missing the `PVEAPIToken=` prefix · missing the `!` between user and token ID · pasting only the UUID secret.
 
 ---
 
@@ -334,9 +344,9 @@ In PCC, go to **Admin → PCC Admin → Clusters → + Add Cluster**:
 | Field | Value |
 |---|---|
 | **Name** | `Production` (or whatever you call this cluster) |
-| **Host URL** | `https://192.168.1.10:8006` (direct PVE API — see note below) |
+| **Host URL** | `https://192.168.1.10:8006` (your PVE host IP, port 8006) |
 | **Auth type** | API Token |
-| **Token** | Paste the full `PVEAPIToken=root@pam!pcc=…` string |
+| **Token** | Paste the **complete** string: `PVEAPIToken=root@pam!pcc=xxxxxxxx-…` |
 | **Sort order** | `0` (primary cluster) |
 
 > **Host URL options:**
