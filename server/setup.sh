@@ -68,6 +68,10 @@ if [[ "$SCRIPT_DIR" != "/opt/pcc" ]]; then
   [[ -d "$SCRIPT_DIR/public/vendor"     ]] && cp -r "$SCRIPT_DIR/public/vendor"  /opt/pcc/public/vendor
 fi
 
+# Install pcc-update command
+cp "$SCRIPT_DIR/update.sh" /opt/pcc/update.sh 2>/dev/null || true
+install -m 755 /opt/pcc/update.sh /usr/local/bin/pcc-update 2>/dev/null || true
+
 # npm install
 cd /opt/pcc
 npm install --omit=dev --silent
