@@ -228,6 +228,9 @@
     /* View fade-in — plays when a view div becomes visible */
     @keyframes viewFadeIn{from{opacity:0;transform:translateY(5px);}to{opacity:1;transform:translateY(0);}}
     .view-entering{animation:viewFadeIn .15s ease forwards;}
+    /* Cluster selector dropdowns */
+    select.conn-sel{width:auto!important;min-width:140px;max-width:260px;}
+    select.conn-sel.cluster-active{border-color:var(--blue)!important;background:rgba(88,166,255,.1)!important;color:var(--blue)!important;font-weight:600;}
     /* Quick filter pills */
     .filter-pill{padding:4px 10px;border-radius:12px;border:1px solid var(--border);background:transparent;color:var(--muted);font-family:var(--font);font-size:11px;cursor:pointer;transition:all .15s;white-space:nowrap;}
     .filter-pill:hover{border-color:var(--muted);color:var(--text);}
@@ -2642,10 +2645,20 @@ function _connSelectOpts(selectedId) {
     extraConns.map(c=>`<option value="${c.id}"${c.id===selectedId?' selected':''}>${escHtml(c.name||c.host)}</option>`).join('');
 }
 
+function _connSelRefresh(el) {
+  el.classList.toggle('cluster-active', !!el.value);
+}
+
 function populateConnSelectors() {
   document.querySelectorAll('select.conn-sel').forEach(el => {
     const cur = el.value;
     el.innerHTML = _connSelectOpts(cur);
+    _connSelRefresh(el);
+    // Highlight on change — onchange in HTML fires the view reload but not the class update
+    if (!el._connSelWired) {
+      el.addEventListener('change', () => _connSelRefresh(el));
+      el._connSelWired = true;
+    }
   });
 }
 
