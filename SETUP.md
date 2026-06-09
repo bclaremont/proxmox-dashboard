@@ -385,6 +385,8 @@ cat > /etc/wireguard/wg0.conf << 'WGEOF'
 [Interface]
 PrivateKey = <generated>
 Address    = 10.99.0.2/24
+PostUp     = iptables -I INPUT -s 10.99.0.0/24 -j ACCEPT
+PreDown    = iptables -D INPUT -s 10.99.0.0/24 -j ACCEPT
 
 [Peer]  # PCC hub
 PublicKey           = <hub-pubkey>
