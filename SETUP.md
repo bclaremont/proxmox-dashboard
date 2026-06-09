@@ -550,42 +550,48 @@ systemctl restart pcc
 
 ### Update PCC to latest version
 
-**Quick update — UI / dashboard changes only** (most updates)
+**The easy way — `pcc-update` command**
 
-No service restart needed. Hard-refresh your browser (`Ctrl+Shift+R`) after running:
+If set up correctly (installed by `setup.sh` automatically, or see below), just run:
 
 ```bash
-# On the PCC Debian VM
-git clone https://github.com/bclaremont/proxmox-dashboard.git /tmp/pcc-update
+pcc-update
+```
 
+That's it. It pulls the latest from GitHub, copies all files, runs `npm install`, and restarts the service.
+
+**First time on an existing install** — install the command once:
+
+```bash
+wget -qO /usr/local/bin/pcc-update https://raw.githubusercontent.com/bclaremont/proxmox-dashboard/master/server/update.sh
+chmod +x /usr/local/bin/pcc-update
+```
+
+---
+
+**Manual update (if you prefer):**
+
+*Quick — UI changes only, no restart needed:*
+```bash
+git clone https://github.com/bclaremont/proxmox-dashboard.git /tmp/pcc-update
 cp /tmp/pcc-update/proxmox-dashboard.html /opt/pcc/public/index.html
 cp /tmp/pcc-update/console.html           /opt/pcc/public/console.html
 cp -r /tmp/pcc-update/vendor              /opt/pcc/public/vendor
-
 rm -rf /tmp/pcc-update
 ```
 
-**Full update — backend changes** (when server.js or package.json changed)
-
-A service restart is required when the Node.js backend is updated:
-
+*Full — backend changes, restart required:*
 ```bash
-# On the PCC Debian VM
 git clone https://github.com/bclaremont/proxmox-dashboard.git /tmp/pcc-update
-
 cp /tmp/pcc-update/server/server.js       /opt/pcc/server.js
 cp /tmp/pcc-update/server/package.json    /opt/pcc/package.json
 cp /tmp/pcc-update/proxmox-dashboard.html /opt/pcc/public/index.html
 cp /tmp/pcc-update/console.html           /opt/pcc/public/console.html
 cp -r /tmp/pcc-update/vendor              /opt/pcc/public/vendor
-
 cd /opt/pcc && npm install --omit=dev
 systemctl restart pcc
-
 rm -rf /tmp/pcc-update
 ```
-
-> **Not sure which to use?** Run the full update — it's safe to restart the service at any time.
 
 ### TLS certificate renewal
 Certbot renews automatically via a systemd timer. To force a renewal:
