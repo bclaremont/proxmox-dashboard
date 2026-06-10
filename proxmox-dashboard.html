@@ -12851,10 +12851,10 @@ function updateAffinityBadge() {
   if(enforceBtn) enforceBtn.style.display=violations?'':'none';
 }
 
-function _populateAffinityConnSel() {
+function _populateAffinityConnSel(keepVal) {
   const sel = document.getElementById('affinity-conn');
   if (!sel) return;
-  const cur = sel.value;
+  const cur = keepVal !== undefined ? keepVal : sel.value;
   sel.innerHTML = '<option value="">All Clusters</option>';
   sel.add(new Option(PVE.clusterName || 'Primary', '__primary'));
   extraConns.forEach(c => sel.add(new Option(c.name || c.host || c.id, c.id)));
@@ -12863,10 +12863,9 @@ function _populateAffinityConnSel() {
 
 function renderAffinityView() {
   updateAffinityBadge();
-  _populateAffinityConnSel();
-  const el=document.getElementById('affinity-content');
-  if(!el) return;
   const selVal = document.getElementById('affinity-conn')?.value || '';
+  _populateAffinityConnSel(selVal);
+  const el=document.getElementById('affinity-content');
   const all=allVMs().concat(allCTs());
   const allRules=getAffinityRules();
   // Build vmid set for the selected cluster only
