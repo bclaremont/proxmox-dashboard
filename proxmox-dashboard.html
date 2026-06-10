@@ -2124,6 +2124,13 @@ async function _renderPCCAdminTab() {
       <div id="acc-err" style="display:none;color:var(--red);font-size:12px;margin-bottom:8px"></div>
       <button class="btn primary" onclick="changeOwnPassword()">Change Password</button>
       <hr style="border:none;border-top:1px solid var(--border);margin:20px 0"/>
+      <div class="section-title" style="font-size:11px;margin-bottom:10px">CONFIG BACKUP</div>
+      <div style="font-size:12px;color:var(--muted);margin-bottom:10px">Export all PCC settings (rules, schedules, webhooks, specs) as a JSON file. Import to restore or copy to another instance.</div>
+      <div style="display:flex;gap:8px;margin-bottom:20px">
+        <button class="btn small primary" onclick="exportPCCConfig()">⬇ Export Config</button>
+        <button class="btn small" onclick="importPCCConfig()">⬆ Import Config</button>
+      </div>
+      <hr style="border:none;border-top:1px solid var(--border);margin:20px 0"/>
       <button class="btn danger" onclick="pccLogout()">Sign Out</button>
     </div>`;
   }
@@ -2643,6 +2650,279 @@ document.addEventListener('keydown', e => {
   }
   if (e.key==='Escape') { hideSearch(); closeNotifPanel(); closeModal(); closeCmdPalette(); }
 });
+
+// ── CROSS-CLUSTER VM COPY ─────────────────────────────────
+// Orchestrates: vzdump on source → scp transfer instructions → vzrestore on destination.
+// Live migration only works within a cluster; this handles cold copies across clusters.
+
+let _xcopy = {}; // wizard state
+
+async function openXCopyModal(node, vmid, type, connId, vmName) {
+  _xcopy = { node, vmid, type, connId: connId||'', vmName, step: 1, backupFile: '', backupPath: '' };
+  document.getElementById('modal-title').textContent = `Copy VM to Another Cluster — ${vmName}`;
+  document.getElementById('modal').classList.add('modal-wide');
+  document.getElementById('modal-confirm-btn').style.display = 'none';
+  document.getElementById('modal-bg').classList.add('open');
+  modalCallback = null;
+  _xcopyRender();
+}
+
+function _xcopyRender() {
+  const el = document.getElementById('modal-body');
+  const srcConn = _xcopy.connId ? resolveConn(_xcopy.connId) : null;
+  const srcHost = srcConn ? srcConn.host : PVE.host;
+  const srcIp   = (srcHost||'').replace(/^https?:\/\//, '').replace(/:\d+$/, '');
+  const srcLabel = srcConn ? (srcConn.name||srcIp) : (PVE.clusterName||'Primary');
+
+  const stepBar = (n, label) => `<div style="display:inline-flex;align-items:center;gap:6px;padding:4px 12px;border-radius:20px;font-size:12px;font-weight:600;${_xcopy.step===n?'background:var(--accent);color:#fff':_xcopy.step>n?'color:var(--green)':'color:var(--muted)'}">
+    ${_xcopy.step>n?'✓':n}. ${label}</div>`;
+
+  if (_xcopy.step === 1) {
+    const destConns = extraConns.filter(c => (_xcopy.connId ? c.id !== _xcopy.connId : true));
+    const destOpts  = destConns.map(c => `<option value="${c.id}">${escHtml(c.name||c.host)}</option>`).join('');
+    if (!destOpts) { el.innerHTML = '<div class="empty">No other clusters connected. Add a cluster first.</div>'; return; }
+    el.innerHTML = `
+      <div style="display:flex;gap:8px;margin-bottom:18px">${stepBar(1,'Configure')}${stepBar(2,'Backup')}${stepBar(3,'Transfer')}${stepBar(4,'Restore')}</div>
+      <div style="background:var(--bg3);border-radius:var(--radius);padding:12px;margin-bottom:16px;font-size:12px">
+        <strong>Source:</strong> ${escHtml(vmName)} (${type.toUpperCase()} ${vmid}) on ${escHtml(_xcopy.node)} — ${escHtml(srcLabel)}
+      </div>
+      <div class="create-vm-grid">
+        <div class="form-group"><label>DESTINATION CLUSTER</label>
+          <select id="xc-dest-conn" onchange="_xcopyDestChanged()">${destOpts}</select></div>
+        <div class="form-group"><label>DESTINATION NODE</label>
+          <select id="xc-dest-node"><option>Loading…</option></select></div>
+      </div>
+      <div class="create-vm-grid">
+        <div class="form-group"><label>BACKUP STORAGE (source)</label>
+          <select id="xc-src-stor"><option value="local">local</option></select></div>
+        <div class="form-group"><label>TARGET STORAGE (destination)</label>
+          <select id="xc-dst-stor"><option value="local">local</option></select></div>
+      </div>
+      <div class="form-group"><label>NEW VM ID ON DESTINATION</label>
+        <input id="xc-new-vmid" type="number" value="${vmid}" style="width:100px"/></div>
+      <div style="font-size:11px;color:var(--yellow);margin-bottom:14px">⚠ The VM will be shut down before backup if running. Ensure you have a maintenance window.</div>
+      <button class="btn primary" onclick="_xcopyStep2()">Next: Create Backup →</button>`;
+    setTimeout(_xcopyDestChanged, 50);
+  } else if (_xcopy.step === 2) {
+    el.innerHTML = `
+      <div style="display:flex;gap:8px;margin-bottom:18px">${stepBar(1,'Configure')}${stepBar(2,'Backup')}${stepBar(3,'Transfer')}${stepBar(4,'Restore')}</div>
+      <div id="xc-backup-status"><div class="empty"><span class="loading"></span> Creating backup on ${escHtml(_xcopy.node)}…</div></div>`;
+  } else if (_xcopy.step === 3) {
+    const destConn = resolveConn(_xcopy.destConnId);
+    const dstHost  = destConn ? destConn.host : '';
+    const dstIp    = dstHost.replace(/^https?:\/\//, '').replace(/:\d+$/, '');
+    const scpCmd   = `scp root@${srcIp}:${_xcopy.backupPath} root@${dstIp}:${_xcopy.backupPath}`;
+    el.innerHTML = `
+      <div style="display:flex;gap:8px;margin-bottom:18px">${stepBar(1,'Configure')}${stepBar(2,'Backup')}${stepBar(3,'Transfer')}${stepBar(4,'Restore')}</div>
+      <div style="background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius);padding:12px;margin-bottom:14px">
+        <div style="font-size:11px;color:var(--muted);margin-bottom:6px">Backup created:</div>
+        <div style="font-family:monospace;font-size:12px;color:var(--green)">${escHtml(_xcopy.backupPath)}</div>
+      </div>
+      <div style="font-size:13px;font-weight:600;margin-bottom:8px">Run this command on either Proxmox host to transfer the backup:</div>
+      <div style="background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius);padding:12px;margin-bottom:8px;display:flex;align-items:center;gap:10px">
+        <code style="font-size:11px;flex:1;word-break:break-all">${escHtml(scpCmd)}</code>
+        <button class="btn small" onclick="navigator.clipboard.writeText('${scpCmd.replace(/'/g,"\\'")}').then(()=>toast('Copied','success'))">Copy</button>
+      </div>
+      <div style="font-size:12px;color:var(--muted);margin-bottom:14px">
+        The backup must arrive at <code style="font-size:11px">${escHtml(_xcopy.backupPath)}</code> on the destination node <strong>${escHtml(_xcopy.destNode)}</strong>.
+        Ensure the destination storage path exists and has enough space.
+      </div>
+      <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;margin-bottom:16px">
+        <input type="checkbox" id="xc-transferred" onchange="_xcopyCheckTransfer()" style="width:auto"/>
+        I have transferred the backup file
+      </label>
+      <button class="btn primary" id="xc-restore-btn" disabled onclick="_xcopyStep4()">Next: Restore on Destination →</button>`;
+  } else if (_xcopy.step === 4) {
+    el.innerHTML = `
+      <div style="display:flex;gap:8px;margin-bottom:18px">${stepBar(1,'Configure')}${stepBar(2,'Backup')}${stepBar(3,'Transfer')}${stepBar(4,'Restore')}</div>
+      <div id="xc-restore-status"><div class="empty"><span class="loading"></span> Restoring backup on ${escHtml(_xcopy.destNode)}…</div></div>`;
+  }
+}
+
+async function _xcopyDestChanged() {
+  const destId   = document.getElementById('xc-dest-conn')?.value;
+  const destConn = resolveConn(destId);
+  if (!destConn) return;
+
+  // Populate destination nodes
+  const nodeSel = document.getElementById('xc-dest-node');
+  if (nodeSel && destConn.nodes?.length) {
+    nodeSel.innerHTML = destConn.nodes.map(n=>`<option value="${n.node}">${n.node}</option>`).join('');
+  }
+
+  // Populate source storage
+  const srcConn = _xcopy.connId ? resolveConn(_xcopy.connId) : null;
+  const srcGet  = srcConn ? (p=>connGet(srcConn,p)) : pveGet;
+  const srcStor = await srcGet(`/api2/json/nodes/${_xcopy.node}/storage`).then(r=>(r.data||[]).filter(s=>s.content?.includes('backup'))).catch(()=>[]);
+  const srcSel  = document.getElementById('xc-src-stor');
+  if (srcSel && srcStor.length) srcSel.innerHTML = srcStor.map(s=>`<option value="${s.storage}">${s.storage}</option>`).join('');
+
+  // Populate destination storage
+  const dstNodes = destConn.nodes || [];
+  const dstNode  = dstNodes[0]?.node;
+  if (dstNode) {
+    const dstStor = await connGet(destConn, `/api2/json/nodes/${dstNode}/storage`).then(r=>(r.data||[]).filter(s=>s.content?.includes('backup'))).catch(()=>[]);
+    const dstSel  = document.getElementById('xc-dst-stor');
+    if (dstSel && dstStor.length) dstSel.innerHTML = dstStor.map(s=>`<option value="${s.storage}">${s.storage}</option>`).join('');
+  }
+}
+
+async function _xcopyStep2() {
+  _xcopy.destConnId  = document.getElementById('xc-dest-conn')?.value;
+  _xcopy.destNode    = document.getElementById('xc-dest-node')?.value;
+  _xcopy.srcStorage  = document.getElementById('xc-src-stor')?.value || 'local';
+  _xcopy.dstStorage  = document.getElementById('xc-dst-stor')?.value || 'local';
+  _xcopy.newVmid     = parseInt(document.getElementById('xc-new-vmid')?.value) || _xcopy.vmid;
+  _xcopy.step = 2;
+  _xcopyRender();
+
+  const srcConn = _xcopy.connId ? resolveConn(_xcopy.connId) : null;
+  const post    = srcConn ? ((p,d)=>connPost(srcConn,p,d)) : pvePost;
+  const get     = srcConn ? ((p)=>connGet(srcConn,p)) : pveGet;
+  const ep      = _xcopy.type === 'ct' ? 'lxc' : 'qemu';
+
+  try {
+    // Trigger vzdump
+    const res = await post(`/api2/json/nodes/${_xcopy.node}/vzdump`, {
+      vmid: _xcopy.vmid, mode: 'snapshot', storage: _xcopy.srcStorage, compress: 'zstd'
+    });
+    const upid = res?.data;
+    if (!upid) throw new Error('No task ID returned from vzdump');
+
+    // Poll until complete
+    const statusEl = document.getElementById('xc-backup-status');
+    for (let i = 0; i < 120; i++) {
+      await new Promise(r=>setTimeout(r,3000));
+      const s = await get(`/api2/json/nodes/${_xcopy.node}/tasks/${encodeURIComponent(upid)}/status`).catch(()=>({data:{}}));
+      const status = s?.data?.status;
+      if (statusEl) statusEl.innerHTML = `<div class="empty"><span class="loading"></span> Backup running… (${Math.round(i*3)}s)</div>`;
+      if (status === 'stopped') {
+        if (s?.data?.exitstatus !== 'OK') throw new Error(`Backup failed: ${s?.data?.exitstatus}`);
+        break;
+      }
+      if (i === 119) throw new Error('Backup timed out after 6 minutes');
+    }
+
+    // Find backup file
+    const content = await get(`/api2/json/nodes/${_xcopy.node}/storage/${_xcopy.srcStorage}/content?content=backup&vmid=${_xcopy.vmid}`).then(r=>r.data||[]).catch(()=>[]);
+    const bk = content.sort((a,b)=>(b.ctime||0)-(a.ctime||0))[0];
+    if (!bk) throw new Error('Backup file not found in storage after completion');
+
+    _xcopy.backupFile = bk.volid;  // e.g. local:backup/vzdump-qemu-100-...vma.zst
+    // Extract filesystem path
+    const fname = bk.volid.split('/').pop();
+    _xcopy.backupPath = `/var/lib/vz/dump/${fname}`;
+    _xcopy.step = 3;
+    _xcopyRender();
+  } catch(e) {
+    document.getElementById('xc-backup-status').innerHTML = `<div class="empty" style="color:var(--red)">✗ Backup failed: ${escHtml(e.message)}</div>
+      <button class="btn small" style="margin-top:10px" onclick="_xcopy.step=1;_xcopyRender()">← Back</button>`;
+  }
+}
+
+function _xcopyCheckTransfer() {
+  const checked = document.getElementById('xc-transferred')?.checked;
+  const btn     = document.getElementById('xc-restore-btn');
+  if (btn) btn.disabled = !checked;
+}
+
+async function _xcopyStep4() {
+  _xcopy.step = 4;
+  _xcopyRender();
+
+  const destConn = resolveConn(_xcopy.destConnId);
+  if (!destConn) { document.getElementById('xc-restore-status').innerHTML = '<div class="empty" style="color:var(--red)">Destination cluster not found</div>'; return; }
+
+  const ep = _xcopy.type === 'ct' ? 'lxc' : 'qemu';
+  // Construct volid on destination — storage:backup/filename
+  const fname  = _xcopy.backupPath.split('/').pop();
+  const volid  = `${_xcopy.dstStorage}:backup/${fname}`;
+
+  try {
+    const res = await connPost(destConn, `/api2/json/nodes/${_xcopy.destNode}/${ep}`, {
+      archive: volid, vmid: _xcopy.newVmid, storage: _xcopy.dstStorage,
+    });
+    const upid = res?.data;
+    if (upid) tmRegister(upid, _xcopy.destNode, `Restore ${_xcopy.type.toUpperCase()} ${_xcopy.vmid} → ${_xcopy.destNode}`);
+    document.getElementById('xc-restore-status').innerHTML = `
+      <div style="text-align:center;padding:24px">
+        <div style="font-size:32px;margin-bottom:10px">✓</div>
+        <div style="font-size:15px;font-weight:700;margin-bottom:6px">Restore started</div>
+        <div style="font-size:12px;color:var(--muted)">VM ${_xcopy.newVmid} is being restored on ${escHtml(_xcopy.destNode)}.<br>Monitor progress in the Tasks view.</div>
+        <button class="btn primary" style="margin-top:16px" onclick="closeModal()">Done</button>
+      </div>`;
+  } catch(e) {
+    document.getElementById('xc-restore-status').innerHTML = `<div class="empty" style="color:var(--red)">✗ Restore failed: ${escHtml(e.message)}</div>
+      <div style="font-size:12px;color:var(--muted);margin-top:8px">Check that the backup file exists at the expected path on the destination node and that the storage ID is correct.</div>
+      <button class="btn small" style="margin-top:10px" onclick="_xcopy.step=3;_xcopyRender()">← Back</button>`;
+  }
+}
+
+// ── CONFIG EXPORT / IMPORT ────────────────────────────────
+
+const _PCC_EXPORT_KEYS = [
+  'pve-affinity-rules','pve-drs-settings','pve-webhooks','pve-custom-specs',
+  'pve-schedules','pve-saved-views','pve-host-profiles','pve-locations',
+  'pve-vm-alerts','pve-alert-thresholds','pve-content-library-meta',
+];
+
+function exportPCCConfig() {
+  const config = { version: '1.0', exported_at: new Date().toISOString(), settings: {} };
+  _PCC_EXPORT_KEYS.forEach(k => { const v = localStorage.getItem(k); if (v) config.settings[k] = v; });
+  if (!Object.keys(config.settings).length) { toast('Nothing to export — no settings saved yet', 'info'); return; }
+  const blob = new Blob([JSON.stringify(config, null, 2)], { type: 'application/json' });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  a.href = url; a.download = `pcc-config-${new Date().toISOString().slice(0,10)}.json`;
+  a.click(); URL.revokeObjectURL(url);
+  toast(`Config exported (${Object.keys(config.settings).length} keys)`, 'success');
+}
+
+function importPCCConfig() {
+  const input = document.createElement('input');
+  input.type = 'file'; input.accept = '.json';
+  input.onchange = e => {
+    const file = e.target.files[0]; if (!file) return;
+    const reader = new FileReader();
+    reader.onload = ev => {
+      try {
+        const cfg = JSON.parse(ev.target.result);
+        if (!cfg.settings || !cfg.version) throw new Error('Not a valid PCC config file');
+        const keys = Object.keys(cfg.settings).filter(k => _PCC_EXPORT_KEYS.includes(k));
+        if (!keys.length) { toast('No recognised PCC settings found in file', 'error'); return; }
+
+        document.getElementById('modal-title').textContent = 'Import PCC Config';
+        document.getElementById('modal-body').innerHTML = `
+          <div style="margin-bottom:14px;font-size:13px">
+            Found <strong>${keys.length}</strong> setting(s) exported on <strong>${new Date(cfg.exported_at).toLocaleDateString()}</strong>:<br>
+            <div style="font-size:11px;color:var(--muted);margin-top:6px">${keys.join(', ')}</div>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:8px">
+            <label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer;padding:10px;border:1px solid var(--border);border-radius:var(--radius)">
+              <input type="radio" name="import-mode" value="merge" checked style="width:auto;margin-top:2px"/>
+              <div><div style="font-weight:600">Merge</div><div style="font-size:12px;color:var(--muted)">Add/update these settings, keep anything not in the file</div></div>
+            </label>
+            <label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer;padding:10px;border:1px solid var(--border);border-radius:var(--radius)">
+              <input type="radio" name="import-mode" value="replace" style="width:auto;margin-top:2px"/>
+              <div><div style="font-weight:600">Replace</div><div style="font-size:12px;color:var(--muted)">Clear all PCC settings and restore exactly from this file</div></div>
+            </label>
+          </div>`;
+        const btn = document.getElementById('modal-confirm-btn');
+        btn.style.display = ''; btn.textContent = 'Import'; btn.disabled = false;
+        document.getElementById('modal-bg').classList.add('open');
+        modalCallback = () => {
+          const mode = document.querySelector('input[name="import-mode"]:checked')?.value || 'merge';
+          if (mode === 'replace') _PCC_EXPORT_KEYS.forEach(k => { localStorage.removeItem(k); _syncShared(k, null); });
+          keys.forEach(k => { localStorage.setItem(k, cfg.settings[k]); _syncShared(k, cfg.settings[k]); });
+          toast(`Imported ${keys.length} setting(s) — reload to apply`, 'success');
+          setTimeout(() => location.reload(), 1500);
+        };
+      } catch(e) { toast('Import failed: ' + e.message, 'error'); }
+    };
+    reader.readAsText(file);
+  };
+  input.click();
+}
 
 // ── DISK HEALTH — SMART + ZFS ────────────────────────────
 
@@ -4629,6 +4909,7 @@ function vmRow(x,showType=false){
         }
         <button class="btn small" onclick="openMigrateModal('${x.node}','${x.vmid}','${x.type}','${cid}')" title="Migrate">⇢</button>
         <button class="btn small" onclick="openCloneModal('${x.node}','${x.vmid}','${x.type}','${(x.name||'').replace(/['"]/g,'')}','${cid}')" title="Clone">⎘</button>
+        ${extraConns.length?`<button class="btn small" onclick="openXCopyModal('${x.node}','${x.vmid}','${x.type}','${cid}','${escHtml(x.name||String(x.vmid))}')" title="Copy to another cluster">⎘→</button>`:''}
         <button class="btn small" onclick="openPerfModal('${x.node}','${x.vmid}','${x.type}','${cid}')" title="Performance graphs">📊</button>
         <button class="btn small" onclick="quickSnapSchedule('${x.node}','${x.vmid}','${x.type}','${cid}','${escHtml(x.name||String(x.vmid))}')" title="Schedule snapshot">📸</button>
       </div>
