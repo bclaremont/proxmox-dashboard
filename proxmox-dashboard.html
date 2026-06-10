@@ -12864,6 +12864,7 @@ function _populateAffinityConnSel(keepVal) {
 function renderAffinityView() {
   updateAffinityBadge();
   const selVal = document.getElementById('affinity-conn')?.value || '';
+  console.log('[affinity] selVal=', JSON.stringify(selVal), 'el=', document.getElementById('affinity-conn'));
   _populateAffinityConnSel(selVal);
   const el=document.getElementById('affinity-content');
   const all=allVMs().concat(allCTs());
@@ -12876,6 +12877,7 @@ function renderAffinityView() {
     const c = extraConns.find(x => x.id === selVal);
     clusterVmids = new Set([...(c?.vms||[]), ...(c?.containers||[])].map(x => +x.vmid));
   }
+  console.log('[affinity] clusterVmids=', clusterVmids, 'allRules=', allRules.map(r=>r.vmids));
   // null clusterVmids = All Clusters (no filter)
   const rules = clusterVmids
     ? allRules.filter(r => r.vmids.some(id => clusterVmids.has(+id)))
