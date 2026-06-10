@@ -1151,7 +1151,7 @@
       <div class="section-header">
         <span class="section-title">Affinity / Anti-Affinity Rules</span>
         <div style="display:flex;gap:6px;align-items:center">
-          <select class="conn-sel" id="affinity-conn" style="width:130px;padding:5px 8px;font-size:13px" onchange="renderAffinityView()"><option value="">Primary</option></select>
+          <select id="affinity-conn" style="width:130px;padding:5px 8px;font-size:13px" onchange="renderAffinityView()"><option value="">All Clusters</option></select>
           <button class="btn small success" id="affinity-enforce-btn" onclick="enforceAllRules()" style="display:none">⚡ Enforce All</button>
           <button class="btn small primary" onclick="openCreateAffinityModal()">+ Create Rule</button>
           <button class="btn small" onclick="renderAffinityView()">Refresh</button>
@@ -12851,21 +12851,33 @@ function updateAffinityBadge() {
   if(enforceBtn) enforceBtn.style.display=violations?'':'none';
 }
 
+function _populateAffinityConnSel() {
+  const sel = document.getElementById('affinity-conn');
+  if (!sel) return;
+  const cur = sel.value;
+  sel.innerHTML = '<option value="">All Clusters</option>';
+  sel.add(new Option(PVE.clusterName || 'Primary', '__primary'));
+  extraConns.forEach(c => sel.add(new Option(c.name || c.host || c.id, c.id)));
+  if ([...sel.options].some(o => o.value === cur)) sel.value = cur;
+}
+
 function renderAffinityView() {
   updateAffinityBadge();
+  _populateAffinityConnSel();
   const el=document.getElementById('affinity-content');
   if(!el) return;
-  const affinityConn = getViewConn('affinity-conn');
-  const affinityConnId = affinityConn ? affinityConn.id : '';
+  const selVal = document.getElementById('affinity-conn')?.value || '';
   const all=allVMs().concat(allCTs());
-  // Filter rules to those containing at least one VM from the selected cluster
   const allRules=getAffinityRules();
-  const rules = affinityConnId
-    ? allRules.filter(r => r.vmids.some(id => {
-        const vm=all.find(x=>+x.vmid===id);
-        return vm && (vm.connId||'')=== affinityConnId;
-      }))
-    : allRules;
+  // '' = All, '__primary' = primary cluster only, else specific extra cluster id
+  const rules = selVal === ''
+    ? allRules
+    : allRules.filter(r => r.vmids.some(id => {
+        const vm = all.find(x => +x.vmid === id);
+        const vmConn = vm ? (vm.connId || '') : null;
+        return vmConn !== null && vmConn === (selVal === '__primary' ? '' : selVal);
+      }));
+  const affinityConn = selVal && selVal !== '__primary' ? extraConns.find(c => c.id === selVal) : null;
 
   if(!allRules.length){
     el.innerHTML=`
@@ -12884,7 +12896,7 @@ function renderAffinityView() {
 
   const checks=rules.map(r=>({rule:r,...checkRule(r)}));
   const violations=checks.filter(c=>c.violated).length;
-  const clusterLabel = affinityConn ? (affinityConn.name||affinityConn.host||'Remote') : 'All Clusters';
+  const clusterLabel = selVal === '' ? 'All Clusters' : selVal === '__primary' ? (PVE.clusterName||'Primary') : (affinityConn ? (affinityConn.name||affinityConn.host||'Remote') : selVal);
 
   el.innerHTML=`
     ${rules.length < allRules.length ? `<div style="font-size:12px;color:var(--muted);margin-bottom:10px">Showing ${rules.length} of ${allRules.length} rules for <strong>${escHtml(clusterLabel)}</strong></div>` : ''}
