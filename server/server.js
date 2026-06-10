@@ -519,7 +519,10 @@ app.get('/api/admin/settings', authMiddleware, adminOnly, (req, res) => {
 });
 
 app.put('/api/admin/settings', authMiddleware, adminOnly, bodyParser, (req, res) => {
-  const allowed = ['ip_allowlist', 'idle_timeout_mins'];
+  const allowed = ['ip_allowlist', 'idle_timeout_mins',
+    'digest_enabled','digest_schedule','digest_time','digest_to',
+    'smtp_host','smtp_port','smtp_user','smtp_pass','smtp_from',
+    'digest_webhook_url'];
   const tx = db.transaction(() => {
     for (const [k, v] of Object.entries(req.body || {})) {
       if (!allowed.includes(k)) continue;
@@ -534,6 +537,19 @@ app.put('/api/admin/settings', authMiddleware, adminOnly, bodyParser, (req, res)
 app.get('/api/admin/login-log', authMiddleware, adminOnly, (req, res) => {
   const limit = Math.min(parseInt(req.query.limit) || 100, 500);
   res.json(db.prepare('SELECT * FROM login_log ORDER BY id DESC LIMIT ?').all(limit));
+});
+
+app.post('/api/admin/digest/test', authMiddleware, adminOnly, async (req, res) => {
+  const rows = db.prepare('SELECT key, value FROM settings').all();
+  const cfg = {};
+  rows.forEach(r => { try { cfg[r.key] = JSON.parse(r.value); } catch { cfg[r.key] = r.value; } });
+  try {
+    await sendDigest(cfg);
+    audit(req.user.username, 'POST', '/api/admin/digest/test', null, 200, null);
+    res.json({ ok: true });
+  } catch(e) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // ── PROXY TO PROXMOX ──────────────────────────────────────
@@ -811,3 +827,161 @@ async function backendScheduleTick() {
 
 setInterval(() => { backendScheduleTick().catch(e => console.error('Schedule tick error:', e)); }, 60000);
 backendScheduleTick().catch(() => {}); // run once on startup
+
+// ── DIGEST ────────────────────────────────────────────────
+
+const nodemailer = (() => { try { return require('nodemailer'); } catch { return null; } })();
+
+function clusterApiGet(cluster, path) {
+  return new Promise((resolve, reject) => {
+    const targetUrl = new url.URL(cluster.host);
+    const isHttps   = targetUrl.protocol === 'https:';
+    const transport = isHttps ? https : http;
+    const opts = {
+      hostname: targetUrl.hostname, port: parseInt(targetUrl.port) || (isHttps ? 443 : 80),
+      path, method: 'GET',
+      headers: { Authorization: decryptValue(cluster.auth_value) },
+      rejectUnauthorized: false,
+    };
+    const req = transport.request(opts, res => {
+      let data = '';
+      res.on('data', c => data += c);
+      res.on('end', () => {
+        try { resolve(JSON.parse(data).data || []); } catch { resolve([]); }
+      });
+    });
+    req.on('error', () => resolve([]));
+    req.end();
+  });
+}
+
+async function buildDigestData() {
+  const clusters = db.prepare('SELECT * FROM clusters ORDER BY sort_order').all();
+  const report = { generatedAt: new Date().toISOString(), clusters: [] };
+
+  for (const cluster of clusters) {
+    try {
+      const nodes = await clusterApiGet(cluster, '/api2/json/nodes');
+      const clusterData = { name: cluster.name, host: cluster.host, nodes: [], vms: [], storage: [] };
+
+      await Promise.all(nodes.map(async n => {
+        const [status, vms, cts, stor] = await Promise.all([
+          clusterApiGet(cluster, `/api2/json/nodes/${n.node}/status`),
+          clusterApiGet(cluster, `/api2/json/nodes/${n.node}/qemu`),
+          clusterApiGet(cluster, `/api2/json/nodes/${n.node}/lxc`),
+          clusterApiGet(cluster, `/api2/json/nodes/${n.node}/storage`),
+        ]);
+        const s = Array.isArray(status) ? {} : status;
+        clusterData.nodes.push({
+          node: n.node, online: n.status === 'online',
+          cpu: s.cpu ? (s.cpu * 100).toFixed(1) : 0,
+          memPct: s.memory ? ((s.memory.used / s.memory.total) * 100).toFixed(1) : 0,
+          uptime: s.uptime || 0,
+        });
+        [...(Array.isArray(vms)?vms:[]), ...(Array.isArray(cts)?cts:[])].forEach(v => {
+          clusterData.vms.push({ vmid: v.vmid, name: v.name, status: v.status, node: n.node, uptime: v.uptime || 0 });
+        });
+        (Array.isArray(stor)?stor:[]).forEach(st => {
+          if (st.total && st.used !== undefined) {
+            clusterData.storage.push({ storage: st.storage, node: n.node, usedPct: ((st.used/st.total)*100).toFixed(1), total: st.total });
+          }
+        });
+      }));
+      report.clusters.push(clusterData);
+    } catch { /* skip cluster on error */ }
+  }
+  return report;
+}
+
+function buildDigestHtml(data) {
+  const ts = new Date(data.generatedAt).toLocaleString();
+  let html = `<html><body style="font-family:monospace;background:#0d1117;color:#e6edf3;padding:20px">
+    <h2 style="color:#58a6ff">PCC Digest — ${ts}</h2>`;
+
+  for (const c of data.clusters) {
+    const offlineNodes = c.nodes.filter(n => !n.online);
+    const stoppedVMs   = c.vms.filter(v => v.status !== 'running');
+    const highStorage  = c.storage.filter(s => parseFloat(s.usedPct) > 80);
+    const longRunning  = [...c.vms].filter(v=>v.status==='running'&&v.uptime>90*86400)
+                          .sort((a,b)=>b.uptime-a.uptime).slice(0,5);
+
+    html += `<h3 style="color:#79c0ff;border-bottom:1px solid #30363d;padding-bottom:6px">${c.name}</h3>
+      <table style="width:100%;border-collapse:collapse;margin-bottom:16px">
+        <tr><td style="padding:4px 8px;color:#8b949e">Nodes</td>
+            <td style="padding:4px 8px">${c.nodes.filter(n=>n.online).length}/${c.nodes.length} online
+            ${offlineNodes.length?`<span style="color:#f85149"> ⚠ Offline: ${offlineNodes.map(n=>n.node).join(', ')}</span>`:''}
+            </td></tr>
+        <tr><td style="padding:4px 8px;color:#8b949e">VMs/CTs</td>
+            <td style="padding:4px 8px">${c.vms.filter(v=>v.status==='running').length} running, ${stoppedVMs.length} stopped</td></tr>
+        ${highStorage.length?`<tr><td style="padding:4px 8px;color:#f85149">High storage</td>
+            <td style="padding:4px 8px;color:#f85149">${highStorage.map(s=>`${s.storage}@${s.node}: ${s.usedPct}%`).join(', ')}</td></tr>`:''}
+        ${longRunning.length?`<tr><td style="padding:4px 8px;color:#e3b341">Long-running VMs</td>
+            <td style="padding:4px 8px;color:#e3b341">${longRunning.map(v=>`${v.name} (${Math.floor(v.uptime/86400)}d)`).join(', ')}</td></tr>`:''}
+      </table>`;
+  }
+  html += '</body></html>';
+  return html;
+}
+
+async function sendDigest(cfg) {
+  const data = await buildDigestData();
+  const html = buildDigestHtml(data);
+
+  // Email
+  if (cfg.smtp_host && cfg.digest_to && nodemailer) {
+    try {
+      const transporter = nodemailer.createTransport({
+        host: cfg.smtp_host, port: parseInt(cfg.smtp_port || 587),
+        secure: parseInt(cfg.smtp_port) === 465,
+        auth: cfg.smtp_user ? { user: cfg.smtp_user, pass: cfg.smtp_pass } : undefined,
+      });
+      await transporter.sendMail({
+        from: cfg.smtp_from || cfg.smtp_user || 'pcc@localhost',
+        to: cfg.digest_to,
+        subject: `PCC Digest — ${new Date().toLocaleDateString()}`,
+        html,
+      });
+      console.log('Digest email sent to', cfg.digest_to);
+    } catch(e) { console.error('Digest email failed:', e.message); }
+  }
+
+  // Webhook
+  if (cfg.digest_webhook_url) {
+    try {
+      const u = new url.URL(cfg.digest_webhook_url);
+      const body = JSON.stringify({ text: 'PCC Digest', data, html });
+      const isHttps = u.protocol === 'https:';
+      await new Promise((resolve, reject) => {
+        const req = (isHttps ? https : http).request({
+          hostname: u.hostname, port: u.port || (isHttps?443:80), path: u.pathname + u.search,
+          method: 'POST', headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
+        }, res => { res.resume(); res.on('end', resolve); });
+        req.on('error', reject);
+        req.write(body); req.end();
+      });
+      console.log('Digest webhook sent to', cfg.digest_webhook_url);
+    } catch(e) { console.error('Digest webhook failed:', e.message); }
+  }
+}
+
+// Check digest schedule every 5 minutes
+setInterval(async () => {
+  try {
+    const cfg = {};
+    const rows = db.prepare('SELECT key, value FROM settings').all();
+    rows.forEach(r => { try { cfg[r.key] = JSON.parse(r.value); } catch { cfg[r.key] = r.value; } });
+    if (!cfg.digest_enabled) return;
+    const now = Date.now();
+    const lastSent = parseInt(cfg.digest_last_sent || '0');
+    const schedule = cfg.digest_schedule || 'daily';
+    const minInterval = schedule === 'weekly' ? 6.5 * 24 * 3600 * 1000 : 23 * 3600 * 1000;
+    if (now - lastSent < minInterval) return;
+
+    const [h, m] = (cfg.digest_time || '08:00').split(':').map(Number);
+    const target = new Date(); target.setHours(h, m, 0, 0);
+    if (Math.abs(Date.now() - target.getTime()) > 5 * 60 * 1000) return; // only fire within 5min of target time
+
+    setSetting('digest_last_sent', now);
+    await sendDigest(cfg);
+  } catch(e) { console.error('Digest check error:', e.message); }
+}, 5 * 60 * 1000);
