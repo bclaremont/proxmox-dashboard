@@ -12869,14 +12869,18 @@ function renderAffinityView() {
   const selVal = document.getElementById('affinity-conn')?.value || '';
   const all=allVMs().concat(allCTs());
   const allRules=getAffinityRules();
-  // '' = All, '__primary' = primary cluster only, else specific extra cluster id
-  const rules = selVal === ''
-    ? allRules
-    : allRules.filter(r => r.vmids.some(id => {
-        const vm = all.find(x => +x.vmid === id);
-        const vmConn = vm ? (vm.connId || '') : null;
-        return vmConn !== null && vmConn === (selVal === '__primary' ? '' : selVal);
-      }));
+  // Build vmid set for the selected cluster only
+  let clusterVmids = null;
+  if (selVal === '__primary') {
+    clusterVmids = new Set([...(PVE.vms||[]), ...(PVE.containers||[])].map(x => +x.vmid));
+  } else if (selVal) {
+    const c = extraConns.find(x => x.id === selVal);
+    clusterVmids = new Set([...(c?.vms||[]), ...(c?.containers||[])].map(x => +x.vmid));
+  }
+  // null clusterVmids = All Clusters (no filter)
+  const rules = clusterVmids
+    ? allRules.filter(r => r.vmids.some(id => clusterVmids.has(+id)))
+    : allRules;
   const affinityConn = selVal && selVal !== '__primary' ? extraConns.find(c => c.id === selVal) : null;
 
   if(!allRules.length){
