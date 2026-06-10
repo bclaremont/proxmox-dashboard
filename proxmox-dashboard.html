@@ -486,6 +486,11 @@
   </div>
 </div>
 
+<div id="init-overlay" style="position:fixed;inset:0;background:var(--bg);z-index:1000;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:14px">
+  <span class="loading" style="width:22px;height:22px"></span>
+  <span style="font-size:13px;color:var(--muted)">Connecting…</span>
+</div>
+
 <div id="idle-warning-banner" style="display:none;background:rgba(234,179,8,.15);border-bottom:1px solid rgba(234,179,8,.4);padding:8px 20px;font-size:12px;color:var(--yellow);display:none;align-items:center;justify-content:center;gap:12px;position:sticky;top:0;z-index:500">
   <span></span>
   <button class="btn small warning" onclick="_lastActivity=Date.now();this.closest('#idle-warning-banner').style.display='none'">Stay logged in</button>
@@ -781,7 +786,7 @@
     <div id="alert-banner"></div>
 
     <!-- CONNECT -->
-    <div id="view-connect">
+    <div id="view-connect" style="display:none">
       <div id="connect-panel">
         <h2>PCC — Proxmox Management</h2>
         <p>Enter the URL of your Proxmox VE host. If you're running the PCC nginx proxy, the URL below is pre-filled automatically.</p>
@@ -1790,6 +1795,7 @@ async function pccLogout() {
 }
 
 async function pccPostLogin() {
+  document.getElementById('init-overlay')?.remove();
   // Show PCC Admin nav item for admins
   const adminNav = document.getElementById('nav-pcc-admin');
   if (adminNav && PCC_USER?.role === 'admin') adminNav.style.display = '';
@@ -19418,12 +19424,14 @@ document.addEventListener('click', e => {
     } else {
       PCC_TOKEN = null;
       sessionStorage.removeItem('pcc-token');
+      document.getElementById('init-overlay')?.remove();
       pccShowLogin();
     }
   } else {
     // Direct mode — show connect view as before
     restoreSidebarSections();
     restoreSidebarCollapse();
+    document.getElementById('init-overlay')?.remove();
     switchView('connect');
   }
 })();
