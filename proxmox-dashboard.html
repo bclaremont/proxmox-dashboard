@@ -3410,13 +3410,25 @@ function disconnect() {
 }
 
 function _updatePageTitle() {
-  const nodes = allNodes().map(n => n.node);
-  const extra = extraConns.filter(c => c.status === 'connected').map(c => c.name || c.host);
-  const parts = [...new Set(nodes)].slice(0, 3);
-  if (extra.length) parts.push(...extra.slice(0, 2));
-  document.title = parts.length
-    ? 'PCC — ' + parts.join(', ') + (parts.length < nodes.length + extra.length ? '…' : '')
-    : 'PCC — Proxmox Management';
+  if (!PVE.host && !extraConns.length) { document.title = 'PCC'; return; }
+
+  // Cluster names, not node names
+  const primary = PVE.clusterName || 'Primary';
+  const connected = extraConns.filter(c => c.status === 'connected');
+  const total = 1 + connected.length;
+
+  let clusterStr;
+  if (total === 1) {
+    clusterStr = primary;
+  } else if (total === 2) {
+    clusterStr = `${primary} · ${connected[0].name || connected[0].host}`;
+  } else {
+    clusterStr = `${primary} + ${total - 1} clusters`;
+  }
+
+  const nodeCount = allNodes().length;
+  const vmCount   = allVMs().length + allCTs().length;
+  document.title  = `PCC — ${clusterStr} (${nodeCount}N · ${vmCount}VM)`;
 }
 
 // ── HTTP ──────────────────────────────────────────────────
