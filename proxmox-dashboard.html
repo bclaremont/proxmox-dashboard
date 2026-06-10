@@ -3410,25 +3410,7 @@ function disconnect() {
 }
 
 function _updatePageTitle() {
-  if (!PVE.host && !extraConns.length) { document.title = 'PCC'; return; }
-
-  // Cluster names, not node names
-  const primary = PVE.clusterName || 'Primary';
-  const connected = extraConns.filter(c => c.status === 'connected');
-  const total = 1 + connected.length;
-
-  let clusterStr;
-  if (total === 1) {
-    clusterStr = primary;
-  } else if (total === 2) {
-    clusterStr = `${primary} · ${connected[0].name || connected[0].host}`;
-  } else {
-    clusterStr = `${primary} + ${total - 1} clusters`;
-  }
-
-  const nodeCount = allNodes().length;
-  const vmCount   = allVMs().length + allCTs().length;
-  document.title  = `PCC — ${clusterStr} (${nodeCount}N · ${vmCount}VM)`;
+  // Title is set by switchView — nothing to do here
 }
 
 // ── HTTP ──────────────────────────────────────────────────
@@ -4394,6 +4376,8 @@ function switchView(view) {
     const hostEl = document.getElementById('in-host');
     if (hostEl) hostEl.value = window.location.origin;
   }
+  const _viewTitles={connect:'Connect',connections:'Connections',worldmap:'World Map',savedview:'Saved View',overview:'Overview',vms:'Virtual Machines',containers:'Containers',nodes:'Nodes',tasks:'Tasks',syslog:'System Log',storage:'Storage',network:'Network',heatmap:'Heatmap',isolib:'ISO Library',contentlib:'Content Library',sdn:'SDN',capacity:'Capacity Planning',affinity:'Affinity Rules',drs:'DRS',hostprofiles:'Host Profiles',customspecs:'Custom Specs',schedules:'Schedules','pcc-admin':'Admin',datacenter:'Datacenter',pools:'Resource Pools',ceph:'Ceph',ha:'High Availability',firewall:'Firewall',backups:'Backups',users:'Users',webhooks:'Webhooks',certs:'Certificates',audit:'Audit Log',reports:'Reports',clustergraphs:'Cluster Graphs',tags:'Tags',tfa:'2FA',subscriptions:'Subscriptions',updates:'Updates',pbs:'Backup Server',disks:'Disk Health',uptime:'Uptime Report'};
+  document.title = 'PCC — ' + (_viewTitles[view] || view);
   const views=['connect','connections','worldmap','savedview','overview','vms','containers','nodes','tasks','syslog','storage','network','heatmap','isolib','contentlib','sdn','capacity','affinity','drs','hostprofiles','customspecs','schedules','pcc-admin','datacenter','pools','ceph','ha','firewall','backups','users','webhooks','certs','audit','reports','clustergraphs','tags','tfa','subscriptions','updates','pbs','disks','uptime'];
   views.forEach(v=>{
     const el=document.getElementById('view-'+v);
