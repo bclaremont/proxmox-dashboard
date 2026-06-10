@@ -12868,18 +12868,11 @@ function renderAffinityView() {
   const el=document.getElementById('affinity-content');
   const all=allVMs().concat(allCTs());
   const allRules=getAffinityRules();
-  // Build vmid set for the selected cluster only
-  let clusterVmids = null;
-  if (selVal === '__primary') {
-    clusterVmids = new Set([...(PVE.vms||[]), ...(PVE.containers||[])].map(x => +x.vmid));
-  } else if (selVal) {
-    const c = extraConns.find(x => x.id === selVal);
-    clusterVmids = new Set([...(c?.vms||[]), ...(c?.containers||[])].map(x => +x.vmid));
-  }
-  // null clusterVmids = All Clusters (no filter)
-  const rules = clusterVmids
-    ? allRules.filter(r => r.vmids.some(id => clusterVmids.has(+id)))
-    : allRules;
+  // Filter by rule's stored connId — '' = primary, specific id = that cluster
+  const targetConn = selVal === '' ? null : selVal === '__primary' ? '' : selVal;
+  const rules = targetConn === null
+    ? allRules
+    : allRules.filter(r => (r.connId||'') === targetConn);
   const affinityConn = selVal && selVal !== '__primary' ? extraConns.find(c => c.id === selVal) : null;
 
   if(!allRules.length){
@@ -12961,12 +12954,15 @@ function renderAffinityView() {
 
 // ── RULE MODALS ───────────────────────────────────────────
 
-function _buildAffinityVmOpts(selectedVmids=[]) {
+// Option value encodes "vmid|connId" so we always know which cluster a VM belongs to
+function _buildAffinityVmOpts(selectedMembers=[]) {
+  // selectedMembers: [{vmid, connId}] or legacy [vmid numbers]
+  const selKeys = new Set(selectedMembers.map(m =>
+    typeof m === 'object' ? `${m.vmid}|${m.connId||''}` : `${m}|`
+  ));
   const groups = [];
-  // Primary cluster
   const primary = [...(PVE.vms||[]), ...(PVE.containers||[])];
   if (primary.length) groups.push({ label: PVE.clusterName||'Primary', connId:'', items: primary });
-  // Extra clusters
   extraConns.forEach(c => {
     const items = [...(c.vms||[]), ...(c.containers||[])];
     if (items.length) groups.push({ label: c.name||c.host||c.id, connId: c.id, items });
@@ -12974,8 +12970,9 @@ function _buildAffinityVmOpts(selectedVmids=[]) {
   if (!groups.length) return '<option disabled>No VMs found</option>';
   return groups.map(g => {
     const opts = g.items.map(x => {
-      const sel = selectedVmids.includes(+x.vmid) ? ' selected' : '';
-      return `<option value="${x.vmid}"${sel}>${x.type.toUpperCase()} ${x.vmid} — ${escHtml(x.name||String(x.vmid))} (${escHtml(x.node)})</option>`;
+      const key = `${x.vmid}|${g.connId}`;
+      const sel = selKeys.has(key) ? ' selected' : '';
+      return `<option value="${key}"${sel}>${x.type.toUpperCase()} ${x.vmid} — ${escHtml(x.name||String(x.vmid))} (${escHtml(x.node)})</option>`;
     }).join('');
     return `<optgroup label="${escHtml(g.label)}">${opts}</optgroup>`;
   }).join('');
@@ -13037,12 +13034,16 @@ function openCreateAffinityModal() {
   modalCallback=()=>{
     const name=(document.getElementById('ar-name')?.value||'').trim();
     const type=document.getElementById('ar-type')?.value||'affinity';
-    const vmids=[...document.getElementById('ar-vms')?.selectedOptions||[]].map(o=>+o.value);
+    const members=[...document.getElementById('ar-vms')?.selectedOptions||[]].map(o=>{
+      const [vmid,connId='']=o.value.split('|'); return {vmid:+vmid,connId};
+    });
     const comment=(document.getElementById('ar-comment')?.value||'').trim();
     if(!name) return toast('Enter a rule name','error');
-    if(vmids.length<2) return toast('Select at least 2 VMs','error');
+    if(members.length<2) return toast('Select at least 2 VMs','error');
+    const connIds=[...new Set(members.map(m=>m.connId))];
+    if(connIds.length>1) return toast('All VMs must be from the same cluster','error');
     const rules=getAffinityRules();
-    rules.push({id:'ar-'+Date.now(),name,type,vmids,comment,enabled:true});
+    rules.push({id:'ar-'+Date.now(),name,type,vmids:members.map(m=>m.vmid),connId:connIds[0]||'',comment,enabled:true});
     saveAffinityRules(rules);
     toast(`Rule "${name}" created`,'success');
     renderAffinityView();
@@ -13054,7 +13055,9 @@ function openEditAffinityModal(id) {
   const rules=getAffinityRules();
   const rule=rules.find(r=>r.id===id);
   if(!rule) return;
-  const vmOpts = _buildAffinityVmOpts(rule.vmids||[]);
+  // Build member list: use stored connId if present, otherwise legacy vmid-only
+  const ruleMembers = (rule.vmids||[]).map(id=>({vmid:+id,connId:rule.connId||''}));
+  const vmOpts = _buildAffinityVmOpts(ruleMembers);
   document.getElementById('modal-title').textContent=`Edit Rule — ${rule.name}`;
   document.getElementById('modal-body').innerHTML=`
     <div class="create-vm-grid">
@@ -13073,12 +13076,16 @@ function openEditAffinityModal(id) {
   modalCallback=()=>{
     const name=(document.getElementById('er-name')?.value||'').trim();
     const type=document.getElementById('er-type')?.value||'affinity';
-    const vmids=[...document.getElementById('er-vms')?.selectedOptions||[]].map(o=>+o.value);
+    const members=[...document.getElementById('er-vms')?.selectedOptions||[]].map(o=>{
+      const [vmid,connId='']=o.value.split('|'); return {vmid:+vmid,connId};
+    });
     const comment=(document.getElementById('er-comment')?.value||'').trim();
     if(!name) return toast('Enter a rule name','error');
-    if(vmids.length<2) return toast('Select at least 2 VMs','error');
+    if(members.length<2) return toast('Select at least 2 VMs','error');
+    const connIds=[...new Set(members.map(m=>m.connId))];
+    if(connIds.length>1) return toast('All VMs must be from the same cluster','error');
     const idx=rules.findIndex(r=>r.id===id);
-    if(idx>=0){ rules[idx]={...rules[idx],name,type,vmids,comment}; saveAffinityRules(rules); }
+    if(idx>=0){ rules[idx]={...rules[idx],name,type,vmids:members.map(m=>m.vmid),connId:connIds[0]||'',comment}; saveAffinityRules(rules); }
     toast(`Rule updated`,'success'); renderAffinityView();
   };
   document.getElementById('modal-bg').classList.add('open');
