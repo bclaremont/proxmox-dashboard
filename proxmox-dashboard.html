@@ -486,6 +486,11 @@
   </div>
 </div>
 
+<div id="idle-warning-banner" style="display:none;background:rgba(234,179,8,.15);border-bottom:1px solid rgba(234,179,8,.4);padding:8px 20px;font-size:12px;color:var(--yellow);display:none;align-items:center;justify-content:center;gap:12px;position:sticky;top:0;z-index:500">
+  <span></span>
+  <button class="btn small warning" onclick="_lastActivity=Date.now();this.closest('#idle-warning-banner').style.display='none'">Stay logged in</button>
+</div>
+
 <div id="topbar">
   <div class="logo" title="PCC">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/><path d="M7 8h10M7 11h6"/></svg>
@@ -1225,6 +1230,7 @@
         <div class="dtab active"  onclick="switchPCCAdminTab('clusters')">Clusters</div>
         <div class="dtab"         onclick="switchPCCAdminTab('users')">Users</div>
         <div class="dtab"         onclick="switchPCCAdminTab('audit')">Audit Log</div>
+        <div class="dtab"         onclick="switchPCCAdminTab('security')">Security</div>
         <div class="dtab"         onclick="switchPCCAdminTab('account')">My Account</div>
       </div>
       <div id="pcc-admin-content"><div class="empty">Loading…</div></div>
@@ -1788,6 +1794,12 @@ function _syncShared(key, value) {
 }
 
 async function pccAutoConnect() {
+  // Load security settings (idle timeout) on connect
+  fetch('/api/admin/settings', { headers: { Authorization: 'Bearer ' + PCC_TOKEN } })
+    .then(r => r.ok ? r.json() : {})
+    .then(s => _applyIdleTimeout(s.idle_timeout_mins || 0))
+    .catch(() => {});
+
   let clusters;
   try {
     const r = await fetch('/api/clusters', { headers: { Authorization: 'Bearer ' + PCC_TOKEN } });
@@ -1879,7 +1891,7 @@ function loadPCCAdmin() {
 function switchPCCAdminTab(tab) {
   _pccAdminTab = tab;
   document.querySelectorAll('#pcc-admin-tabs .dtab').forEach((t, i) => {
-    t.classList.toggle('active', ['clusters','users','audit','account'][i] === tab);
+    t.classList.toggle('active', ['clusters','users','audit','security','account'][i] === tab);
   });
   const actEl = document.getElementById('pcc-admin-actions');
   if (actEl) actEl.innerHTML = tab === 'clusters' && PCC_USER?.role === 'admin'
@@ -1985,6 +1997,73 @@ async function _renderPCCAdminTab() {
     return;
   }
 
+  // ── SECURITY ──────────────────────────────────────────────
+  if (_pccAdminTab === 'security') {
+    const [sRes, logRes] = await Promise.all([
+      fetch('/api/admin/settings', { headers: hdr }).then(r=>r.json()).catch(()=>({})),
+      fetch('/api/admin/login-log?limit=50', { headers: hdr }).then(r=>r.json()).catch(()=>[]),
+    ]);
+    _secAllowlist = sRes.ip_allowlist || [];
+    const allowlist = _secAllowlist;
+    const idleTimeout = sRes.idle_timeout_mins || 0;
+
+    el.innerHTML = `
+      <!-- IP Allowlist -->
+      <div style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);padding:18px;margin-bottom:16px">
+        <div style="font-size:14px;font-weight:700;margin-bottom:4px">IP Allowlist</div>
+        <div style="font-size:12px;color:var(--muted);margin-bottom:12px">
+          Only allow access from these IP ranges. Empty = allow everyone.
+          <strong style="color:var(--yellow)"> 127.0.0.1 is always allowed.</strong>
+        </div>
+        <div id="allowlist-items" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px">
+          ${allowlist.map(cidr=>`<span style="background:var(--bg3);border:1px solid var(--border);border-radius:20px;padding:3px 10px;font-size:12px;font-family:monospace;display:flex;align-items:center;gap:6px">
+            ${escHtml(cidr)}
+            <span onclick="removeAllowlistEntry('${escHtml(cidr)}')" style="cursor:pointer;color:var(--red);font-size:14px;line-height:1" title="Remove">×</span>
+          </span>`).join('')||'<span style="font-size:12px;color:var(--muted)">No restrictions — all IPs allowed</span>'}
+        </div>
+        <div style="display:flex;gap:8px">
+          <input id="allowlist-new" placeholder="e.g. 192.168.1.0/24 or 1.2.3.4" style="flex:1;padding:6px 10px;font-size:13px;background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius);color:var(--text);font-family:monospace"/>
+          <button class="btn small primary" onclick="addAllowlistEntry()">Add</button>
+        </div>
+      </div>
+
+      <!-- Session Timeout -->
+      <div style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);padding:18px;margin-bottom:16px">
+        <div style="font-size:14px;font-weight:700;margin-bottom:4px">Idle Session Timeout</div>
+        <div style="font-size:12px;color:var(--muted);margin-bottom:12px">Auto-logout after this many minutes of inactivity. 0 = disabled.</div>
+        <div style="display:flex;gap:8px;align-items:center">
+          <select id="idle-timeout-sel" style="padding:6px 10px;font-size:13px;background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius);color:var(--text)">
+            <option value="0"${idleTimeout===0?' selected':''}>Disabled</option>
+            <option value="15"${idleTimeout===15?' selected':''}>15 minutes</option>
+            <option value="30"${idleTimeout===30?' selected':''}>30 minutes</option>
+            <option value="60"${idleTimeout===60?' selected':''}>1 hour</option>
+            <option value="120"${idleTimeout===120?' selected':''}>2 hours</option>
+            <option value="480"${idleTimeout===480?' selected':''}>8 hours</option>
+          </select>
+          <button class="btn small primary" onclick="saveSecuritySettings()">Save</button>
+        </div>
+      </div>
+
+      <!-- Login Activity -->
+      <div style="font-size:14px;font-weight:700;margin-bottom:10px">Recent Login Activity</div>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Time</th><th>User</th><th>IP</th><th>Result</th><th>Browser</th></tr></thead>
+        <tbody>${logRes.length ? logRes.map(row=>{
+          const ok=row.success===1;
+          const ua=(row.ua||'').replace(/\(.*?\)/g,'').split('/')[0].trim().slice(0,40);
+          return `<tr>
+            <td style="font-size:11px;color:var(--muted);white-space:nowrap">${new Date(row.ts*1000).toLocaleString()}</td>
+            <td><strong>${escHtml(row.username)}</strong></td>
+            <td style="font-family:monospace;font-size:12px;color:var(--muted)">${escHtml(row.ip)}</td>
+            <td><span class="badge ${ok?'running':'stopped'}" style="font-size:10px"><span class="badge-dot"></span>${ok?'Success':'Failed'}</span></td>
+            <td style="font-size:11px;color:var(--muted)">${escHtml(ua)}</td>
+          </tr>`;
+        }).join('') : '<tr><td colspan="5" class="empty">No login records yet</td></tr>'}
+        </tbody>
+      </table></div>`;
+    return;
+  }
+
   // ── MY ACCOUNT ────────────────────────────────────────────
   if (_pccAdminTab === 'account') {
     const actEl = document.getElementById('pcc-admin-actions');
@@ -2005,6 +2084,96 @@ async function _renderPCCAdminTab() {
     </div>`;
   }
 }
+
+// ── SECURITY SETTINGS ────────────────────────────────────
+let _secAllowlist = [];
+
+async function saveSecuritySettings() {
+  const idleTimeout = parseInt(document.getElementById('idle-timeout-sel')?.value || '0');
+  const r = await fetch('/api/admin/settings', {
+    method: 'PUT',
+    headers: { Authorization: 'Bearer ' + PCC_TOKEN, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ip_allowlist: _secAllowlist, idle_timeout_mins: idleTimeout })
+  });
+  if (!r.ok) { toast('Failed to save settings', 'error'); return; }
+  toast('Security settings saved', 'success');
+  _applyIdleTimeout(idleTimeout);
+  switchPCCAdminTab('security');
+}
+
+function addAllowlistEntry() {
+  const inp = document.getElementById('allowlist-new');
+  const val = (inp?.value || '').trim();
+  if (!val) return;
+  // Basic validation
+  if (!/^[\d.]+(?:\/\d+)?$/.test(val)) { toast('Invalid CIDR — use x.x.x.x or x.x.x.x/nn', 'error'); return; }
+  if (_secAllowlist.includes(val)) { toast('Already in list', 'info'); return; }
+  _secAllowlist.push(val);
+  if (inp) inp.value = '';
+  _refreshAllowlistDisplay();
+}
+
+function removeAllowlistEntry(cidr) {
+  _secAllowlist = _secAllowlist.filter(c => c !== cidr);
+  _refreshAllowlistDisplay();
+}
+
+function _refreshAllowlistDisplay() {
+  const el = document.getElementById('allowlist-items');
+  if (!el) return;
+  el.innerHTML = _secAllowlist.map(cidr =>
+    `<span style="background:var(--bg3);border:1px solid var(--border);border-radius:20px;padding:3px 10px;font-size:12px;font-family:monospace;display:flex;align-items:center;gap:6px">
+      ${escHtml(cidr)}
+      <span onclick="removeAllowlistEntry('${escHtml(cidr)}')" style="cursor:pointer;color:var(--red);font-size:14px;line-height:1" title="Remove">×</span>
+    </span>`
+  ).join('') || '<span style="font-size:12px;color:var(--muted)">No restrictions — all IPs allowed</span>';
+}
+
+// Populate _secAllowlist when security tab loads
+const _origRenderSecurity = async () => {
+  const r = await fetch('/api/admin/settings', {
+    headers: { Authorization: 'Bearer ' + PCC_TOKEN }
+  }).catch(() => ({ ok: false }));
+  if (r.ok) {
+    const s = await r.json();
+    _secAllowlist = s.ip_allowlist || [];
+    _applyIdleTimeout(s.idle_timeout_mins || 0);
+  }
+};
+
+// ── SESSION IDLE TIMEOUT ──────────────────────────────────
+let _idleTimeoutMs = 0;
+let _lastActivity  = Date.now();
+let _idleWarning   = false;
+
+function _applyIdleTimeout(mins) {
+  _idleTimeoutMs = mins > 0 ? mins * 60 * 1000 : 0;
+  _idleWarning = false;
+  const banner = document.getElementById('idle-warning-banner');
+  if (banner) banner.style.display = 'none';
+}
+
+// Track activity
+['mousemove','keydown','click','scroll','touchstart'].forEach(evt =>
+  document.addEventListener(evt, () => { _lastActivity = Date.now(); _idleWarning = false;
+    const banner = document.getElementById('idle-warning-banner');
+    if (banner) banner.style.display = 'none';
+  }, { passive: true })
+);
+
+setInterval(() => {
+  if (!_idleTimeoutMs || !PCC_TOKEN) return;
+  const idle = Date.now() - _lastActivity;
+  const warnAt = _idleTimeoutMs - 60_000;
+  if (idle >= _idleTimeoutMs) {
+    toast('Session expired due to inactivity', 'info');
+    pccLogout();
+  } else if (idle >= warnAt && !_idleWarning) {
+    _idleWarning = true;
+    const banner = document.getElementById('idle-warning-banner');
+    if (banner) { banner.style.display = ''; banner.querySelector('span').textContent = 'Session expiring in 60 seconds due to inactivity.'; }
+  }
+}, 10_000);
 
 async function changeOwnPassword() {
   const cur  = document.getElementById('acc-cur-pw')?.value;

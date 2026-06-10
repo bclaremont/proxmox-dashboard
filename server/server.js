@@ -69,6 +69,20 @@ db.exec(`
     status     INTEGER,
     detail     TEXT
   );
+
+  CREATE TABLE IF NOT EXISTS login_log (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts         INTEGER NOT NULL DEFAULT (unixepoch()),
+    ip         TEXT    NOT NULL,
+    username   TEXT    NOT NULL,
+    success    INTEGER NOT NULL DEFAULT 0,
+    ua         TEXT
+  );
+
+  CREATE TABLE IF NOT EXISTS settings (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+  );
 `);
 
 // Seed default admin on first run
@@ -142,6 +156,42 @@ setInterval(() => {
   }
 }, 60 * 60 * 1000); // prune hourly
 
+// ── CIDR / IP HELPERS ────────────────────────────────────
+
+function _clientIp(req) {
+  const fwd = req.headers['x-forwarded-for'];
+  const raw = fwd ? fwd.split(',')[0].trim() : (req.socket?.remoteAddress || '');
+  return raw.replace(/^::ffff:/i, '');
+}
+
+function _ipToInt(ip) {
+  const p = ip.split('.').map(Number);
+  return ((p[0] << 24) | (p[1] << 16) | (p[2] << 8) | p[3]) >>> 0;
+}
+
+function _ipInCidr(ip, cidr) {
+  ip = ip.replace(/^::ffff:/i, '');
+  if (!cidr.includes('/')) cidr += '/32';
+  const [range, bits] = cidr.split('/');
+  const pfx = parseInt(bits);
+  if (isNaN(pfx) || pfx < 0 || pfx > 32) return false;
+  try {
+    const mask = pfx === 0 ? 0 : (~0 << (32 - pfx)) >>> 0;
+    return (_ipToInt(ip) & mask) === (_ipToInt(range) & mask);
+  } catch { return false; }
+}
+
+function getSetting(key, defaultVal = null) {
+  try {
+    const row = db.prepare('SELECT value FROM settings WHERE key = ?').get(key);
+    return row ? JSON.parse(row.value) : defaultVal;
+  } catch { return defaultVal; }
+}
+
+function setSetting(key, value) {
+  db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?,?)').run(key, JSON.stringify(value));
+}
+
 // ── HELPERS ───────────────────────────────────────────────
 
 function authMiddleware(req, res, next) {
@@ -193,6 +243,18 @@ const parseJson = express.json();
 const parseForm = express.urlencoded({ extended: true });
 function bodyParser(req, res, next) { parseJson(req, res, () => parseForm(req, res, next)); }
 
+// ── IP ALLOWLIST ──────────────────────────────────────────
+// Runs before all routes. Empty list = allow all.
+// 127.0.0.1 / ::1 always allowed so local access can never be locked out.
+app.use((req, res, next) => {
+  const allowlist = getSetting('ip_allowlist', []);
+  if (!allowlist.length) return next();
+  const ip = _clientIp(req);
+  if (ip === '127.0.0.1' || ip === '::1' || ip === '') return next();
+  if (allowlist.some(cidr => _ipInCidr(ip, cidr))) return next();
+  return res.status(403).json({ error: `Access denied — ${ip} is not in the IP allowlist` });
+});
+
 // ── LOGIN RATE LIMITER ────────────────────────────────────
 // In-memory per-IP counter. Allows 10 attempts per 15-minute window.
 // No external dependency — resets on server restart (acceptable for our threat model).
@@ -239,9 +301,16 @@ setInterval(() => {
 
 app.get('/api/health', (req, res) => res.json({ ok: true, version: '1.0.0' }));
 
+const loginLogInsert = db.prepare(
+  'INSERT INTO login_log (ip, username, success, ua) VALUES (?,?,?,?)'
+);
+function logLogin(ip, username, success, req) {
+  try { loginLogInsert.run(ip, username || '__unknown__', success ? 1 : 0, (req.headers['user-agent']||'').slice(0,120)); } catch {}
+}
+
 app.post('/api/auth/login', loginRateLimit, bodyParser, (req, res) => {
   const { username, password } = req.body || {};
-  const ip  = req.headers['x-forwarded-for']?.split(',')[0].trim() || req.socket.remoteAddress || 'unknown';
+  const ip  = _clientIp(req) || 'unknown';
   const now = Date.now();
 
   if (!username || !password) return res.status(400).json({ error: 'username and password required' });
@@ -267,6 +336,7 @@ app.post('/api/auth/login', loginRateLimit, bodyParser, (req, res) => {
       return res.status(423).json({ error: `Too many failed attempts — account locked for 30 minutes` });
     }
     audit(username || '__unknown__', 'POST', '/api/auth/login', null, 401, { ip, reason: 'invalid credentials', failCount: failures });
+    logLogin(ip, username, false, req);
     return res.status(401).json({ error: 'Invalid credentials' });
   }
 
@@ -283,6 +353,7 @@ app.post('/api/auth/login', loginRateLimit, bodyParser, (req, res) => {
     { expiresIn: '4h' }
   );
   audit(username, 'POST', '/api/auth/login', null, 200, { ip });
+  logLogin(ip, username, true, req);
   res.json({ token, username: user.username, role: user.role });
 });
 
@@ -436,6 +507,33 @@ app.put('/api/shared/:key', authMiddleware, bodyParser, (req, res) => {
 app.get('/api/audit', authMiddleware, (req, res) => {
   const limit = Math.min(parseInt(req.query.limit) || 100, 500);
   res.json(db.prepare('SELECT * FROM audit_log ORDER BY id DESC LIMIT ?').all(limit));
+});
+
+// ── SECURITY SETTINGS ─────────────────────────────────────
+
+app.get('/api/admin/settings', authMiddleware, adminOnly, (req, res) => {
+  const rows = db.prepare('SELECT key, value FROM settings').all();
+  const out = {};
+  rows.forEach(r => { try { out[r.key] = JSON.parse(r.value); } catch { out[r.key] = r.value; } });
+  res.json(out);
+});
+
+app.put('/api/admin/settings', authMiddleware, adminOnly, bodyParser, (req, res) => {
+  const allowed = ['ip_allowlist', 'idle_timeout_mins'];
+  const tx = db.transaction(() => {
+    for (const [k, v] of Object.entries(req.body || {})) {
+      if (!allowed.includes(k)) continue;
+      setSetting(k, v);
+    }
+  });
+  tx();
+  audit(req.user.username, 'PUT', '/api/admin/settings', null, 200, Object.keys(req.body || {}));
+  res.json({ ok: true });
+});
+
+app.get('/api/admin/login-log', authMiddleware, adminOnly, (req, res) => {
+  const limit = Math.min(parseInt(req.query.limit) || 100, 500);
+  res.json(db.prepare('SELECT * FROM login_log ORDER BY id DESC LIMIT ?').all(limit));
 });
 
 // ── PROXY TO PROXMOX ──────────────────────────────────────
