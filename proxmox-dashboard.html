@@ -12895,12 +12895,14 @@ function renderAffinityView() {
         const nodeColors={};
         const nodePalette=['var(--blue)','var(--purple)','var(--teal)','var(--accent)','var(--green)'];
         [...new Set(running.map(x=>x.node))].forEach((n,i)=>nodeColors[n]=nodePalette[i%nodePalette.length]);
+        const _affinityConnName = id => { if(!id) return PVE.clusterName||'Primary'; const c=extraConns.find(x=>x.id===id); return c?(c.name||c.host||id):id; };
         const vmChips=members.map(x=>{
           const col=nodeColors[x.node]||'var(--muted)';
           const name=x.name||String(x.vmid);
+          const clName=_affinityConnName(x.connId||'');
           return `<span style="display:inline-flex;align-items:center;gap:4px;background:${col}20;color:${col};border:1px solid ${col}40;border-radius:12px;padding:2px 8px;font-size:11px;font-weight:600">
             <span style="width:6px;height:6px;border-radius:50%;background:${col}"></span>${escHtml(name)}
-            <span style="font-size:9px;opacity:.7">${x.node}</span>
+            <span style="font-size:9px;opacity:.7">${x.node} · ${escHtml(clName)}</span>
           </span>`;}).join('');
 
         return `<div style="background:var(--bg2);border:1px solid ${violated&&rule.enabled?'var(--red)':'var(--border)'};border-left:3px solid ${typeCol};border-radius:var(--radius);padding:14px 16px">
@@ -12932,9 +12934,44 @@ function renderAffinityView() {
 
 // ── RULE MODALS ───────────────────────────────────────────
 
+function _buildAffinityVmOpts(selectedVmids=[]) {
+  const groups = [];
+  // Primary cluster
+  const primary = [...(PVE.vms||[]), ...(PVE.containers||[])];
+  if (primary.length) groups.push({ label: PVE.clusterName||'Primary', connId:'', items: primary });
+  // Extra clusters
+  extraConns.forEach(c => {
+    const items = [...(c.vms||[]), ...(c.containers||[])];
+    if (items.length) groups.push({ label: c.name||c.host||c.id, connId: c.id, items });
+  });
+  if (!groups.length) return '<option disabled>No VMs found</option>';
+  return groups.map(g => {
+    const opts = g.items.map(x => {
+      const sel = selectedVmids.includes(+x.vmid) ? ' selected' : '';
+      return `<option value="${x.vmid}"${sel}>${x.type.toUpperCase()} ${x.vmid} — ${escHtml(x.name||String(x.vmid))} (${escHtml(x.node)})</option>`;
+    }).join('');
+    return `<optgroup label="${escHtml(g.label)}">${opts}</optgroup>`;
+  }).join('');
+}
+
+function _affinityVmCrossClusterWarn(selEl, previewEl) {
+  const opts = [...selEl.selectedOptions||[]];
+  if (opts.length < 2) return;
+  const all = allVMs().concat(allCTs());
+  const connIds = new Set(opts.map(o => {
+    const vm = all.find(x=>String(x.vmid)===o.value);
+    return vm ? (vm.connId||'') : '';
+  }));
+  if (connIds.size > 1 && previewEl) {
+    previewEl.textContent = '⚠ VMs from different clusters selected — affinity rules cannot migrate across clusters.';
+    previewEl.style.color = 'var(--yellow)';
+    return true;
+  }
+  return false;
+}
+
 function openCreateAffinityModal() {
-  const all=allVMs().concat(allCTs());
-  const vmOpts=all.map(x=>`<option value="${x.vmid}">${x.type.toUpperCase()} ${x.vmid} — ${escHtml(x.name||String(x.vmid))} (${x.node})</option>`).join('');
+  const vmOpts = _buildAffinityVmOpts();
   document.getElementById('modal-title').textContent='Create Affinity Rule';
   document.getElementById('modal-body').innerHTML=`
     <div class="create-vm-grid">
@@ -12958,6 +12995,8 @@ function openCreateAffinityModal() {
       const sel=[...document.getElementById('ar-vms')?.selectedOptions||[]].map(o=>o.text);
       const type=document.getElementById('ar-type')?.value;
       const prev=document.getElementById('ar-preview');
+      const vmsEl=document.getElementById('ar-vms');
+      if(_affinityVmCrossClusterWarn(vmsEl,prev)) return;
       if(prev&&sel.length>1){
         const label=type==='affinity'?'will run on the same node':'will run on different nodes';
         prev.textContent=`✓ ${sel.length} VMs selected — they ${label}`;
@@ -12988,8 +13027,7 @@ function openEditAffinityModal(id) {
   const rules=getAffinityRules();
   const rule=rules.find(r=>r.id===id);
   if(!rule) return;
-  const all=allVMs().concat(allCTs());
-  const vmOpts=all.map(x=>`<option value="${x.vmid}"${rule.vmids.includes(+x.vmid)?' selected':''}>${x.type.toUpperCase()} ${x.vmid} — ${escHtml(x.name||String(x.vmid))} (${x.node})</option>`).join('');
+  const vmOpts = _buildAffinityVmOpts(rule.vmids||[]);
   document.getElementById('modal-title').textContent=`Edit Rule — ${rule.name}`;
   document.getElementById('modal-body').innerHTML=`
     <div class="create-vm-grid">
@@ -13230,12 +13268,13 @@ function runDRSAnalysis() {
   el.innerHTML='<div class="empty"><span class="loading"></span> Analysing cluster balance…</div>';
 
   const drsConn = getViewConn('drs-conn');
-  const nodeStatuses = drsConn ? (drsConn.nodeStatuses||[]) : (PVE.nodeStatuses||[]);
+  const nodeStatuses = drsConn ? (drsConn.nodeStatuses||[]) : allNodes();
   const vms = drsConn
-    ? [...(drsConn.vms||[]),...(drsConn.cts||[])]
-    : [...(PVE.vms||[]),...(PVE.cts||[])];
+    ? [...(drsConn.vms||[]),...(drsConn.containers||[])]
+    : allVMs().concat(allCTs());
   if(!nodeStatuses.length) { el.innerHTML='<div class="empty">No node data — connect to a cluster first.</div>'; return; }
-  const clusterLabel = drsConn ? (drsConn.name||drsConn.host||'Remote') : (PVE.clusterName||'Primary');
+  const clusterLabel = drsConn ? (drsConn.name||drsConn.host||'Remote') : 'All Clusters';
+  const _drsConnName = id => { if(!id) return PVE.clusterName||'Primary'; const c=extraConns.find(x=>x.id===id); return c?(c.name||c.host||id):id; };
 
   const nodeInfos=_drsNodeInfo(nodeStatuses,vms);
   const scores=nodeInfos.map(n=>n.score);
@@ -13286,10 +13325,11 @@ function runDRSAnalysis() {
         const label=over?'OVER':under?'UNDER':'OK';
         const labelCol=over?'var(--red)':under?'var(--blue)':'var(--green)';
         return `<div style="background:var(--bg2);border:1px solid var(--border);border-top:3px solid ${border};border-radius:var(--radius);padding:12px">
-          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">
             <strong style="font-size:13px">${escHtml(n.node)}</strong>
             <span style="font-size:10px;font-weight:700;color:${labelCol}">${label}</span>
           </div>
+          <div style="font-size:10px;color:var(--muted);margin-bottom:6px">${escHtml(_drsConnName(n.connId))}</div>
           <div style="font-size:11px;color:var(--muted);margin-bottom:2px">CPU ${n.cpu.toFixed(1)}%</div>
           <div class="gauge-bar" style="margin-bottom:6px"><div class="gauge-fill ${gaugeClass(n.cpu)}" style="width:${Math.min(n.cpu,100)}%"></div></div>
           <div style="font-size:11px;color:var(--muted);margin-bottom:2px">RAM ${n.mem.toFixed(1)}%</div>
@@ -13308,13 +13348,14 @@ function runDRSAnalysis() {
     </div>
     ${recs.length?`
     <div class="table-wrap" style="margin-bottom:16px"><table>
-      <thead><tr><th>VM / CT</th><th>From Node</th><th>To Node</th><th>Reason</th><th>Memory</th><th>Improvement</th><th>Actions</th></tr></thead>
+      <thead><tr><th>VM / CT</th><th>Cluster</th><th>From Node</th><th>To Node</th><th>Reason</th><th>Memory</th><th>Improvement</th><th>Actions</th></tr></thead>
       <tbody id="drs-recs-body">${recs.map((r,i)=>`<tr id="drs-rec-${i}">
         <td>
           <span class="type-chip ${r.type==='vm'?'vm':'ct'}">${r.type.toUpperCase()}</span>
           <strong style="margin-left:6px">${escHtml(r.name)}</strong>
           <span style="font-size:11px;color:var(--muted);margin-left:4px">${r.vmid}</span>
         </td>
+        <td style="font-size:12px;color:var(--muted)">${escHtml(_drsConnName(r.connId))}</td>
         <td style="color:var(--red)">${escHtml(r.fromNode)}</td>
         <td style="color:var(--green)">→ ${escHtml(r.toNode)}</td>
         <td style="font-size:12px;color:var(--muted)">${escHtml(r.reason)}</td>
@@ -13337,7 +13378,8 @@ function runDRSAnalysis() {
     <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:10px">
       ${nodeInfos.map(n=>`
         <div style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);padding:12px">
-          <div style="font-weight:700;margin-bottom:8px;font-size:13px">${escHtml(n.node)} — ${n.vms.length} VMs running</div>
+          <div style="font-weight:700;margin-bottom:2px;font-size:13px">${escHtml(n.node)} — ${n.vms.length} VMs running</div>
+          <div style="font-size:10px;color:var(--muted);margin-bottom:8px">${escHtml(_drsConnName(n.connId))}</div>
           ${n.vms.length?n.vms.map(v=>{
             const cpuPct=v.cpu?(v.cpu*100).toFixed(0):0;
             const memPct=v.mem&&v.maxmem?((v.mem/v.maxmem)*100).toFixed(0):0;
