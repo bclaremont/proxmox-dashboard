@@ -4880,7 +4880,7 @@ async function toggleStorageDisable(storageName, connId, currentlyDisabled) {
 
 // ── NETWORK ───────────────────────────────────────────────
 
-let _netNode = ''; let _netConnId = '';
+let _netNode = ''; let _netConnId = ''; let _netIfaces = [];
 
 async function loadNetwork() {
   const conn = getViewConn('network-conn');
@@ -4897,7 +4897,7 @@ async function loadNetwork() {
   try {
     const d = await get(`/api2/json/nodes/${node}/network`);
     const ifaces = (d.data||[]).sort((a,b)=>(a.iface||'').localeCompare(b.iface||''));
-    PVE.network = ifaces.map(i=>({...i,node}));
+    _netIfaces = ifaces.map(i=>({...i,node}));
     // Show Apply button if pending changes detected
     const pending = !!(d.changes || ifaces.some(i=>i.pending));
     const applyBtn = document.getElementById('net-apply-btn');
@@ -4909,7 +4909,7 @@ async function loadNetwork() {
 }
 
 function renderNetwork() {
-  const ifaces = PVE.network;
+  const ifaces = _netIfaces;
 
   // Summary counts
   const bridges = ifaces.filter(i=>i.type==='bridge').length;
@@ -5029,7 +5029,7 @@ function _netTypeFields(type, c={}) {
     ${ipFields}${common}`;
   }
   if (type==='vlan') {
-    const physIfaces = PVE.network.filter(i=>i.type==='eth'||i.type==='bridge'||i.type==='bond').map(i=>i.iface);
+    const physIfaces = _netIfaces.filter(i=>i.type==='eth'||i.type==='bridge'||i.type==='bond').map(i=>i.iface);
     const rawDevice  = c['vlan-raw-device']||c.vlan_raw_device||'';
     const vlanOpts   = physIfaces.map(i=>`<option value="${i}"${i===rawDevice?' selected':''}>${i}</option>`).join('');
     return `
@@ -13936,7 +13936,9 @@ function _renderDCTab() {
   if (_dcTab==='status') {
     const cluster = dcData.status.find(s=>s.type==='cluster') || {};
     const nodes   = dcData.status.filter(s=>s.type==='node');
-    const allItems= allVMs().concat(allCTs());
+    const _dcConn = resolveConn(cid);
+    const allItems= _dcConn ? [...(_dcConn.vms||[]),...(_dcConn.containers||[])]
+                            : [...(PVE.vms||[]),...(PVE.containers||[])];
     const running = allItems.filter(x=>x.status==='running').length;
     el.innerHTML = `
       <div class="stats-grid" style="margin-bottom:16px">
