@@ -212,6 +212,22 @@
     #modal.modal-success{border-top-color:var(--green);}
     #modal.modal-info{border-top-color:var(--blue);}
     #modal h3{font-size:16px;font-weight:700;margin-bottom:16px;}
+    /* COMMAND PALETTE */
+    #cmdpal{position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:900;display:none;align-items:flex-start;justify-content:center;padding-top:80px;}
+    #cmdpal.open{display:flex;}
+    #cmdpal-box{width:100%;max-width:600px;background:var(--bg2);border:1px solid var(--border);border-radius:12px;overflow:hidden;box-shadow:0 24px 64px rgba(0,0,0,.6);}
+    #cmdpal-input-wrap{display:flex;align-items:center;gap:10px;padding:14px 16px;border-bottom:1px solid var(--border);}
+    #cmdpal-input{flex:1;background:none;border:none;outline:none;font:15px var(--font);color:var(--text);}
+    #cmdpal-input::placeholder{color:var(--muted);}
+    #cmdpal-results{max-height:400px;overflow-y:auto;}
+    .cp-item{display:flex;align-items:center;gap:10px;padding:9px 16px;cursor:pointer;}
+    .cp-item:hover,.cp-item.cp-active{background:var(--bg3);}
+    .cp-icon{width:30px;height:30px;border-radius:7px;display:flex;align-items:center;justify-content:center;font-size:14px;flex-shrink:0;}
+    .cp-section{font-size:10px;text-transform:uppercase;letter-spacing:1.2px;color:var(--muted);padding:8px 16px 3px;border-top:1px solid var(--border);}
+    .cp-section:first-child{border-top:none;}
+    /* PERF MODAL */
+    #modal.modal-wide{max-width:700px;width:700px;}
+    .perf-chart-grid{display:grid;grid-template-columns:1fr 1fr;gap:0 20px;}
     .modal-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:20px;}
     /* TOAST */
     #toast-container{position:fixed;bottom:20px;right:20px;z-index:700;display:flex;flex-direction:column;gap:8px;}
@@ -1544,6 +1560,18 @@
   </div>
 </div>
 
+<!-- COMMAND PALETTE -->
+<div id="cmdpal" onclick="if(event.target===this)closeCmdPalette()">
+  <div id="cmdpal-box">
+    <div id="cmdpal-input-wrap">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:18px;height:18px;color:var(--muted);flex-shrink:0"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+      <input id="cmdpal-input" placeholder="Search VMs, containers, nodes, views…" autocomplete="off" spellcheck="false" oninput="renderCmdPalette()" onkeydown="cmdPaletteNav(event)"/>
+      <kbd style="font-size:10px;color:var(--muted);background:var(--bg3);border:1px solid var(--border);border-radius:4px;padding:2px 7px;flex-shrink:0">ESC</kbd>
+    </div>
+    <div id="cmdpal-results"></div>
+  </div>
+</div>
+
 <!-- NOTIFICATION PANEL -->
 <div id="notif-panel" style="display:none">
   <div class="notif-hdr">
@@ -2379,6 +2407,9 @@ let _kbPending = false, _kbTimer = null;
 document.addEventListener('keydown', e => {
   const tag = (e.target.tagName||'').toUpperCase();
   const inInput = tag==='INPUT'||tag==='TEXTAREA'||tag==='SELECT';
+
+  if ((e.ctrlKey||e.metaKey) && e.key==='k') { e.preventDefault(); openCmdPalette(); return; }
+
   if (inInput && e.key!=='Escape') return;
 
   if (e.key==='?' && !inInput) { showKeyboardShortcuts(); return; }
@@ -2396,8 +2427,196 @@ document.addEventListener('keydown', e => {
     if (dest && PVE.host) switchView(dest);
     return;
   }
-  if (e.key==='Escape') { hideSearch(); closeNotifPanel(); closeModal(); }
+  if (e.key==='Escape') { hideSearch(); closeNotifPanel(); closeModal(); closeCmdPalette(); }
 });
+
+// ── COMMAND PALETTE ───────────────────────────────────────
+let _cpItems=[], _cpIdx=0;
+
+const _CP_VIEWS=[
+  {view:'overview',label:'Overview',icon:'⊞'},{view:'vms',label:'Virtual Machines',icon:'🖥'},
+  {view:'containers',label:'Containers',icon:'📦'},{view:'nodes',label:'Nodes',icon:'🖧'},
+  {view:'storage',label:'Storage',icon:'💾'},{view:'network',label:'Network',icon:'🔗'},
+  {view:'heatmap',label:'Heatmap',icon:'🌡'},{view:'tasks',label:'Tasks',icon:'⚙'},
+  {view:'backups',label:'Backups',icon:'📀'},{view:'firewall',label:'Firewall',icon:'🛡'},
+  {view:'users',label:'Users',icon:'👤'},{view:'tags',label:'Tags',icon:'🏷'},
+  {view:'affinity',label:'Affinity Rules',icon:'⬡'},{view:'drs',label:'DRS',icon:'⚖'},
+  {view:'capacity',label:'Capacity Planning',icon:'📈'},{view:'schedules',label:'Schedules',icon:'📅'},
+  {view:'reports',label:'Reports',icon:'📊'},{view:'audit',label:'Audit Log',icon:'📋'},
+  {view:'updates',label:'Updates',icon:'🔄'},{view:'ceph',label:'Ceph',icon:'🗄'},
+  {view:'ha',label:'High Availability',icon:'🔁'},{view:'pools',label:'Resource Pools',icon:'🗂'},
+];
+
+function openCmdPalette() {
+  const pal=document.getElementById('cmdpal'); if(!pal) return;
+  pal.classList.add('open');
+  const inp=document.getElementById('cmdpal-input');
+  if(inp){inp.value='';inp.focus();}
+  renderCmdPalette();
+}
+function closeCmdPalette() { document.getElementById('cmdpal')?.classList.remove('open'); }
+
+function renderCmdPalette() {
+  const q=(document.getElementById('cmdpal-input')?.value||'').toLowerCase().trim();
+  const res=document.getElementById('cmdpal-results'); if(!res) return;
+
+  const score=(s)=>{ s=s.toLowerCase(); if(s===q) return 3; if(s.startsWith(q)) return 2; if(s.includes(q)) return 1; return 0; };
+  const match=(a,...fields)=>!q||fields.some(f=>score(String(f||''))>0);
+
+  const items=[];
+
+  // Views
+  _CP_VIEWS.forEach(v=>{
+    if(match(q,v.label,v.view)) items.push({cat:'Views',type:'view',label:v.label,icon:v.icon,sub:'Navigate',_s:score(v.label)+score(v.view),action:()=>{switchView(v.view);closeCmdPalette();}});
+  });
+
+  // VMs
+  allVMs().forEach(v=>{
+    if(match(q,v.name,v.vmid,v.node)) items.push({cat:'VMs',type:'vm',label:v.name||String(v.vmid),icon:'🖥',
+      sub:`VM ${v.vmid} · ${v.node}${v.connId?' · '+getConnName(v.connId):''}`,status:v.status,
+      _s:score(v.name||'')+score(String(v.vmid)),action:()=>{openDetail(v);closeCmdPalette();}});
+  });
+
+  // Containers
+  allCTs().forEach(v=>{
+    if(match(q,v.name,v.vmid,v.node)) items.push({cat:'Containers',type:'ct',label:v.name||String(v.vmid),icon:'📦',
+      sub:`CT ${v.vmid} · ${v.node}${v.connId?' · '+getConnName(v.connId):''}`,status:v.status,
+      _s:score(v.name||'')+score(String(v.vmid)),action:()=>{openDetail(v);closeCmdPalette();}});
+  });
+
+  // Nodes
+  allNodes().forEach(n=>{
+    if(match(q,n.node)) items.push({cat:'Nodes',type:'node',label:n.node,icon:'🖧',
+      sub:`Node${n.connId?' · '+getConnName(n.connId):''}`,
+      _s:score(n.node),action:()=>{switchView('nodes');closeCmdPalette();}});
+  });
+
+  // Sort by score desc, keep top 25
+  _cpItems=items.sort((a,b)=>b._s-a._s).slice(0,25);
+  _cpIdx=0;
+
+  if(!_cpItems.length){
+    res.innerHTML='<div style="padding:24px;text-align:center;color:var(--muted);font-size:13px">No results</div>';
+    return;
+  }
+
+  const typeCol={view:'var(--accent)',vm:'var(--blue)',ct:'var(--teal)',node:'var(--purple)'};
+  let lastCat='',html='';
+  _cpItems.forEach((item,i)=>{
+    if(item.cat!==lastCat){
+      html+=`<div class="cp-section">${item.cat}</div>`;
+      lastCat=item.cat;
+    }
+    const dot=item.status?`<span style="width:6px;height:6px;border-radius:50%;display:inline-block;margin-right:4px;background:${item.status==='running'?'var(--green)':'var(--muted)'}"></span>`:'';
+    const col=typeCol[item.type]||'var(--muted)';
+    html+=`<div class="cp-item${i===0?' cp-active':''}" data-idx="${i}" onmouseenter="_cpHover(${i})" onclick="_cpSelect(${i})">
+      <div class="cp-icon" style="background:${col}22;color:${col}">${item.icon}</div>
+      <div style="flex:1;min-width:0;overflow:hidden">
+        <div style="font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escHtml(item.label)}</div>
+        <div style="font-size:11px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${dot}${escHtml(item.sub||'')}</div>
+      </div>
+      <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.8px;flex-shrink:0">${item.type}</div>
+    </div>`;
+  });
+  res.innerHTML=html;
+}
+
+function _cpHover(i){_cpIdx=i;document.querySelectorAll('.cp-item').forEach((el,j)=>el.classList.toggle('cp-active',j===i));}
+function _cpSelect(i){const item=_cpItems[i];if(item)item.action();}
+function cmdPaletteNav(e){
+  if(e.key==='Escape'){closeCmdPalette();return;}
+  if(e.key==='ArrowDown'){e.preventDefault();_cpIdx=Math.min(_cpIdx+1,_cpItems.length-1);_cpHover(_cpIdx);document.querySelector('.cp-item.cp-active')?.scrollIntoView({block:'nearest'});}
+  if(e.key==='ArrowUp'){e.preventDefault();_cpIdx=Math.max(_cpIdx-1,0);_cpHover(_cpIdx);document.querySelector('.cp-item.cp-active')?.scrollIntoView({block:'nearest'});}
+  if(e.key==='Enter'){e.preventDefault();_cpSelect(_cpIdx);}
+}
+
+// ── PERFORMANCE GRAPHS ────────────────────────────────────
+function _rrdChart(data,key,label,color,opts={}){
+  const w=280,h=72;
+  const vals=data.map(d=>d[key]??null).filter(v=>v!==null);
+  if(!vals.length) return `<div style="margin-bottom:16px"><div style="font-size:11px;text-transform:uppercase;letter-spacing:1px;color:var(--muted);margin-bottom:4px">${label}</div><div style="height:${h}px;display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:12px;border:1px dashed var(--border);border-radius:4px">No data</div></div>`;
+  const maxV=opts.max||Math.max(...vals)||1;
+  const fmt=opts.fmt||(v=>v.toFixed(1));
+  const last=vals[vals.length-1];
+  const avg=vals.reduce((a,b)=>a+b,0)/vals.length;
+  const peak=Math.max(...vals);
+  const pts=[];
+  data.forEach((d,i)=>{const v=d[key];if(v==null)return;const x=(i/(data.length-1))*w;const y=h-4-(Math.min(v,maxV)/maxV)*(h-8);pts.push(`${x.toFixed(1)},${y.toFixed(1)}`);});
+  const fillPath=pts.length?`M${pts[0].split(',')[0]},${h} ${pts.map(p=>'L'+p).join(' ')} L${pts[pts.length-1].split(',')[0]},${h} Z`:'';
+  return `<div style="margin-bottom:16px">
+    <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:4px">
+      <span style="font-size:11px;text-transform:uppercase;letter-spacing:1px;color:var(--muted)">${label}</span>
+      <span style="font-size:13px;font-weight:600;color:${color}">${fmt(last)}</span>
+    </div>
+    <svg viewBox="0 0 ${w} ${h}" style="width:100%;height:${h}px;display:block;border-radius:4px;background:var(--bg3)">
+      <line x1="0" y1="${h*0.33}" x2="${w}" y2="${h*0.33}" stroke="var(--border)" stroke-width="0.5"/>
+      <line x1="0" y1="${h*0.66}" x2="${w}" y2="${h*0.66}" stroke="var(--border)" stroke-width="0.5"/>
+      ${fillPath?`<path d="${fillPath}" fill="${color}" opacity="0.15"/>`:''}
+      ${pts.length>1?`<polyline points="${pts.join(' ')}" fill="none" stroke="${color}" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"/>`:''}
+    </svg>
+    <div style="display:flex;gap:12px;font-size:10px;color:var(--muted);margin-top:3px">
+      <span>Avg: <strong>${fmt(avg)}</strong></span><span>Peak: <strong>${fmt(peak)}</strong></span>
+    </div>
+  </div>`;
+}
+
+let _perfState={node:'',vmid:'',type:'',connId:'',tf:'hour'};
+
+async function openPerfModal(node,vmid,type,connId,tf='hour') {
+  _perfState={node,vmid,type,connId:connId||'',tf};
+  document.getElementById('modal-title').textContent=`Performance — ${vmid}`;
+  document.getElementById('modal').classList.add('modal-wide');
+  document.getElementById('modal-body').innerHTML='<div class="empty"><span class="loading"></span> Loading RRD data…</div>';
+  const confirmBtn=document.getElementById('modal-confirm-btn');
+  if(confirmBtn){confirmBtn.style.display='none';}
+  document.getElementById('modal-bg').classList.add('open');
+  modalCallback=null;
+  await _loadPerfData(node,vmid,type,connId||'',tf);
+}
+
+async function _loadPerfData(node,vmid,type,connId,tf) {
+  const conn=resolveConn(connId);
+  const get=conn?(p=>connGet(conn,p)):pveGet;
+  const ep=(type==='ct'||type==='lxc')?'lxc':'qemu';
+  const tfs=[{k:'hour',l:'1h'},{k:'day',l:'24h'},{k:'week',l:'1w'},{k:'month',l:'1mo'}];
+  const fmtPct=v=>`${(v*100).toFixed(1)}%`;
+  const fmtMiB=v=>`${(v/1048576).toFixed(0)} MiB`;
+  const fmtMBs=v=>`${(v/125000).toFixed(2)} Mbps`;
+  try {
+    const res=await get(`/api2/json/nodes/${node}/${ep}/${vmid}/rrddata?timeframe=${tf}&cf=AVERAGE`);
+    const data=(res.data||[]).filter(d=>d.time);
+    const tfBtns=tfs.map(t=>`<button class="btn small${t.k===tf?' primary':''}" style="font-size:11px;padding:3px 8px" onclick="openPerfModal('${node}','${vmid}','${type}','${connId}','${t.k}')">${t.l}</button>`).join('');
+    document.getElementById('modal-body').innerHTML=`
+      <div style="display:flex;gap:5px;margin-bottom:14px;align-items:center">
+        <span style="font-size:11px;color:var(--muted);margin-right:4px">Timeframe:</span>${tfBtns}
+      </div>
+      <div class="perf-chart-grid">
+        ${_rrdChart(data,'cpu','CPU',   'var(--blue)',  {max:1,fmt:fmtPct})}
+        ${_rrdChart(data,'mem','Memory','var(--purple)',{fmt:fmtMiB})}
+        ${_rrdChart(data,'netin','Net In','var(--green)',{fmt:fmtMBs})}
+        ${_rrdChart(data,'netout','Net Out','var(--accent)',{fmt:fmtMBs})}
+      </div>`;
+  } catch(e) {
+    document.getElementById('modal-body').innerHTML=`<div class="empty">Failed to load: ${e.message}</div>`;
+  }
+}
+
+// ── QUICK SNAPSHOT SCHEDULE ───────────────────────────────
+function quickSnapSchedule(node,vmid,type,connId,vmName) {
+  // Pre-select VM and action=snapshot in schedule modal
+  openCreateScheduleModal();
+  setTimeout(()=>{
+    const vmSel=document.getElementById('sc-vm');
+    if(vmSel){
+      const key=`${vmid}|${node}|${type}|${connId||''}|${vmName}`;
+      [...vmSel.options].forEach(o=>{if(o.value===key)o.selected=true;});
+    }
+    const actionSel=document.getElementById('sc-action');
+    if(actionSel){actionSel.value='snapshot';_schedActionChange();}
+    const nameFld=document.getElementById('sc-name');
+    if(nameFld&&!nameFld.value) nameFld.value=`${vmName} snapshots`;
+  },50);
+}
 
 function showKeyboardShortcuts() {
   document.getElementById('modal-title').textContent = 'Keyboard Shortcuts';
@@ -3990,6 +4209,8 @@ function vmRow(x,showType=false){
         }
         <button class="btn small" onclick="openMigrateModal('${x.node}','${x.vmid}','${x.type}','${cid}')" title="Migrate">⇢</button>
         <button class="btn small" onclick="openCloneModal('${x.node}','${x.vmid}','${x.type}','${(x.name||'').replace(/['"]/g,'')}','${cid}')" title="Clone">⎘</button>
+        <button class="btn small" onclick="openPerfModal('${x.node}','${x.vmid}','${x.type}','${cid}')" title="Performance graphs">📊</button>
+        <button class="btn small" onclick="quickSnapSchedule('${x.node}','${x.vmid}','${x.type}','${cid}','${escHtml(x.name||String(x.vmid))}')" title="Schedule snapshot">📸</button>
       </div>
     </td>
   </tr>`;
@@ -4440,6 +4661,7 @@ function confirmModal(){
 function closeModal(e){
   if(e&&e.target!==document.getElementById('modal-bg'))return;
   document.getElementById('modal-bg').classList.remove('open');
+  document.getElementById('modal')?.classList.remove('modal-wide');
   const btn = document.getElementById('modal-confirm-btn');
   if(btn){btn.onclick=confirmModal;btn.textContent='Confirm';btn.disabled=false;btn.style.display='';}
   modalCallback=null;
@@ -10310,6 +10532,21 @@ async function _scheduleExecute(s) {
         snapname,
         description: opts.description || `Scheduled snapshot ${new Date().toLocaleString()}`,
       });
+      // Retention: auto-delete oldest matching snapshots
+      const retention = parseInt(opts.retention||0);
+      if (retention > 0) {
+        const get = conn ? (p=>connGet(conn,p)) : pveGet;
+        const del = conn ? (p=>connDelete(conn,p)) : pveDelete;
+        const snapRes = await get(`/api2/json/nodes/${node}/${ep}/${vmid}/snapshot`).catch(()=>({data:[]}));
+        const prefix = (opts.snapname||'auto').replace(/\{date\}.*/,'').replace(/[^a-zA-Z0-9_-]/g,'') || 'auto';
+        const autoSnaps = (snapRes.data||[])
+          .filter(sn=>sn.name!=='current'&&sn.name.startsWith(prefix))
+          .sort((a,b)=>(a.snaptime||0)-(b.snaptime||0));
+        while (autoSnaps.length > retention) {
+          const oldest = autoSnaps.shift();
+          await del(`/api2/json/nodes/${node}/${ep}/${vmid}/snapshot/${oldest.name}`).catch(()=>{});
+        }
+      }
       break;
     }
     default: throw new Error(`Unknown action: ${action}`);
@@ -10458,6 +10695,9 @@ function openCreateScheduleModal(editId) {
         <div class="form-group"><label>DESCRIPTION</label>
           <input id="sc-snap-desc" value="${escHtml(s.options?.description||'Scheduled snapshot')}"/></div>
       </div>
+      <div class="form-group"><label>RETENTION — keep last N snapshots (0 = keep all)</label>
+        <input id="sc-snap-retention" type="number" min="0" max="99" value="${s.options?.retention||0}" style="width:80px"/>
+      </div>
     </div>
 
     <div class="section-title" style="font-size:11px;margin:12px 0 8px">Schedule</div>
@@ -10502,6 +10742,7 @@ function openCreateScheduleModal(editId) {
     if (action === 'snapshot') {
       options.snapname    = document.getElementById('sc-snap-name')?.value?.trim() || 'auto{date}';
       options.description = document.getElementById('sc-snap-desc')?.value?.trim() || 'Scheduled snapshot';
+      options.retention   = parseInt(document.getElementById('sc-snap-retention')?.value||'0')||0;
     }
     const entry = {
       id:        existing?.id || 'sched-' + Date.now(),
