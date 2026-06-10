@@ -1486,6 +1486,7 @@
         <span class="section-title">Cluster-wide Resource Graphs</span>
         <div style="display:flex;gap:4px">
           <select class="conn-sel" id="cg-conn" style="width:140px;padding:5px 8px;font-size:13px" onchange="loadClusterGraphs()"><option value="">Primary</option></select>
+          <button class="tf-btn"        id="cg-tf-5min"   onclick="setCGTimeframe('5min')">5 MIN</button>
           <button class="tf-btn active" id="cg-tf-hour"   onclick="setCGTimeframe('hour')">HOUR</button>
           <button class="tf-btn"        id="cg-tf-day"    onclick="setCGTimeframe('day')">DAY</button>
           <button class="tf-btn"        id="cg-tf-week"   onclick="setCGTimeframe('week')">WEEK</button>
@@ -2578,13 +2579,15 @@ async function _loadPerfData(node,vmid,type,connId,tf) {
   const conn=resolveConn(connId);
   const get=conn?(p=>connGet(conn,p)):pveGet;
   const ep=(type==='ct'||type==='lxc')?'lxc':'qemu';
-  const tfs=[{k:'hour',l:'1h'},{k:'day',l:'24h'},{k:'week',l:'1w'},{k:'month',l:'1mo'}];
+  const tfs=[{k:'5min',l:'5m'},{k:'hour',l:'1h'},{k:'day',l:'24h'},{k:'week',l:'1w'},{k:'month',l:'1mo'}];
   const fmtPct=v=>`${(v*100).toFixed(1)}%`;
   const fmtMiB=v=>`${(v/1048576).toFixed(0)} MiB`;
   const fmtMBs=v=>`${(v/125000).toFixed(2)} Mbps`;
   try {
-    const res=await get(`/api2/json/nodes/${node}/${ep}/${vmid}/rrddata?timeframe=${tf}&cf=AVERAGE`);
-    const data=(res.data||[]).filter(d=>d.time);
+    const apitf=tf==='5min'?'hour':tf;
+    const res=await get(`/api2/json/nodes/${node}/${ep}/${vmid}/rrddata?timeframe=${apitf}&cf=AVERAGE`);
+    const raw=(res.data||[]).filter(d=>d.time);
+    const data=tf==='5min'?raw.slice(-5):raw;
     const tfBtns=tfs.map(t=>`<button class="btn small${t.k===tf?' primary':''}" style="font-size:11px;padding:3px 8px" onclick="openPerfModal('${node}','${vmid}','${type}','${connId}','${t.k}')">${t.l}</button>`).join('');
     document.getElementById('modal-body').innerHTML=`
       <div style="display:flex;gap:5px;margin-bottom:14px;align-items:center">
@@ -3048,12 +3051,14 @@ function filterSyslog() {
 // ── RRD / GRAPHS ─────────────────────────────────────────
 
 async function loadRRD(node, type, vmid, timeframe, get=pveGet) {
+  const apitf = timeframe==='5min' ? 'hour' : timeframe;
   let path;
-  if (type==='node') path=`/api2/json/nodes/${node}/rrddata?timeframe=${timeframe}&cf=AVERAGE`;
-  else if (type==='vm') path=`/api2/json/nodes/${node}/qemu/${vmid}/rrddata?timeframe=${timeframe}&cf=AVERAGE`;
-  else path=`/api2/json/nodes/${node}/lxc/${vmid}/rrddata?timeframe=${timeframe}&cf=AVERAGE`;
+  if (type==='node') path=`/api2/json/nodes/${node}/rrddata?timeframe=${apitf}&cf=AVERAGE`;
+  else if (type==='vm') path=`/api2/json/nodes/${node}/qemu/${vmid}/rrddata?timeframe=${apitf}&cf=AVERAGE`;
+  else path=`/api2/json/nodes/${node}/lxc/${vmid}/rrddata?timeframe=${apitf}&cf=AVERAGE`;
   const d = await get(path);
-  return d.data||[];
+  const data = d.data||[];
+  return timeframe==='5min' ? data.slice(-5) : data;
 }
 
 async function loadConfig(node, type, vmid, get=pveGet) {
@@ -3401,8 +3406,8 @@ async function loadNodeConfig(nodeData) {
 
 async function loadDetailGraphs(item, type, vmid, timeframe) {
   const el = document.getElementById('dtab-graphs');
-  const tfBtns = ['hour','day','week','month'].map(tf =>
-    `<button class="tf-btn ${tf===timeframe?'active':''}" onclick="changeTimeframe('${tf}')">${tf.toUpperCase()}</button>`
+  const tfBtns = ['5min','hour','day','week','month'].map(tf =>
+    `<button class="tf-btn ${tf===timeframe?'active':''}" onclick="changeTimeframe('${tf}')">${tf==='5min'?'5 MIN':tf.toUpperCase()}</button>`
   ).join('');
 
   el.innerHTML = `<div class="tf-btns">${tfBtns}</div><div class="empty"><span class="loading"></span> Loading graph data…</div>`;
@@ -9621,10 +9626,11 @@ async function loadClusterGraphs() {
   cgCharts = {};
 
   try {
+    const apitf = cgTimeframe==='5min' ? 'hour' : cgTimeframe;
     const nodeData = {};
     await Promise.all(nodes.map(async n => {
-      const d = await get(`/api2/json/nodes/${n.node}/rrddata?timeframe=${cgTimeframe}&cf=AVERAGE`).catch(() => ({ data: [] }));
-      if (d.data && d.data.length) nodeData[n.node] = d.data;
+      const d = await get(`/api2/json/nodes/${n.node}/rrddata?timeframe=${apitf}&cf=AVERAGE`).catch(() => ({ data: [] }));
+      if (d.data && d.data.length) nodeData[n.node] = cgTimeframe==='5min' ? d.data.slice(-5) : d.data;
     }));
 
     const nodeNames = Object.keys(nodeData);
@@ -9750,7 +9756,7 @@ async function loadClusterGraphs() {
 
 function setCGTimeframe(tf) {
   cgTimeframe = tf;
-  ['hour','day','week','month'].forEach(t => {
+  ['5min','hour','day','week','month'].forEach(t => {
     const btn = document.getElementById(`cg-tf-${t}`);
     if (btn) btn.classList.toggle('active', t === tf);
   });
