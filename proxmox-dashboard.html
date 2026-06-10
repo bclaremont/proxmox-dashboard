@@ -1150,7 +1150,8 @@
     <div id="view-affinity" style="display:none">
       <div class="section-header">
         <span class="section-title">Affinity / Anti-Affinity Rules</span>
-        <div style="display:flex;gap:6px">
+        <div style="display:flex;gap:6px;align-items:center">
+          <select class="conn-sel" id="affinity-conn" style="width:130px;padding:5px 8px;font-size:13px" onchange="renderAffinityView()"><option value="">Primary</option></select>
           <button class="btn small success" id="affinity-enforce-btn" onclick="enforceAllRules()" style="display:none">⚡ Enforce All</button>
           <button class="btn small primary" onclick="openCreateAffinityModal()">+ Create Rule</button>
           <button class="btn small" onclick="renderAffinityView()">Refresh</button>
@@ -12854,10 +12855,19 @@ function renderAffinityView() {
   updateAffinityBadge();
   const el=document.getElementById('affinity-content');
   if(!el) return;
-  const rules=getAffinityRules();
+  const affinityConn = getViewConn('affinity-conn');
+  const affinityConnId = affinityConn ? affinityConn.id : '';
   const all=allVMs().concat(allCTs());
+  // Filter rules to those containing at least one VM from the selected cluster
+  const allRules=getAffinityRules();
+  const rules = affinityConnId
+    ? allRules.filter(r => r.vmids.some(id => {
+        const vm=all.find(x=>+x.vmid===id);
+        return vm && (vm.connId||'')=== affinityConnId;
+      }))
+    : allRules;
 
-  if(!rules.length){
+  if(!allRules.length){
     el.innerHTML=`
       <div style="text-align:center;padding:40px 20px;color:var(--muted)">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="width:48px;height:48px;margin:0 auto 14px;display:block;opacity:.4"><circle cx="9" cy="12" r="3"/><circle cx="15" cy="12" r="3"/><path d="M12 3v18M3 12h18"/></svg>
@@ -12874,8 +12884,10 @@ function renderAffinityView() {
 
   const checks=rules.map(r=>({rule:r,...checkRule(r)}));
   const violations=checks.filter(c=>c.violated).length;
+  const clusterLabel = affinityConn ? (affinityConn.name||affinityConn.host||'Remote') : 'All Clusters';
 
   el.innerHTML=`
+    ${rules.length < allRules.length ? `<div style="font-size:12px;color:var(--muted);margin-bottom:10px">Showing ${rules.length} of ${allRules.length} rules for <strong>${escHtml(clusterLabel)}</strong></div>` : ''}
     <div class="stats-grid" style="margin-bottom:16px">
       <div class="stat-card accent-blue"><div class="label">Total Rules</div><div class="value">${rules.length}</div></div>
       <div class="stat-card accent-green"><div class="label">Affinity</div><div class="value">${rules.filter(r=>r.type==='affinity').length}</div><div class="sub">keep together</div></div>
