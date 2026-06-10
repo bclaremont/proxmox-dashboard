@@ -1,4 +1,4 @@
-# PCC — Proxmox Management Dashboard
+# PCC — Proxmox Command Center
 
 **PCC** is an open-source, browser-based management dashboard for [Proxmox VE](https://www.proxmox.com/en/proxmox-virtual-environment/overview). It provides a single interface across multiple clusters and standalone hosts, with features that go well beyond the standard Proxmox web UI.
 
@@ -12,9 +12,10 @@
 
 ### Fleet management
 - **Unified view** — all VMs, containers, nodes and storage across every connected cluster in one interface
-- **Multi-cluster** — connect any number of Proxmox clusters and standalone hosts simultaneously
+- **Multi-cluster** — connect any number of Proxmox clusters and standalone hosts; all views scope correctly per cluster
 - **World Map** — pin your infrastructure on a world map and visualise it geographically
 - **Heatmap** — node resource usage visualised as a colour-coded grid
+- **Cluster Graphs** — RRD-based resource graphs across the whole cluster with 5m / 1h / 24h / 1w / 1mo timeframes
 
 ### VM & Container management
 - **Full VM/CT lifecycle** — create, start, stop, reboot, clone, migrate, snapshot, backup
@@ -24,21 +25,23 @@
 - **Content Library** — manage templates with metadata, version tags and OS icons
 - **Customisation Specs** — cloud-init templates applied automatically on clone deploy
 - **Prepare as Template wizard** — guided cleanup, cloud-init drive, and conversion
+- **Performance graphs** — per-VM/CT RRD charts (CPU, RAM, network) directly from the VM list
 
 ### Automation
-- **DRS** — compute and storage dynamic resource scheduling across nodes and datastores
-- **Affinity rules** — force VMs onto the same node (affinity) or different nodes (anti-affinity)
-- **Scheduled operations** — start, stop, backup and snapshot VMs on a schedule (24/7 in standalone mode)
+- **DRS** — compute and storage dynamic resource scheduling; cluster-scoped, prevents cross-cluster migration suggestions
+- **Affinity rules** — force VMs onto the same node (affinity) or different nodes (anti-affinity); cluster-aware VM picker with cross-cluster warning
+- **Scheduled operations** — start, stop, backup and snapshot VMs on a schedule (24/7 in standalone mode); snapshot retention auto-deletes oldest
 - **Capacity planning** — trend-based forecasting of when CPU, RAM or disk will be exhausted
 - **Host Profiles** — capture a reference node's config and detect/fix drift across the fleet
 - **Maintenance drain** — evacuate all VMs from a node before maintenance with one click
 
 ### Monitoring & alerting
+- **SMART + ZFS health** — per-node physical disk health (SMART status, temperature, wearout) and ZFS pool status (health, usage, fragmentation)
+- **Uptime Report** — all running VMs/CTs sorted by uptime with colour coding (green <7d → red >90d "patch?")
 - **Per-VM performance alerts** — notify when a specific VM's CPU or RAM exceeds a threshold for a sustained period
+- **Email / webhook digest** — daily or weekly summary email (SMTP) or JSON webhook: cluster health, stopped VMs, storage warnings, long-running VMs
 - **Webhooks** — push alerts to Slack, Teams, Discord or any HTTP endpoint
 - **Notifications panel** — in-app alert feed with severity colour coding
-- **Task log colour coding** — error and running tasks highlighted for instant scanning
-- **Cluster Graphs** — RRD-based resource graphs across the whole cluster
 
 ### Reporting
 - **Reports & Export** — cluster utilisation summaries, VM inventory, node and storage tables
@@ -53,6 +56,7 @@
 - **Firewall** — cluster and VM/CT firewall rules
 - **Datacenter** — cluster options, migration network config, replication jobs
 - **Backups** — vzdump backup jobs and PBS integration
+- **Disk Health** — SMART status and ZFS pool health per node across all clusters
 
 ### Administration
 - **Users & Permissions** — manage Proxmox users, groups, API tokens and roles
@@ -63,12 +67,21 @@
 - **Tags** — manage allowed VM/CT tags cluster-wide
 
 ### Standalone server mode
-When deployed on its own Debian VM, PCC adds team features:
+When deployed on its own Debian VM, PCC adds team and security features:
 - **Per-user logins** with roles (admin / user)
+- **IP allowlist** — restrict PCC access to defined CIDR ranges; 127.0.0.1 always permitted
+- **Login activity log** — every login attempt recorded with IP, timestamp, success/failure and browser
+- **Idle session timeout** — configurable auto-logout (15 min – 8 hours) with 60-second warning banner
 - **Shared settings** — profiles, affinity rules, saved views and schedules synced across the team
-- **Audit log** — every login attempt and write operation recorded with source IP
+- **Audit log** — every write operation recorded with source IP
 - **Cluster registry** — Proxmox API tokens stored AES-256-GCM encrypted at rest
 - **WireGuard** — secure connectivity to remote Proxmox clusters without exposing APIs to the internet
+- **Email/webhook digest** — scheduled summary reports sent server-side 24/7
+
+### UI
+- **Command palette** — `Cmd+K` / `Ctrl+K` opens a fuzzy-search overlay across all VMs, containers, nodes and views
+- **Keyboard shortcuts** — `?` for help, `g v` for VMs, `g n` for nodes, and more
+- **Dark theme** — full dark UI with CSS variable system
 
 ---
 
@@ -81,6 +94,10 @@ proxmox-dashboard.html   — the entire dashboard UI and client-side logic
 console.html             — in-browser noVNC console popup
 vendor/                  — self-hosted JS/CSS libraries (no CDN calls)
 server/                  — Node.js + SQLite backend (standalone mode only)
+  server.js              — Express API, JWT auth, Proxmox proxy, scheduler
+  setup.sh               — one-command Debian install with Let's Encrypt
+  add-site.sh            — WireGuard hub-and-spoke site addition
+  update.sh              — pull latest and restart (installed as pcc-update)
 nginx/                   — nginx config files for both deployment modes
 ```
 
@@ -93,6 +110,8 @@ nginx/                   — nginx config files for both deployment modes
 | **Team logins** | ✅ | ❌ |
 | **Scheduled jobs 24/7** | ✅ | ❌ browser only |
 | **Encrypted secrets** | ✅ | ❌ |
+| **IP allowlist** | ✅ | ❌ |
+| **Email digest** | ✅ | ❌ |
 
 See **[SETUP.md](SETUP.md)** for full installation instructions.
 
@@ -131,7 +150,10 @@ For production use with HTTPS, team logins and 24/7 scheduling, see the [standal
 - Proxmox API tokens **encrypted at rest** (AES-256-GCM)
 - Login **rate limiting** (per-IP) + **account lockout** (per-username)
 - JWT **revocation on logout**, 4-hour token expiry with auto-refresh
-- Full **audit log** of all auth events including failures and rate-limit blocks
+- **IP allowlist** — restrict PCC to named CIDR ranges (standalone mode)
+- **Login activity log** — every attempt recorded with IP, UA, success/failure
+- **Idle session timeout** — configurable auto-logout with 60-second warning
+- Full **audit log** of all write operations including auth events
 - See the [Security reference](SETUP.md#security-reference) in SETUP.md for full details
 
 ---
@@ -140,5 +162,5 @@ For production use with HTTPS, team logins and 24/7 scheduling, see the [standal
 
 MIT — see [LICENSE](LICENSE)
 
-Third-party libraries: Chart.js (MIT), Leaflet (BSD-2), noVNC (MPL-2.0), qrcodejs (MIT)
+Third-party libraries: Chart.js (MIT), Leaflet (BSD-2), noVNC (MPL-2.0), qrcodejs (MIT), nodemailer (MIT)
 Map data: © [OpenStreetMap contributors](https://www.openstreetmap.org/copyright) (ODbL)

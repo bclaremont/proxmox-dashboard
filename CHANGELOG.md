@@ -8,6 +8,55 @@ All notable changes to PCC are documented here.
 
 ---
 
+## Monitoring features (2026-06)
+
+### Added
+- **Disk Health view** — new nav item; shows per-node SMART physical disk table (device, model, type, size, health ✓/✗, temperature, wearout %) and ZFS pool table (name, health colour-coded, size/used gauge, free, fragmentation); node selector + cluster selector
+- **Uptime Report view** — new nav item; all running VMs/CTs sorted by uptime; colour coded green (<7d), blue (7–30d), yellow (30–90d), red (>90d) with "⚠ patch?" flag; stats grid counts per tier; multi-cluster aware
+- **Email / webhook digest** — daily or weekly summary report sent server-side 24/7; content: online/offline nodes, running/stopped VM counts, storage >80% warnings, long-running VMs; SMTP via nodemailer + JSON webhook; "Send Test Now" button; configured in PCC Admin → Security
+- `nodemailer` added to `server/package.json`
+
+---
+
+## Security features (2026-06)
+
+### Added
+- **IP allowlist** — middleware in server.js checks every request against stored CIDR list; 127.0.0.1/::1 always permitted; empty list = allow all; managed in PCC Admin → Security
+- **Login activity log** — every login attempt (success + failure) recorded in new `login_log` DB table with IP, username, success flag, user-agent; displayed in PCC Admin → Security with success/fail badges
+- **Idle session timeout** — configurable (15 min – 8 hours or disabled) via PCC Admin → Security; yellow warning banner appears 60 seconds before expiry with "Stay logged in" button; auto-logout on expiry
+- **Security tab** in PCC Admin — combines IP allowlist, idle timeout, email digest config, and login activity log
+- New DB tables: `login_log`, `settings` (key-value store for all server-side settings)
+- `getSetting()` / `setSetting()` helpers; `_clientIp()`, `_ipInCidr()`, `_ipToInt()` CIDR helpers
+- New API routes: `GET/PUT /api/admin/settings`, `GET /api/admin/login-log`, `POST /api/admin/digest/test`
+
+---
+
+## UI improvements (2026-06)
+
+### Added
+- **Command palette** — `Cmd+K` / `Ctrl+K` opens fuzzy-search overlay; searches VMs, containers, nodes and all views simultaneously; arrow key navigation, Enter to select, Escape to close; results grouped by category with status dot
+- **Performance graphs** — 📊 button on every VM/CT row opens RRD chart modal; 4 charts: CPU %, Memory, Net In, Net Out; timeframe selector 5m / 1h / 24h / 1w / 1mo; SVG line charts with fill, grid lines, avg + peak stats
+- **Scheduled snapshot quick-access** — 📸 button on every VM/CT row pre-fills schedule modal with that VM and action=snapshot
+- **Snapshot retention** — new "Keep last N" field in snapshot schedule options; server-side `_scheduleExecute` auto-deletes oldest matching snapshots after each run
+- **5-minute timeframe** on all RRD graph views — fetches `hour` data and slices last 5 points; added to VM/CT/node detail graphs, Cluster Graphs view, and the new performance modal
+- `modal-wide` CSS class for wider modals (perf graphs); cleared on `closeModal()`
+
+---
+
+## Multi-cluster audit fixes (2026-06)
+
+### Fixed
+- **Tags view** — `allVMs()/allCTs()` replaced with conn-scoped list; selecting a cluster now correctly shows only that cluster's VMs
+- **Network view** — stored data in `PVE.network` (primary only) even when remote cluster selected; replaced with `_netIfaces` module variable scoped per `loadNetwork()` call
+- **Datacenter status tab** — used `allVMs().concat(allCTs())`; now resolves via `resolveConn(dcData.connId)` for the selected cluster
+- **DRS Compute** — `_drsNodeInfo` VM filter now checks both `node` and `connId` (prevents node-name collisions across clusters); `_findMigrations` guards against cross-cluster migrations (impossible with standard PVE live-migrate); `runDRSAnalysis` uses `drs-conn` selector; default shows all clusters with cluster name in balance score header
+- **Storage DRS** — `runStorageDRSAnalysis` uses `drs-conn` selector; fetches storage fresh on demand if cache empty (no longer requires opening Storage view first)
+- **Affinity rules** — filter by `rule.connId` stored on the rule (not VMID lookup which collides when clusters share VMIDs); VM picker uses `<optgroup>` per cluster; `vmid|connId` encoded in option values; cross-cluster selection blocked on save; `_populateAffinityConnSel` with "All Clusters / Primary / per-cluster" options
+- **Affinity enforcement** — anti-affinity fix candidates scoped to same cluster as VM (was using `allNodes()` which could suggest cross-cluster targets)
+- Reports view was already correct; confirmed not broken
+
+---
+
 ## Security hardening (2026-06)
 
 ### Added
