@@ -16401,7 +16401,8 @@ async function loadTagsView() {
   try {
     const optsRes=await get('/api2/json/cluster/options').catch(()=>({data:{}}));
     const allowed=optsRes.data?.['allowed-tags']||[];
-    const allItems=allVMs().concat(allCTs());
+    const allItems=conn?[...(conn.vms||[]),...(conn.containers||[])]:
+                       [...(PVE.vms||[]),...(PVE.containers||[])];
     // Build tag → VMs map
     const tagMap={};
     allItems.forEach(x=>{
