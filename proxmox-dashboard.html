@@ -15022,8 +15022,8 @@ function _renderDCTab() {
         <div class="section-title" style="font-size:11px;margin:14px 0 8px">Tags</div>
         <div class="form-group">
           <label>TAGS (semicolon-separated)</label>
-          <input id="vo-tags" value="${escHtml(cfg.tags||'')}" placeholder="production;web;critical"/>
-          <div style="margin-top:6px;display:flex;flex-wrap:wrap;gap:4px" id="vo-tags-preview">${renderTagChips(parseTags(cfg.tags||''),false)}</div>
+          <input id="vo-tags" value="${escHtml(Array.isArray(o['allowed-tags'])?o['allowed-tags'].join(';'):(o['allowed-tags']||''))}" placeholder="production;web;critical"/>
+          <div style="margin-top:6px;display:flex;flex-wrap:wrap;gap:4px" id="vo-tags-preview">${renderTagChips(parseTags(Array.isArray(o['allowed-tags'])?o['allowed-tags'].join(';'):(o['allowed-tags']||'')),false)}</div>
         </div>
 
         <button type="submit" class="btn primary" style="margin-top:16px">💾 Save Options</button>
@@ -15125,6 +15125,8 @@ async function saveDatacenterOptions() {
   if(bwMig||bwRes) params.bandwidth_limit=JSON.stringify({migration:bwMig,restore:bwRes});
   const nidLow=n('dco-nidlow'), nidUp=n('dco-nidup');
   if(nidLow||nidUp) params['next-id']=JSON.stringify({lower:nidLow,upper:nidUp});
+  const tagsRaw=g('vo-tags');
+  if(tagsRaw!==null) params['allowed-tags']=JSON.stringify(parseTags(tagsRaw));
   try {
     if(conn){
       const h=connHeaders(conn,{'Content-Type':'application/x-www-form-urlencoded'});
