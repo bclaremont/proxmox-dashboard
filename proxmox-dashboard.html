@@ -14075,11 +14075,42 @@ function confirmDeleteAffinityRule(id) {
 async function enforceRule(id) {
   const rule=getAffinityRules().find(r=>r.id===id);
   if(!rule) return;
-  const {violated,fixes}=checkRule(rule);
+  const {violated,fixes,detail}=checkRule(rule);
   if(!violated||!fixes.length) return toast('No violations to fix','info');
-  const txt=fixes.map(f=>`${f.vm.name||f.vm.vmid} → ${f.toNode}`).join(', ');
-  if(!confirm(`Fix "${rule.name}"?\n\nWill migrate: ${txt}`)) return;
-  for(const f of fixes){
+
+  const isAff=rule.type==='affinity';
+  const typeLabel=isAff?'Affinity':'Anti-Affinity';
+  const typeDesc=isAff
+    ? 'These VMs should be on the <strong>same node</strong> but are currently spread across multiple nodes.'
+    : 'These VMs should be on <strong>different nodes</strong> but some are co-located on the same node.';
+
+  document.getElementById('modal-title').textContent=`Fix ${typeLabel} Rule — ${escHtml(rule.name)}`;
+  document.getElementById('modal').classList.add('modal-info');
+  document.getElementById('modal-body').innerHTML=`
+    <div style="font-size:13px;color:var(--muted);margin-bottom:12px">${typeDesc}</div>
+    <div style="background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius);padding:9px 13px;font-size:12px;color:var(--muted);margin-bottom:14px">
+      <strong style="color:var(--text)">Current violation:</strong> ${escHtml(detail)}
+    </div>
+    <div style="font-size:13px;font-weight:600;margin-bottom:8px">Live migrations to perform:</div>
+    <div style="display:flex;flex-direction:column;gap:6px;margin-bottom:14px">
+      ${fixes.map(f=>`
+        <div style="display:flex;align-items:center;gap:8px;background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius);padding:8px 12px">
+          <span class="type-chip ${f.vm.type==='vm'?'vm':'ct'}" style="font-size:10px">${(f.vm.type||'vm').toUpperCase()}</span>
+          <strong>${escHtml(f.vm.name||String(f.vm.vmid))}</strong>
+          <span style="font-size:12px;color:var(--muted)">${f.vm.vmid}</span>
+          <span style="font-size:12px;color:var(--muted)">on <strong style="color:var(--red)">${escHtml(f.vm.node)}</strong></span>
+          <span style="margin-left:auto;color:var(--green);font-weight:600">→ ${escHtml(f.toNode)}</span>
+        </div>`).join('')}
+    </div>
+    <div style="font-size:12px;color:var(--muted)">VMs remain running during live migration. Ensure the target node has sufficient free RAM.</div>`;
+
+  const btn=document.getElementById('modal-confirm-btn');
+  btn.textContent=`⚡ Migrate ${fixes.length} VM${fixes.length!==1?'s':''}`;
+  btn.style.display=''; btn.disabled=false;
+  document.getElementById('modal-bg').classList.add('open');
+
+  modalCallback=async()=>{
+    for(const f of fixes){
     const ep=f.vm.type==='vm'?'qemu':'lxc';
     const conn=resolveConn(f.vm.connId||'');
     try{
@@ -14092,7 +14123,8 @@ async function enforceRule(id) {
     }catch(e){ toast(`Failed: ${e.message}`,'error'); }
     await new Promise(r=>setTimeout(r,500));
   }
-  setTimeout(renderAffinityView,3000);
+    setTimeout(renderAffinityView,3000);
+  };
 }
 
 async function enforceAllRules() {
