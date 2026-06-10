@@ -1166,6 +1166,7 @@
         <div style="display:flex;gap:6px;align-items:center">
           <button class="btn small" onclick="openDRSSettingsModal()">⚙ Settings</button>
           <button class="btn small warning" id="drs-dryrun-btn" onclick="toggleDRSDryRun()" title="Toggle dry-run mode">Dry Run: ON</button>
+            <select class="conn-sel" id="drs-conn" style="width:130px;padding:5px 8px;font-size:13px"><option value="">Primary</option></select>
           <div id="drs-compute-btns" style="display:flex;gap:6px">
             <button class="btn small primary" onclick="runDRSAnalysis()">▶ Analyse</button>
             <button class="btn small success" id="drs-run-all-btn" onclick="runDRSAll()" style="display:none">⚡ Run All</button>
@@ -12828,9 +12829,10 @@ function checkRule(rule) {
     const fixes=[];
     dupes.forEach(([srcNode,vms])=>{
       vms.slice(1).forEach(vm=>{
-        // Find a node not already used by this rule's VMs
+        // Find a node not already used by this rule's VMs — same cluster only
         const usedNodes=new Set(running.map(x=>x.node));
-        const candidate=allNodes().find(n=>!usedNodes.has(n.node));
+        const vmConnId=vm.connId||'';
+        const candidate=allNodes().find(n=>(n.connId||'')=== vmConnId&&!usedNodes.has(n.node));
         if(candidate) fixes.push({vm,toNode:candidate.node});
       });
     });
@@ -13139,7 +13141,7 @@ function _drsNodeInfo(nodeStatuses, vms) {
       totalMemMiB: s.memory?s.memory.total/1048576:0,
       cpuCount: (s.cpuinfo&&s.cpuinfo.cpus)||4,
       connId: n.connId||'',
-      vms: vms.filter(v=>v.node===n.node&&v.status==='running'),
+      vms: vms.filter(v=>v.node===n.node&&(v.connId||'')===(n.connId||'')&&v.status==='running'),
     };
   });
 }
@@ -13183,6 +13185,7 @@ function _findMigrations(nodeInfos) {
       let best=null, bestScore=Infinity;
       for(const dst of under) {
         if(dst.node===src.node) continue;
+        if((dst.connId||'')!==(src.connId||'')) continue; // no cross-cluster migrations
         if(dst.freeMemMiB < vmMemMiB*1.1) continue; // need 10% headroom
 
         // Simulate scores after migration
@@ -13226,9 +13229,13 @@ function runDRSAnalysis() {
   const el=document.getElementById('drs-content');
   el.innerHTML='<div class="empty"><span class="loading"></span> Analysing cluster balance…</div>';
 
-  const nodeStatuses=allNodes();
-  const vms=allVMs().concat(allCTs());
+  const drsConn = getViewConn('drs-conn');
+  const nodeStatuses = drsConn ? (drsConn.nodeStatuses||[]) : (PVE.nodeStatuses||[]);
+  const vms = drsConn
+    ? [...(drsConn.vms||[]),...(drsConn.cts||[])]
+    : [...(PVE.vms||[]),...(PVE.cts||[])];
   if(!nodeStatuses.length) { el.innerHTML='<div class="empty">No node data — connect to a cluster first.</div>'; return; }
+  const clusterLabel = drsConn ? (drsConn.name||drsConn.host||'Remote') : (PVE.clusterName||'Primary');
 
   const nodeInfos=_drsNodeInfo(nodeStatuses,vms);
   const scores=nodeInfos.map(n=>n.score);
@@ -13253,7 +13260,7 @@ function runDRSAnalysis() {
     <!-- Balance summary -->
     <div style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);padding:16px 20px;margin-bottom:16px;display:flex;align-items:center;gap:20px;flex-wrap:wrap">
       <div>
-        <div style="font-size:11px;text-transform:uppercase;letter-spacing:1px;color:var(--muted);margin-bottom:4px">Cluster Balance Score</div>
+        <div style="font-size:11px;text-transform:uppercase;letter-spacing:1px;color:var(--muted);margin-bottom:4px">Balance Score — ${escHtml(clusterLabel)}</div>
         <div style="font-size:38px;font-weight:700;color:${statusColor};line-height:1">${imbalanceScore.toFixed(0)}<span style="font-size:18px">/100</span></div>
       </div>
       <div style="flex:1">
@@ -13427,15 +13434,40 @@ async function runStorageDRSAnalysis() {
   const threshold = cfg.storageThreshold || 75;
   const target    = cfg.storageTarget    || 50;
 
-  // Gather image-capable storages from cached PVE data (primary cluster)
-  const rawStorages = (PVE.storage || []).filter(s =>
-    s.total && s.total > 0 && s.content && s.content.includes('images')
-  );
+  // Resolve cluster from drs-conn selector
+  const sdrsConn = getViewConn('drs-conn');
+  let rawStorages = [];
 
-  // Also pull from extra connections
-  for (const c of extraConns) {
-    (c.storage || []).filter(s => s.total && s.content && s.content.includes('images'))
-      .forEach(s => rawStorages.push({...s, _connId: c.id}));
+  if (sdrsConn) {
+    // Specific extra cluster selected — fetch fresh if not cached
+    if (!sdrsConn.storage || !sdrsConn.storage.length) {
+      el.innerHTML = '<div class="empty"><span class="loading"></span> Fetching storage from cluster…</div>';
+      const nodeList = sdrsConn.nodeStatuses || [];
+      const all = [];
+      await Promise.all(nodeList.map(async n => {
+        const d = await connGet(sdrsConn, `/api2/json/nodes/${n.node}/storage`).catch(()=>({data:[]}));
+        (d.data||[]).forEach(s => all.push({...s, node: n.node}));
+      }));
+      sdrsConn.storage = all;
+    }
+    rawStorages = (sdrsConn.storage || []).filter(s =>
+      s.total && s.total > 0 && s.content && s.content.includes('images')
+    ).map(s => ({...s, _connId: sdrsConn.id}));
+  } else {
+    // Primary cluster
+    if (!PVE.storage || !PVE.storage.length) {
+      el.innerHTML = '<div class="empty"><span class="loading"></span> Fetching storage from primary cluster…</div>';
+      const nodeList = PVE.nodeStatuses || [];
+      const all = [];
+      await Promise.all(nodeList.map(async n => {
+        const d = await pveGet(`/api2/json/nodes/${n.node}/storage`).catch(()=>({data:[]}));
+        (d.data||[]).forEach(s => all.push({...s, node: n.node}));
+      }));
+      PVE.storage = all;
+    }
+    rawStorages = (PVE.storage || []).filter(s =>
+      s.total && s.total > 0 && s.content && s.content.includes('images')
+    );
   }
 
   if (!rawStorages.length) {
