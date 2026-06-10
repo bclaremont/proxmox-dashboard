@@ -281,8 +281,8 @@
     #search-wrap{position:relative;display:flex;align-items:center;}
     #search-icon{position:absolute;left:10px;color:var(--muted);pointer-events:none;width:14px;height:14px;}
     #search-kbd{position:absolute;right:10px;background:var(--bg2);border:1px solid var(--border);border-radius:4px;padding:1px 5px;font-size:10px;color:var(--muted);pointer-events:none;transition:opacity .15s;}
-    #global-search{background:var(--bg3);border:1px solid var(--border);border-radius:20px;color:var(--text);padding:6px 56px 6px 30px;font-family:var(--font);font-size:13px;outline:none;width:260px;transition:all .2s;}
-    #global-search:focus{border-color:var(--accent);width:400px;background:var(--bg2);}
+    #global-search{background:var(--bg3);border:1px solid var(--border);border-radius:20px;color:var(--text);padding:6px 56px 6px 30px;font-family:var(--font);font-size:13px;outline:none;width:360px;transition:all .2s;}
+    #global-search:focus{border-color:var(--accent);width:520px;background:var(--bg2);}
     #global-search:focus ~ #search-kbd{opacity:0;}
     #search-results{position:absolute;top:58px;left:50%;transform:translateX(-50%);width:520px;background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);z-index:200;box-shadow:0 8px 30px rgba(0,0,0,.4);display:none;}
     #search-results.show{display:block;}
@@ -406,6 +406,8 @@
     .cluster-chart-card h4{font-size:11px;text-transform:uppercase;letter-spacing:1px;color:var(--muted);margin-bottom:10px;}
     .cluster-chart-card canvas{max-height:160px;}
     #topbar-uptime{font-size:11px;color:var(--muted);white-space:nowrap;}
+    .topbar-sep{width:1px;height:20px;background:var(--border);flex-shrink:0;}
+    #topbar-user{display:none;align-items:center;gap:6px;font-size:12px;color:var(--muted);white-space:nowrap;}
     .overview-cluster-btn{display:inline-flex;align-items:center;gap:5px;margin-bottom:16px;}
 
     /* GRAPH POLISH */
@@ -509,21 +511,27 @@
     <div id="search-results"></div>
   </div>
   <div id="topbar-stats">
-    <span id="ts-running" style="color:var(--green);font-weight:600"></span>
-    <span id="ts-alerts" style="color:var(--red);display:none"></span>
+    <span id="ts-running" style="color:var(--green);font-weight:600" title="Running VMs and containers"></span>
+    <span id="ts-alerts" style="color:var(--red);display:none;cursor:pointer" title="Unread alerts — click to view" onclick="toggleNotifPanel()"></span>
   </div>
-  <button class="btn small" onclick="showKeyboardShortcuts()" title="Keyboard shortcuts (?)">?</button>
-  <button class="btn small" onclick="toggleTheme()" title="Toggle light/dark mode">◐</button>
+  <div class="topbar-sep"></div>
   <button class="btn small" id="notif-btn" onclick="toggleNotifPanel()" title="Notifications" style="position:relative">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:14px;height:14px"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
     <span id="notif-badge" style="display:none"></span>
   </button>
   <span id="conn-status" class="pill offline" title="">disconnected</span>
-  <span id="topbar-uptime" style="display:none"></span>
   <button class="btn small" id="btn-refresh" onclick="refreshAll()" disabled title="Refresh — never">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:14px;height:14px"><path d="M23 4v6h-6M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
   </button>
-  <button class="btn small danger" id="btn-disconnect" onclick="disconnect()" style="display:none">Disconnect</button>
+  <span id="topbar-uptime" style="display:none"></span>
+  <div class="topbar-sep"></div>
+  <button class="btn small" onclick="toggleTheme()" title="Toggle light/dark mode">◐</button>
+  <div id="topbar-user">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:13px;height:13px;flex-shrink:0"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg>
+    <span id="topbar-username"></span>
+  </div>
+  <button class="btn small danger" id="btn-disconnect" onclick="disconnect()" style="display:none">Sign Out</button>
+  <button class="btn small" onclick="showKeyboardShortcuts()" title="Keyboard shortcuts">?</button>
 </div>
 
 <div id="app">
@@ -1785,6 +1793,8 @@ async function pccLogout() {
   if (_pccRefreshTimer) { clearTimeout(_pccRefreshTimer); _pccRefreshTimer = null; }
   PCC_TOKEN = null; PCC_USER = null;
   sessionStorage.removeItem('pcc-token');
+  const userEl = document.getElementById('topbar-user');
+  if (userEl) userEl.style.display = 'none';
   // clear all cluster connections
   clearInterval(PVE.refreshInterval);
   PVE = { host:'', ticket:'', csrfToken:'', tokenAuth:'', useToken:false,
@@ -1796,6 +1806,13 @@ async function pccLogout() {
 
 async function pccPostLogin() {
   document.getElementById('init-overlay')?.remove();
+  // Show username in topbar
+  const userEl = document.getElementById('topbar-user');
+  const nameEl = document.getElementById('topbar-username');
+  if (userEl && nameEl && PCC_USER?.username) {
+    nameEl.textContent = PCC_USER.username;
+    userEl.style.display = 'flex';
+  }
   // Show PCC Admin nav item for admins
   const adminNav = document.getElementById('nav-pcc-admin');
   if (adminNav && PCC_USER?.role === 'admin') adminNav.style.display = '';
@@ -2579,7 +2596,7 @@ function updateTopbarStats() {
   const runEl = document.getElementById('ts-running');
   if (runEl) runEl.textContent = `● ${running} running`;
   const altEl = document.getElementById('ts-alerts');
-  if (altEl) { altEl.textContent = `⚠ ${alertCount}`; altEl.style.display = alertCount?'':'none'; }
+  if (altEl) { altEl.textContent = `⚠ ${alertCount} alerts`; altEl.style.display = alertCount?'':'none'; }
   updateFaviconBadge(alertCount);
 }
 
