@@ -1429,7 +1429,7 @@
       <div class="section-header">
         <span class="section-title">Reports &amp; Export</span>
         <div style="display:flex;gap:6px;align-items:center">
-          <select id="rpt-conn" style="width:140px;padding:5px 8px;font-size:13px" onchange="renderReports()">
+          <select id="rpt-conn" style="width:140px;padding:5px 8px;font-size:13px" onchange="_rptConnChange()">
             <option value="_all">All Clusters</option>
             <option value="">Primary</option>
           </select>
@@ -19084,6 +19084,7 @@ function closeDLModal(e) {
 // Data comes entirely from in-memory PVE data — no extra API calls needed.
 
 let _rptTab = 'summary';
+let _rptCache = {}; // keyed by connFilter value → {backup, snapshots}
 
 function loadReports() {
   // Populate cluster selector
@@ -19094,6 +19095,11 @@ function loadReports() {
       extraConns.map(c=>`<option value="${c.id}">${escHtml(c.name||c.host)}</option>`).join('');
     if (cur) sel.value = cur;
   }
+  renderReports();
+}
+
+function _rptConnChange() {
+  _rptCache = {}; // clear lazy-fetch cache when cluster changes
   renderReports();
 }
 
@@ -19142,6 +19148,85 @@ async function _rptFetchMissingStorage() {
   }));
 }
 
+async function _rptFetchBackups(cacheKey) {
+  const { vms, nodes } = _rptGetFilteredData();
+  const connFilter = cacheKey;
+  const conn = connFilter === '_all' ? null : connFilter === '' ? null : extraConns.find(c=>c.id===connFilter);
+  const get  = conn ? (p=>connGet(conn,p)) : pveGet;
+  const nodeList = conn ? (conn.nodes||[]) : PVE.nodes;
+  const covered = new Set();
+  const lastBackup = {};
+  try {
+    const jobsRes = await get('/api2/json/cluster/backup').catch(()=>({data:[]}));
+    const jobs = jobsRes.data||[];
+    jobs.forEach(j => {
+      if (!j.enabled && j.enabled !== undefined) return;
+      if (!j.vmid || j.vmid === 'all' || j.all) {
+        vms.forEach(v => covered.add(`${v.connId||''}|${v.vmid}`));
+      } else {
+        String(j.vmid).split(',').forEach(id => {
+          const vmid = parseInt(id.trim());
+          const vm = vms.find(v=>v.vmid===vmid);
+          if (vm) covered.add(`${vm.connId||''}|${vm.vmid}`);
+        });
+      }
+    });
+    // For extra connections in _all mode, also fetch their jobs
+    if (connFilter === '_all') {
+      await Promise.all(extraConns.map(async ec => {
+        const ejRes = await connGet(ec, '/api2/json/cluster/backup').catch(()=>({data:[]}));
+        (ejRes.data||[]).forEach(j => {
+          if (!j.enabled && j.enabled !== undefined) return;
+          const ecVMs = [...(ec.vms||[]),...(ec.containers||[])];
+          if (!j.vmid || j.vmid === 'all' || j.all) {
+            ecVMs.forEach(v => covered.add(`${ec.id}|${v.vmid}`));
+          } else {
+            String(j.vmid).split(',').forEach(id => {
+              const vmid = parseInt(id.trim());
+              const vm = ecVMs.find(v=>v.vmid===vmid);
+              if (vm) covered.add(`${ec.id}|${vm.vmid}`);
+            });
+          }
+        });
+      }));
+    }
+    // Fetch recent vzdump tasks for last-run time
+    await Promise.all(nodeList.map(async n => {
+      const d = await get(`/api2/json/nodes/${n.node}/tasks?typefilter=vzdump&limit=50`).catch(()=>({data:[]}));
+      (d.data||[]).forEach(t => {
+        if (!t.vmid || !t.starttime) return;
+        const vm = vms.find(v=>v.vmid===parseInt(t.vmid)&&v.node===n.node);
+        const key = vm ? `${vm.connId||''}|${vm.vmid}` : `|${t.vmid}`;
+        if (!lastBackup[key] || t.starttime > lastBackup[key]) lastBackup[key] = t.starttime;
+      });
+    }));
+    _rptCache[cacheKey] = {...(_rptCache[cacheKey]||{}), backup: {jobs, covered, lastBackup}};
+  } catch {}
+}
+
+async function _rptFetchSnapshots(cacheKey) {
+  const { vms } = _rptGetFilteredData();
+  const connFilter = cacheKey;
+  const snapshots = {};
+  // Batch fetches — 8 at a time to avoid overwhelming the API
+  const targets = vms.filter(v=>!v.template&&v.status==='running');
+  const batchSize = 8;
+  for (let i=0; i<targets.length; i+=batchSize) {
+    await Promise.all(targets.slice(i,i+batchSize).map(async v => {
+      const conn = v.connId ? extraConns.find(c=>c.id===v.connId) : null;
+      const get  = conn ? (p=>connGet(conn,p)) : pveGet;
+      const ep   = v.type==='lxc'?'lxc':'qemu';
+      const key  = `${v.connId||''}|${v.node}/${v.vmid}`;
+      try {
+        const d = await get(`/api2/json/nodes/${v.node}/${ep}/${v.vmid}/snapshot`).catch(()=>({data:[]}));
+        const snaps = (d.data||[]).filter(s=>s.name!=='current');
+        if (snaps.length) snapshots[key] = snaps;
+      } catch {}
+    }));
+  }
+  _rptCache[cacheKey] = {...(_rptCache[cacheKey]||{}), snapshots};
+}
+
 function renderReports() {
   const el = document.getElementById('reports-content');
   if (!el) return;
@@ -19176,13 +19261,26 @@ function renderReports() {
 
   const fmtGiB = b => b ? (b/1073741824).toFixed(1)+' GiB' : '—';
 
+  // ── Summary warnings (computed from available data) ───────
+  const warnHighDisk = nodes.filter(n=>{const r=n.statusData?.rootfs;return r?.total&&(r.used/r.total)>0.8;});
+  const warnHighStor = storage.filter(s=>s.total>0&&(s.used/s.total)>0.8);
+  const warnStopped  = vms.filter(v=>!v.template&&v.status!=='running');
+  const cacheKey     = connFilter;
+  const bkCache      = _rptCache[cacheKey]?.backup;
+  const snCache      = _rptCache[cacheKey]?.snapshots;
+  const warnNoBackup = bkCache ? vms.filter(v=>!v.template&&v.status==='running'&&!bkCache.covered.has(`${v.connId||''}|${v.vmid}`)) : null;
+  const warnStaleSnap= snCache ? Object.entries(snCache).filter(([,snaps])=>snaps.some(s=>s.snaptime&&(Date.now()/1000-s.snaptime)>30*86400)).map(([k])=>k) : null;
+
   el.innerHTML = `
     <!-- Tabs -->
-    <div class="dtabs" style="margin-bottom:16px">
+    <div class="dtabs" style="margin-bottom:16px;flex-wrap:wrap">
       <div class="dtab ${_rptTab==='summary'?'active':''}" onclick="_rptSwitch('summary')">Summary</div>
       <div class="dtab ${_rptTab==='inventory'?'active':''}" onclick="_rptSwitch('inventory')">VM Inventory</div>
       <div class="dtab ${_rptTab==='nodes'?'active':''}" onclick="_rptSwitch('nodes')">Node Utilisation</div>
       <div class="dtab ${_rptTab==='storage'?'active':''}" onclick="_rptSwitch('storage')">Storage</div>
+      <div class="dtab ${_rptTab==='backups'?'active':''}" onclick="_rptSwitch('backups')">Backup Coverage</div>
+      <div class="dtab ${_rptTab==='snapshots'?'active':''}" onclick="_rptSwitch('snapshots')">Snapshots</div>
+      <div class="dtab ${_rptTab==='efficiency'?'active':''}" onclick="_rptSwitch('efficiency')">Efficiency</div>
     </div>
 
     ${_rptTab === 'summary' ? `
@@ -19202,6 +19300,23 @@ function renderReports() {
         <button class="btn" onclick="_copyReportMD()">📋 Copy Markdown Report</button>
       </div>
 
+      <!-- Warnings -->
+      ${(warnHighDisk.length||warnHighStor.length||warnStopped.length||warnNoBackup?.length||warnStaleSnap?.length) ? `
+      <div class="section-header" style="margin-bottom:10px"><span class="section-title">⚠ Warnings</span></div>
+      <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:20px">
+        ${warnHighDisk.map(n=>`<div style="background:var(--bg2);border:1px solid var(--red);border-left:3px solid var(--red);border-radius:var(--radius);padding:10px 14px;font-size:13px">
+          <strong style="color:var(--red)">Node disk &gt;80%</strong> — <strong>${escHtml(n.node)}</strong>${n.connId?` [${getConnName(n.connId)}]`:''}: ${((n.statusData.rootfs.used/n.statusData.rootfs.total)*100).toFixed(1)}% used (${fmtGiB(n.statusData.rootfs.used)} / ${fmtGiB(n.statusData.rootfs.total)})</div>`).join('')}
+        ${warnHighStor.map(s=>`<div style="background:var(--bg2);border:1px solid var(--yellow);border-left:3px solid var(--yellow);border-radius:var(--radius);padding:10px 14px;font-size:13px">
+          <strong style="color:var(--yellow)">Storage &gt;80%</strong> — <strong>${escHtml(s.storage)}</strong> on ${escHtml(s.node)}: ${((s.used/s.total)*100).toFixed(1)}% used (${fmtGiB(s.used)} / ${fmtGiB(s.total)})</div>`).join('')}
+        ${warnStopped.length?`<div style="background:var(--bg2);border:1px solid var(--border);border-left:3px solid var(--muted);border-radius:var(--radius);padding:10px 14px;font-size:13px">
+          <strong>${warnStopped.length} stopped VM/CT${warnStopped.length!==1?'s':''}</strong> — ${warnStopped.slice(0,5).map(v=>escHtml(v.name||String(v.vmid))).join(', ')}${warnStopped.length>5?` and ${warnStopped.length-5} more`:''}</div>`:''}
+        ${warnNoBackup?.length?`<div style="background:var(--bg2);border:1px solid var(--red);border-left:3px solid var(--red);border-radius:var(--radius);padding:10px 14px;font-size:13px">
+          <strong style="color:var(--red)">${warnNoBackup.length} running VM/CT${warnNoBackup.length!==1?'s':''} with no backup job</strong> — ${warnNoBackup.slice(0,5).map(v=>escHtml(v.name||String(v.vmid))).join(', ')}${warnNoBackup.length>5?` and ${warnNoBackup.length-5} more`:''} <button class="btn small" style="margin-left:8px" onclick="_rptSwitch('backups')">View Backup Coverage →</button></div>`:''}
+        ${warnStaleSnap?.length?`<div style="background:var(--bg2);border:1px solid var(--yellow);border-left:3px solid var(--yellow);border-radius:var(--radius);padding:10px 14px;font-size:13px">
+          <strong style="color:var(--yellow)">${warnStaleSnap.length} VM/CT${warnStaleSnap.length!==1?'s':''} with snapshots older than 30 days</strong> <button class="btn small" style="margin-left:8px" onclick="_rptSwitch('snapshots')">View Snapshots →</button></div>`:''}
+      </div>` : ''}
+      ${!bkCache?`<div style="font-size:12px;color:var(--muted);margin-bottom:16px">💡 Load <a href="javascript:_rptSwitch('backups')" style="color:var(--accent)">Backup Coverage</a> and <a href="javascript:_rptSwitch('snapshots')" style="color:var(--accent)">Snapshots</a> tabs to add backup and snapshot warnings here.</div>`:''}
+
       <!-- Per-node mini cards -->
       <div class="section-header" style="margin-bottom:10px"><span class="section-title">Per Node</span></div>
       <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:10px">
@@ -19210,7 +19325,7 @@ function renderReports() {
           const cpu = s.cpu?s.cpu*100:0;
           const mem = s.memory?.total?(s.memory.used/s.memory.total*100):0;
           const disk= s.rootfs?.total?(s.rootfs.used/s.rootfs.total*100):0;
-          const vmCount = vms.filter(v=>v.node===n.node&&!v.template).length;
+          const vmCount = vms.filter(v=>v.node===n.node&&(v.connId||'')===(n.connId||'')&&!v.template).length;
           return `<div style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);padding:12px">
             <div style="font-weight:700;font-size:13px;margin-bottom:8px">${escHtml(n.node)}${n.connId?` <span style="font-size:10px;color:var(--muted)">[${getConnName(n.connId)}]</span>`:''}</div>
             <div style="font-size:11px;color:var(--muted);margin-bottom:2px">CPU ${cpu.toFixed(1)}%</div>
@@ -19234,7 +19349,7 @@ function renderReports() {
         <span style="font-size:12px;color:var(--muted);margin-left:4px">${totalVMs} VM/CT${totalVMs!==1?'s':''}</span>
       </div>
       <div class="table-wrap" style="overflow-x:auto;max-height:560px;overflow-y:auto"><table>
-        <thead><tr><th>Type</th><th>ID</th><th>Name</th><th>Status</th><th>Node</th><th>Cluster</th><th style="min-width:90px">CPU %</th><th style="min-width:90px">RAM %</th><th>Disk</th><th>Tags</th></tr></thead>
+        <thead><tr><th>Type</th><th>ID</th><th>Name</th><th>Status</th><th>Node</th><th>Cluster</th><th style="min-width:90px">CPU %</th><th style="min-width:90px">RAM %</th><th>Disk</th><th>IP</th><th>Uptime</th><th>Tags</th></tr></thead>
         <tbody>${_rptInventoryRows(vms)}</tbody>
       </table></div>` : ''}
 
@@ -19243,7 +19358,7 @@ function renderReports() {
         <button class="btn small primary" onclick="_exportNodesCSV()">↓ CSV</button>
       </div>
       <div class="table-wrap" style="overflow-x:auto"><table>
-        <thead><tr><th>Node</th><th>Cluster</th><th style="text-align:right">CPU Cores</th><th style="min-width:120px">CPU %</th><th style="text-align:right">RAM Total</th><th style="text-align:right">RAM Used</th><th style="min-width:120px">RAM %</th><th style="text-align:right">Root Disk</th><th style="min-width:120px">Root %</th><th style="text-align:right">VMs</th></tr></thead>
+        <thead><tr><th>Node</th><th>Cluster</th><th style="text-align:right">CPU Cores</th><th style="min-width:120px">CPU %</th><th style="text-align:right">RAM Total</th><th style="text-align:right">RAM Used</th><th style="min-width:120px">RAM %</th><th style="text-align:right">Root Disk</th><th style="min-width:120px">Root %</th><th style="text-align:right">VMs</th><th>PVE Version</th><th>Kernel</th></tr></thead>
         <tbody>${nodes.map(n=>{
           const s    = n.statusData||{};
           const cpu  = s.cpu?s.cpu*100:0;
@@ -19255,6 +19370,8 @@ function renderReports() {
           const dskU = s.rootfs?.used||0;
           const dskP = dskT?(dskU/dskT*100):0;
           const vc   = vms.filter(v=>v.node===n.node&&(v.connId||'')===(n.connId||'')&&!v.template).length;
+          const pveVer = s.pveversion||n.pveversion||'—';
+          const kernel = s.kversion ? s.kversion.replace(/^Linux\s+/,'').split(' ')[0] : '—';
           return `<tr>
             <td><strong>${escHtml(n.node)}</strong></td>
             <td style="color:var(--muted);font-size:12px">${n.connId?getConnName(n.connId):'Primary'}</td>
@@ -19266,7 +19383,9 @@ function renderReports() {
             <td style="text-align:right;font-size:12px">${fmtGiB(dskT)}</td>
             <td><div style="display:flex;align-items:center;gap:6px"><div class="gauge-bar" style="flex:1"><div class="gauge-fill ${gaugeClass(dskP)}" style="width:${Math.min(dskP,100)}%"></div></div><span style="font-size:11px;min-width:36px;text-align:right;color:${dskP>90?'var(--red)':dskP>75?'var(--yellow)':'var(--text)'}">${dskP.toFixed(1)}%</span></div></td>
             <td style="text-align:right">${vc}</td>
-          </tr>`;}).join('')||'<tr><td colspan="10" class="empty">No data</td></tr>'}
+            <td style="font-size:12px;color:var(--muted)">${escHtml(pveVer)}</td>
+            <td style="font-size:11px;color:var(--muted);max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escHtml(s.kversion||'')}">${escHtml(kernel)}</td>
+          </tr>`;}).join('')||'<tr><td colspan="12" class="empty">No data</td></tr>'}
         </tbody></table></div>` : ''}
 
     ${_rptTab === 'storage' ? `
@@ -19289,10 +19408,140 @@ function renderReports() {
           </tr>`;}).join('')||'<tr><td colspan="8" class="empty">No storage data</td></tr>'}
         </tbody></table></div>` : ''}
 
+    ${_rptTab === 'backups' ? (() => {
+      const bc = _rptCache[cacheKey]?.backup;
+      if (!bc) return `<div class="empty"><span class="loading"></span> Loading backup coverage…</div>`;
+      const covered = bc.covered;
+      const lastBk  = bc.lastBackup;
+      const jobs    = bc.jobs;
+      const rows = vms.filter(v=>!v.template).map(v => {
+        const key = `${v.connId||''}|${v.vmid}`;
+        const isCovered = covered.has(key);
+        const last = lastBk[key];
+        const lastStr = last ? new Date(last*1000).toLocaleString() : '—';
+        const age = last ? Math.floor((Date.now()/1000-last)/86400) : null;
+        const ageCol = age===null?'var(--muted)':age>7?'var(--red)':age>3?'var(--yellow)':'var(--green)';
+        return `<tr>
+          <td><span class="type-chip ${v.type==='lxc'?'ct':'vm'}" style="font-size:9px">${(v.type||'vm').toUpperCase()}</span></td>
+          <td style="font-size:12px;color:var(--muted)">${v.vmid}</td>
+          <td><strong>${escHtml(v.name||String(v.vmid))}</strong></td>
+          <td><span class="badge ${v.status==='running'?'running':'stopped'}" style="font-size:10px"><span class="badge-dot"></span>${v.status}</span></td>
+          <td style="font-size:12px;color:var(--muted)">${escHtml(v.node)}</td>
+          <td><span style="font-weight:600;color:${isCovered?'var(--green)':'var(--red)'}">${isCovered?'✓ Covered':'✗ None'}</span></td>
+          <td style="font-size:12px;color:${ageCol}">${lastStr}${age!==null?` <span style="color:var(--muted)">(${age}d ago)</span>`:''}</td>
+        </tr>`;
+      }).join('') || '<tr><td colspan="7" class="empty">No VMs</td></tr>';
+      const uncoveredCount = vms.filter(v=>!v.template&&!covered.has(`${v.connId||''}|${v.vmid}`)).length;
+      return `
+        <div class="stats-grid" style="margin-bottom:16px">
+          <div class="stat-card accent-blue"><div class="label">Backup Jobs</div><div class="value">${jobs.length}</div></div>
+          <div class="stat-card accent-green"><div class="label">VMs Covered</div><div class="value">${vms.filter(v=>!v.template&&covered.has(`${v.connId||''}|${v.vmid}`)).length}</div></div>
+          <div class="stat-card accent-${uncoveredCount?'red':'green'}"><div class="label">No Backup</div><div class="value" style="color:${uncoveredCount?'var(--red)':'var(--green)'}">${uncoveredCount}</div></div>
+          <div class="stat-card accent-blue"><div class="label">Recent Runs</div><div class="value">${Object.keys(lastBk).length}</div></div>
+        </div>
+        <div class="table-wrap" style="overflow-x:auto;max-height:560px;overflow-y:auto"><table>
+          <thead><tr><th>Type</th><th>ID</th><th>Name</th><th>Status</th><th>Node</th><th>Backup Coverage</th><th>Last Backup</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table></div>`;
+    })() : ''}
+
+    ${_rptTab === 'snapshots' ? (() => {
+      const sc = _rptCache[cacheKey]?.snapshots;
+      if (!sc) return `<div class="empty"><span class="loading"></span> Loading snapshot data…</div>`;
+      const entries = Object.entries(sc).filter(([,s])=>s.length>0);
+      if (!entries.length) return `<div class="empty">No snapshots found across any VM/CT.</div>`;
+      const now2 = Date.now()/1000;
+      const rows = entries.sort((a,b)=>b[1].length-a[1].length).map(([key,snaps])=>{
+        const [cid, rest] = key.split('|');
+        const [node, vmidStr] = rest.split('/');
+        const vmid = parseInt(vmidStr);
+        const vm = vms.find(v=>v.vmid===vmid&&(v.connId||'')===cid) || {name:String(vmid),node,type:'qemu'};
+        const oldest = snaps.reduce((a,s)=>(!a||s.snaptime<a.snaptime)?s:a, null);
+        const newest = snaps.reduce((a,s)=>(!a||s.snaptime>a.snaptime)?s:a, null);
+        const oldDays = oldest?.snaptime ? Math.floor((now2-oldest.snaptime)/86400) : null;
+        const stale = oldDays!==null&&oldDays>30;
+        return `<tr>
+          <td><span class="type-chip ${vm.type==='lxc'?'ct':'vm'}" style="font-size:9px">${(vm.type||'qemu')==='lxc'?'CT':'VM'}</span></td>
+          <td style="font-size:12px;color:var(--muted)">${vmid}</td>
+          <td><strong>${escHtml(vm.name||String(vmid))}</strong></td>
+          <td style="font-size:12px;color:var(--muted)">${escHtml(node)}</td>
+          <td style="text-align:right;font-weight:600;color:${snaps.length>5?'var(--yellow)':'var(--text)'}">${snaps.length}</td>
+          <td style="font-size:12px;color:${stale?'var(--red)':'var(--muted)'}">${oldest?.snaptime?new Date(oldest.snaptime*1000).toLocaleDateString():'—'}${oldDays!==null?` <span style="color:${stale?'var(--red)':'var(--muted)'};">(${oldDays}d)</span>`:''}</td>
+          <td style="font-size:12px;color:var(--muted)">${newest?.snaptime?new Date(newest.snaptime*1000).toLocaleDateString():'—'}</td>
+          <td style="font-size:11px;color:var(--muted)">${snaps.map(s=>escHtml(s.name)).join(', ')}</td>
+        </tr>`;
+      }).join('');
+      const staleCount = entries.filter(([,s])=>s.some(x=>x.snaptime&&(now2-x.snaptime)>30*86400)).length;
+      return `
+        <div class="stats-grid" style="margin-bottom:16px">
+          <div class="stat-card accent-blue"><div class="label">VMs with Snapshots</div><div class="value">${entries.length}</div></div>
+          <div class="stat-card accent-blue"><div class="label">Total Snapshots</div><div class="value">${entries.reduce((a,[,s])=>a+s.length,0)}</div></div>
+          <div class="stat-card accent-${staleCount?'red':'green'}"><div class="label">&gt;30d Old</div><div class="value" style="color:${staleCount?'var(--red)':'var(--green)'}">${staleCount}</div></div>
+        </div>
+        <div class="table-wrap" style="overflow-x:auto;max-height:560px;overflow-y:auto"><table>
+          <thead><tr><th>Type</th><th>ID</th><th>Name</th><th>Node</th><th style="text-align:right">Count</th><th>Oldest</th><th>Newest</th><th>Names</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table></div>`;
+    })() : ''}
+
+    ${_rptTab === 'efficiency' ? (() => {
+      const running2 = vms.filter(v=>!v.template&&v.status==='running');
+      if (!running2.length) return `<div class="empty">No running VMs/CTs.</div>`;
+      const classified = running2.map(v => {
+        const cpuPct = (v.cpu||0)*100;
+        const ramPct = v.maxmem ? (v.mem/v.maxmem*100) : 0;
+        const cls = (cpuPct>80||ramPct>90) ? 'stressed' : (cpuPct<10&&ramPct<20) ? 'underutilized' : 'optimal';
+        return {...v, cpuPct, ramPct, cls};
+      });
+      const stressed = classified.filter(v=>v.cls==='stressed');
+      const under    = classified.filter(v=>v.cls==='underutilized');
+      const optimal  = classified.filter(v=>v.cls==='optimal');
+      const rows = classified.sort((a,b)=>b.cpuPct-a.cpuPct).map(v=>{
+        const clsColor = v.cls==='stressed'?'var(--red)':v.cls==='underutilized'?'var(--blue)':'var(--green)';
+        const clsLabel = v.cls==='stressed'?'⚠ Stressed':v.cls==='underutilized'?'💤 Underutilized':'✓ Optimal';
+        const allocCPU = v.maxcpu||'—';
+        const allocRAM = v.maxmem ? fmtGiB(v.maxmem) : '—';
+        return `<tr>
+          <td><span class="type-chip ${v.type==='lxc'?'ct':'vm'}" style="font-size:9px">${(v.type||'vm').toUpperCase()}</span></td>
+          <td style="font-size:12px;color:var(--muted)">${v.vmid}</td>
+          <td><strong>${escHtml(v.name||String(v.vmid))}</strong></td>
+          <td style="font-size:12px;color:var(--muted)">${escHtml(v.node)}</td>
+          <td style="text-align:right;font-size:12px">${allocCPU}</td>
+          <td><div style="display:flex;align-items:center;gap:5px"><div class="gauge-bar" style="flex:1"><div class="gauge-fill ${gaugeClass(v.cpuPct)}" style="width:${Math.min(v.cpuPct,100)}%"></div></div><span style="font-size:11px;min-width:36px;text-align:right">${v.cpuPct.toFixed(1)}%</span></div></td>
+          <td style="text-align:right;font-size:12px">${allocRAM}</td>
+          <td><div style="display:flex;align-items:center;gap:5px"><div class="gauge-bar" style="flex:1"><div class="gauge-fill ${gaugeClass(v.ramPct)}" style="width:${Math.min(v.ramPct,100)}%"></div></div><span style="font-size:11px;min-width:36px;text-align:right">${v.ramPct.toFixed(1)}%</span></div></td>
+          <td><span style="font-size:11px;font-weight:600;color:${clsColor}">${clsLabel}</span></td>
+        </tr>`;
+      }).join('');
+      return `
+        <div class="stats-grid" style="margin-bottom:16px">
+          <div class="stat-card accent-green"><div class="label">Optimal</div><div class="value" style="color:var(--green)">${optimal.length}</div></div>
+          <div class="stat-card accent-${stressed.length?'red':'green'}"><div class="label">Stressed</div><div class="value" style="color:${stressed.length?'var(--red)':'var(--green)'}">${stressed.length}</div><div class="sub">CPU&gt;80% or RAM&gt;90%</div></div>
+          <div class="stat-card accent-blue"><div class="label">Underutilized</div><div class="value" style="color:var(--blue)">${under.length}</div><div class="sub">CPU&lt;10% &amp; RAM&lt;20%</div></div>
+          <div class="stat-card accent-blue"><div class="label">Running Total</div><div class="value">${running2.length}</div></div>
+        </div>
+        <div class="table-wrap" style="overflow-x:auto;max-height:560px;overflow-y:auto"><table>
+          <thead><tr><th>Type</th><th>ID</th><th>Name</th><th>Node</th><th style="text-align:right">vCPUs</th><th style="min-width:130px">CPU %</th><th style="text-align:right">RAM Alloc</th><th style="min-width:130px">RAM %</th><th>Classification</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table></div>`;
+    })() : ''}
+
     <div style="margin-top:16px;font-size:11px;color:var(--muted)">Generated ${now}</div>`;
 }
 
-function _rptSwitch(tab) { _rptTab = tab; renderReports(); }
+function _rptSwitch(tab) {
+  _rptTab = tab;
+  const cacheKey = document.getElementById('rpt-conn')?.value ?? '_all';
+  if (tab === 'backups' && !_rptCache[cacheKey]?.backup) {
+    renderReports(); // shows loading, then fetches
+    _rptFetchBackups(cacheKey).then(() => renderReports());
+  } else if (tab === 'snapshots' && !_rptCache[cacheKey]?.snapshots) {
+    renderReports(); // shows loading, then fetches
+    _rptFetchSnapshots(cacheKey).then(() => renderReports());
+  } else {
+    renderReports();
+  }
+}
 
 function _rptInventoryRows(vms) {
   const q      = (document.getElementById('rpt-inv-q')?.value || '').toLowerCase();
@@ -19306,6 +19555,9 @@ function _rptInventoryRows(vms) {
       const disk   = v.maxdisk ? (v.maxdisk/1073741824).toFixed(1)+' GiB' : '—';
       const cpuBar = v.cpu ? `<div style="display:flex;align-items:center;gap:5px"><div class="gauge-bar" style="flex:1"><div class="gauge-fill ${gaugeClass(cpuPct)}" style="width:${Math.min(cpuPct,100)}%"></div></div><span style="font-size:11px;min-width:32px;text-align:right">${cpuPct.toFixed(1)}%</span></div>` : '—';
       const ramBar = v.maxmem ? `<div style="display:flex;align-items:center;gap:5px"><div class="gauge-bar" style="flex:1"><div class="gauge-fill ${gaugeClass(ramPct)}" style="width:${Math.min(ramPct,100)}%"></div></div><span style="font-size:11px;min-width:32px;text-align:right">${ramPct.toFixed(1)}%</span></div>` : '—';
+      const ipKey  = `${v.connId||''}|${v.node}/${v.vmid}`;
+      const ip     = _vmIPCache[ipKey] || '—';
+      const uptime = v.uptime ? fmtUptime(v.uptime) : '—';
       return `<tr>
         <td><span class="type-chip ${v.type==='lxc'?'ct':'vm'}" style="font-size:9px">${(v.type||'vm').toUpperCase()}</span></td>
         <td style="font-size:12px;color:var(--muted)">${v.vmid}</td>
@@ -19316,9 +19568,11 @@ function _rptInventoryRows(vms) {
         <td style="min-width:100px">${cpuBar}</td>
         <td style="min-width:100px">${ramBar}</td>
         <td style="text-align:right;font-size:12px">${disk}</td>
+        <td style="font-family:monospace;font-size:11px;color:var(--teal)">${ip}</td>
+        <td style="font-size:12px;color:var(--muted)">${uptime}</td>
         <td style="font-size:11px">${v.tags?renderTagChips(parseTags(v.tags),false):''}</td>
       </tr>`;
-    }).join('') || '<tr><td colspan="10" class="empty">No VMs match</td></tr>';
+    }).join('') || '<tr><td colspan="12" class="empty">No VMs match</td></tr>';
 }
 
 // ── CSV export helpers ────────────────────────────────────
