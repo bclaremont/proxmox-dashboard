@@ -6297,7 +6297,18 @@ async function openConsole(node, vmid, type, connId) {
       // vncshell returns a VNC stream — noVNC-compatible, unlike termproxy which
       // uses a raw xterm.js protocol. The WebSocket endpoint is also different:
       // node shells connect to /nodes/{node}/vncwebsocket (no ep/vmid segment).
-      const res  = await post(`/api2/json/nodes/${node}/vncshell`, { websocket: 1 });
+      //
+      // When using API token auth (PVEAPIToken=user@realm!name=...), Proxmox
+      // passes the full token ID as the user context. vncshell rejects this
+      // because 'user@realm!name' is not a valid username format. We must
+      // extract the base user (everything before the '!') and pass it explicitly.
+      const authStr = conn
+        ? (conn.useToken ? conn.tokenAuth : '')
+        : (PVE.useToken  ? PVE.tokenAuth  : '');
+      const tokenUser = authStr.match(/PVEAPIToken=([^!]+)!/)?.[1] || null;
+      const shellParams = { websocket: 1 };
+      if (tokenUser) shellParams.user = tokenUser;
+      const res  = await post(`/api2/json/nodes/${node}/vncshell`, shellParams);
       vncTicket  = res.data.ticket;
       wsUrl = _buildVncWsUrl(conn, node, 'node', null, 'vncwebsocket', res.data.port, vncTicket);
     } else {
