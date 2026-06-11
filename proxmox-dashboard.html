@@ -19097,25 +19097,27 @@ function loadReports() {
   renderReports();
 }
 
+function _rptGetFilteredData() {
+  const connFilter = document.getElementById('rpt-conn')?.value ?? '_all';
+  const conn = connFilter === '_all' ? null : connFilter === '' ? null : extraConns.find(c=>c.id===connFilter);
+  const isPrimary = connFilter === '';
+  const nodes = connFilter === '_all' ? allNodes()
+    : isPrimary                       ? (PVE.nodeStatuses||[])
+    : (conn?.nodeStatuses || []);
+  const vms = (connFilter === '_all' ? allVMs() : isPrimary ? (PVE.vms||[]) : (conn?.vms||[]))
+    .concat(connFilter === '_all' ? allCTs() : isPrimary ? (PVE.containers||[]) : (conn?.containers||[]));
+  const storage = connFilter === '_all'
+    ? [...(PVE.storage||[]), ...extraConns.flatMap(c=>c.storage||[])]
+    : isPrimary ? (PVE.storage||[])
+    : (conn?.storage||[]);
+  return { nodes, vms, storage, connFilter };
+}
+
 function renderReports() {
   const el = document.getElementById('reports-content');
   if (!el) return;
 
-  const connFilter = document.getElementById('rpt-conn')?.value ?? '_all';
-
-  // Filter data by selected cluster
-  const nodes = connFilter === '_all' ? allNodes()
-    : connFilter === ''               ? PVE.nodeStatuses
-    : (extraConns.find(c=>c.id===connFilter)?.nodeStatuses || []);
-
-  const vms = (connFilter === '_all' ? allVMs() : connFilter === '' ? PVE.vms : (extraConns.find(c=>c.id===connFilter)?.vms||[]))
-    .concat(connFilter === '_all' ? allCTs() : connFilter === '' ? PVE.containers : (extraConns.find(c=>c.id===connFilter)?.containers||[]));
-
-  const storage = connFilter === '_all'
-    ? [...(PVE.storage||[]), ...extraConns.flatMap(c=>c.storage||[])]
-    : connFilter === ''
-    ? (PVE.storage||[])
-    : (extraConns.find(c=>c.id===connFilter)?.storage||[]);
+  const { nodes, vms, storage } = _rptGetFilteredData();
 
   const now = new Date().toLocaleString();
 
@@ -19292,10 +19294,10 @@ function _downloadCSV(filename, rows) {
 }
 
 function _exportInventoryCSV() {
-  const vms = allVMs().concat(allCTs()).filter(v => !v.template);
+  const { vms } = _rptGetFilteredData();
   const rows = [
     _csvRow(['Type','VMID','Name','Status','Node','Cluster','CPU%','RAM%','Disk GiB','Tags','Uptime (s)']),
-    ...vms.map(v => _csvRow([
+    ...vms.filter(v => !v.template).map(v => _csvRow([
       v.type||'vm', v.vmid, v.name||'', v.status, v.node,
       v.connId ? getConnName(v.connId) : 'Primary',
       v.cpu ? (v.cpu*100).toFixed(2) : '',
@@ -19309,7 +19311,7 @@ function _exportInventoryCSV() {
 }
 
 function _exportNodesCSV() {
-  const nodes = allNodes();
+  const { nodes, vms } = _rptGetFilteredData();
   const rows = [
     _csvRow(['Node','Cluster','CPU Cores','CPU%','RAM Total GiB','RAM Used GiB','RAM%','Root Total GiB','Root Used GiB','Root%','VMs']),
     ...nodes.map(n => {
@@ -19317,7 +19319,7 @@ function _exportNodesCSV() {
       const cpu = s.cpu?s.cpu*100:0;
       const mt  = s.memory?.total||0; const mu = s.memory?.used||0;
       const dt  = s.rootfs?.total||0;  const du = s.rootfs?.used||0;
-      const vc  = allVMs().concat(allCTs()).filter(v=>v.node===n.node&&!v.template).length;
+      const vc  = vms.filter(v=>v.node===n.node&&!v.template).length;
       return _csvRow([
         n.node, n.connId?getConnName(n.connId):'Primary',
         s.cpuinfo?.cpus||'', cpu.toFixed(2),
@@ -19332,10 +19334,10 @@ function _exportNodesCSV() {
 }
 
 function _exportStorageCSV() {
-  const storage = [...(PVE.storage||[]), ...extraConns.flatMap(c=>c.storage||[])].filter(s=>s.total>0);
+  const { storage } = _rptGetFilteredData();
   const rows = [
     _csvRow(['Storage','Node','Type','Total GiB','Used GiB','Free GiB','Used%','Content','Shared']),
-    ...storage.map(s => _csvRow([
+    ...storage.filter(s=>s.total>0).map(s => _csvRow([
       s.storage, s.node, s.type||'',
       (s.total/1073741824).toFixed(2), (s.used/1073741824).toFixed(2),
       ((s.avail||s.total-s.used)/1073741824).toFixed(2),
@@ -19352,8 +19354,8 @@ function _exportSummaryCSV() {
 }
 
 function _copyReportMD() {
-  const nodes = allNodes();
-  const vms   = allVMs().concat(allCTs()).filter(v=>!v.template);
+  const { nodes, vms: _allVms } = _rptGetFilteredData();
+  const vms   = _allVms.filter(v=>!v.template);
   const run   = vms.filter(v=>v.status==='running').length;
   const fmtGiB= b=>b?(b/1073741824).toFixed(1)+' GiB':'—';
   const lines = [
