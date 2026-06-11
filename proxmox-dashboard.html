@@ -19197,8 +19197,8 @@ function renderReports() {
         <button class="btn small" onclick="_copyInventoryMD()">📋 Markdown</button>
         <span style="font-size:12px;color:var(--muted);margin-left:4px">${totalVMs} VM/CT${totalVMs!==1?'s':''}</span>
       </div>
-      <div class="table-wrap"><table>
-        <thead><tr><th>Type</th><th>ID</th><th>Name</th><th>Status</th><th>Node</th><th>Cluster</th><th>CPU %</th><th>RAM</th><th>Disk</th><th>Tags</th></tr></thead>
+      <div class="table-wrap" style="overflow-x:auto;max-height:560px;overflow-y:auto"><table>
+        <thead><tr><th>Type</th><th>ID</th><th>Name</th><th>Status</th><th>Node</th><th>Cluster</th><th style="min-width:90px">CPU %</th><th style="min-width:90px">RAM %</th><th>Disk</th><th>Tags</th></tr></thead>
         <tbody>${_rptInventoryRows(vms)}</tbody>
       </table></div>` : ''}
 
@@ -19206,8 +19206,8 @@ function renderReports() {
       <div style="display:flex;gap:8px;margin-bottom:12px">
         <button class="btn small primary" onclick="_exportNodesCSV()">↓ CSV</button>
       </div>
-      <div class="table-wrap"><table>
-        <thead><tr><th>Node</th><th>Cluster</th><th>CPU Cores</th><th>CPU %</th><th>RAM Total</th><th>RAM Used</th><th>RAM %</th><th>Root Disk</th><th>Root Disk %</th><th>VMs</th></tr></thead>
+      <div class="table-wrap" style="overflow-x:auto"><table>
+        <thead><tr><th>Node</th><th>Cluster</th><th style="text-align:right">CPU Cores</th><th style="min-width:120px">CPU %</th><th style="text-align:right">RAM Total</th><th style="text-align:right">RAM Used</th><th style="min-width:120px">RAM %</th><th style="text-align:right">Root Disk</th><th style="min-width:120px">Root %</th><th style="text-align:right">VMs</th></tr></thead>
         <tbody>${nodes.map(n=>{
           const s    = n.statusData||{};
           const cpu  = s.cpu?s.cpu*100:0;
@@ -19218,17 +19218,17 @@ function renderReports() {
           const dskT = s.rootfs?.total||0;
           const dskU = s.rootfs?.used||0;
           const dskP = dskT?(dskU/dskT*100):0;
-          const vc   = vms.filter(v=>v.node===n.node&&!v.template).length;
+          const vc   = vms.filter(v=>v.node===n.node&&(v.connId||'')===(n.connId||'')&&!v.template).length;
           return `<tr>
             <td><strong>${escHtml(n.node)}</strong></td>
             <td style="color:var(--muted);font-size:12px">${n.connId?getConnName(n.connId):'Primary'}</td>
             <td style="text-align:right">${cores}</td>
-            <td style="text-align:right"><span style="color:${cpu>90?'var(--red)':cpu>70?'var(--yellow)':'var(--text)'}">${cpu.toFixed(1)}%</span></td>
+            <td><div style="display:flex;align-items:center;gap:6px"><div class="gauge-bar" style="flex:1"><div class="gauge-fill ${gaugeClass(cpu)}" style="width:${Math.min(cpu,100)}%"></div></div><span style="font-size:11px;min-width:36px;text-align:right;color:${cpu>90?'var(--red)':cpu>70?'var(--yellow)':'var(--text)'}">${cpu.toFixed(1)}%</span></div></td>
             <td style="text-align:right;font-size:12px">${fmtGiB(memT)}</td>
             <td style="text-align:right;font-size:12px">${fmtGiB(memU)}</td>
-            <td style="text-align:right"><span style="color:${memP>90?'var(--red)':memP>75?'var(--yellow)':'var(--text)'}">${memP.toFixed(1)}%</span></td>
+            <td><div style="display:flex;align-items:center;gap:6px"><div class="gauge-bar" style="flex:1"><div class="gauge-fill ${gaugeClass(memP)}" style="width:${Math.min(memP,100)}%"></div></div><span style="font-size:11px;min-width:36px;text-align:right;color:${memP>90?'var(--red)':memP>75?'var(--yellow)':'var(--text)'}">${memP.toFixed(1)}%</span></div></td>
             <td style="text-align:right;font-size:12px">${fmtGiB(dskT)}</td>
-            <td style="text-align:right">${dskP.toFixed(1)}%</td>
+            <td><div style="display:flex;align-items:center;gap:6px"><div class="gauge-bar" style="flex:1"><div class="gauge-fill ${gaugeClass(dskP)}" style="width:${Math.min(dskP,100)}%"></div></div><span style="font-size:11px;min-width:36px;text-align:right;color:${dskP>90?'var(--red)':dskP>75?'var(--yellow)':'var(--text)'}">${dskP.toFixed(1)}%</span></div></td>
             <td style="text-align:right">${vc}</td>
           </tr>`;}).join('')||'<tr><td colspan="10" class="empty">No data</td></tr>'}
         </tbody></table></div>` : ''}
@@ -19237,8 +19237,8 @@ function renderReports() {
       <div style="display:flex;gap:8px;margin-bottom:12px">
         <button class="btn small primary" onclick="_exportStorageCSV()">↓ CSV</button>
       </div>
-      <div class="table-wrap"><table>
-        <thead><tr><th>Storage</th><th>Node</th><th>Type</th><th>Total</th><th>Used</th><th>Free</th><th>Used %</th><th>Content</th></tr></thead>
+      <div class="table-wrap" style="overflow-x:auto"><table>
+        <thead><tr><th>Storage</th><th>Node</th><th>Type</th><th style="text-align:right">Total</th><th style="text-align:right">Used</th><th style="text-align:right">Free</th><th style="min-width:140px">Used %</th><th>Content</th></tr></thead>
         <tbody>${storage.filter(s=>s.total>0).map(s=>{
           const pct = s.total?(s.used/s.total*100):0;
           return `<tr>
@@ -19248,7 +19248,7 @@ function renderReports() {
             <td style="text-align:right;font-size:12px">${fmtGiB(s.total)}</td>
             <td style="text-align:right;font-size:12px">${fmtGiB(s.used)}</td>
             <td style="text-align:right;font-size:12px">${fmtGiB(s.avail||s.total-s.used)}</td>
-            <td style="text-align:right"><span style="color:${pct>90?'var(--red)':pct>75?'var(--yellow)':'var(--text)'}">${pct.toFixed(1)}%</span></td>
+            <td><div style="display:flex;align-items:center;gap:6px"><div class="gauge-bar" style="flex:1"><div class="gauge-fill ${gaugeClass(pct)}" style="width:${Math.min(pct,100)}%"></div></div><span style="font-size:11px;min-width:36px;text-align:right;color:${pct>90?'var(--red)':pct>75?'var(--yellow)':'var(--text)'}">${pct.toFixed(1)}%</span></div></td>
             <td style="font-size:11px;color:var(--muted)">${s.content||'—'}</td>
           </tr>`;}).join('')||'<tr><td colspan="8" class="empty">No storage data</td></tr>'}
         </tbody></table></div>` : ''}
@@ -19265,9 +19265,11 @@ function _rptInventoryRows(vms) {
     .filter(v => !q || (v.name||'').toLowerCase().includes(q) || String(v.vmid).includes(q) || (v.node||'').includes(q) || (v.tags||'').includes(q))
     .filter(v => !status || v.status === status)
     .map(v => {
-      const cpu  = v.cpu ? (v.cpu*100).toFixed(1)+'%' : '—';
-      const ram  = v.maxmem ? ((v.mem/v.maxmem*100).toFixed(1)+'%') : '—';
-      const disk = v.maxdisk ? (v.maxdisk/1073741824).toFixed(1)+' GiB' : '—';
+      const cpuPct = v.cpu ? v.cpu*100 : 0;
+      const ramPct = v.maxmem ? (v.mem/v.maxmem*100) : 0;
+      const disk   = v.maxdisk ? (v.maxdisk/1073741824).toFixed(1)+' GiB' : '—';
+      const cpuBar = v.cpu ? `<div style="display:flex;align-items:center;gap:5px"><div class="gauge-bar" style="flex:1"><div class="gauge-fill ${gaugeClass(cpuPct)}" style="width:${Math.min(cpuPct,100)}%"></div></div><span style="font-size:11px;min-width:32px;text-align:right">${cpuPct.toFixed(1)}%</span></div>` : '—';
+      const ramBar = v.maxmem ? `<div style="display:flex;align-items:center;gap:5px"><div class="gauge-bar" style="flex:1"><div class="gauge-fill ${gaugeClass(ramPct)}" style="width:${Math.min(ramPct,100)}%"></div></div><span style="font-size:11px;min-width:32px;text-align:right">${ramPct.toFixed(1)}%</span></div>` : '—';
       return `<tr>
         <td><span class="type-chip ${v.type==='lxc'?'ct':'vm'}" style="font-size:9px">${(v.type||'vm').toUpperCase()}</span></td>
         <td style="font-size:12px;color:var(--muted)">${v.vmid}</td>
@@ -19275,8 +19277,8 @@ function _rptInventoryRows(vms) {
         <td><span class="badge ${v.status==='running'?'running':'stopped'}" style="font-size:10px"><span class="badge-dot"></span>${v.status}</span></td>
         <td style="font-size:12px;color:var(--muted)">${escHtml(v.node)}</td>
         <td style="font-size:12px;color:var(--muted)">${v.connId?getConnName(v.connId):'Primary'}</td>
-        <td style="text-align:right;font-size:12px">${cpu}</td>
-        <td style="text-align:right;font-size:12px">${ram}</td>
+        <td style="min-width:100px">${cpuBar}</td>
+        <td style="min-width:100px">${ramBar}</td>
         <td style="text-align:right;font-size:12px">${disk}</td>
         <td style="font-size:11px">${v.tags?renderTagChips(parseTags(v.tags),false):''}</td>
       </tr>`;
