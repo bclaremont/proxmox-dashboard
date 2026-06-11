@@ -19113,11 +19113,47 @@ function _rptGetFilteredData() {
   return { nodes, vms, storage, connFilter };
 }
 
+async function _rptFetchMissingStorage() {
+  const connFilter = document.getElementById('rpt-conn')?.value ?? '_all';
+  const targets = connFilter === '_all'
+    ? extraConns.filter(c => !c.storage || !c.storage.length)
+    : connFilter !== '' ? [extraConns.find(c=>c.id===connFilter)].filter(c=>c&&(!c.storage||!c.storage.length)) : [];
+  if (!targets.length) return;
+  await Promise.all(targets.map(async conn => {
+    try {
+      const all = [];
+      await Promise.all((conn.nodes||[]).map(async n => {
+        const d = await connGet(conn, `/api2/json/nodes/${n.node}/storage`).catch(()=>({data:[]}));
+        const stores = d.data||[];
+        await Promise.all(stores.map(async s => {
+          const st = await connGet(conn, `/api2/json/nodes/${n.node}/storage/${s.storage}/status`).catch(()=>({data:{}}));
+          all.push({...s, ...st.data, node: n.node});
+        }));
+      }));
+      const byName = {};
+      all.forEach(s => (byName[s.storage]||(byName[s.storage]=[])).push(s));
+      const deduped = [];
+      Object.values(byName).forEach(entries => {
+        const active = entries.filter(e => e.active===1||e.active===true||e.active==='1');
+        deduped.push(...(active.length ? active : [entries[0]]));
+      });
+      conn.storage = deduped;
+    } catch {}
+  }));
+}
+
 function renderReports() {
   const el = document.getElementById('reports-content');
   if (!el) return;
 
-  const { nodes, vms, storage } = _rptGetFilteredData();
+  const { nodes, vms, storage, connFilter } = _rptGetFilteredData();
+
+  // Storage tab: if selected connection has no cached storage, fetch then re-render
+  if (_rptTab === 'storage' && storage.length === 0 && connFilter !== '') {
+    el.innerHTML = '<div class="empty"><span class="loading"></span> Loading storage data…</div>';
+    _rptFetchMissingStorage().then(() => renderReports());
+    return;
+  }
 
   const now = new Date().toLocaleString();
 
