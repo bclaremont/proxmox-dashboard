@@ -8,6 +8,24 @@ All notable changes to PCC are documented here.
 
 ---
 
+## Operations, UI polish, and bug fixes (2026-06)
+
+### Added
+- **Cross-cluster VM copy wizard** (`⎘→` button on VM rows, shown only when extra clusters are connected) — 4-step guided process: configure destination cluster/node/storage → vzdump backup on source (polled to completion) → scp transfer command with clipboard copy → vzrestore on destination; works for both QEMU VMs and LXC containers
+- **Config export/import** (PCC Admin → My Account) — exports all PCC settings (affinity rules, DRS config, webhooks, custom specs, schedules, saved views, host profiles, VM alert rules, locations, content library metadata) as a dated JSON file; import offers Merge (keep existing) or Replace (restore exactly) mode; page reloads automatically to apply
+
+### Changed
+- **Topbar redesign** — search box widened (260→360px, expands to 520px on focus); `⚠ 18` alert count now reads `⚠ 18 alerts` with tooltip and click-to-open; username chip (`👤 admin`) shown in standalone mode after login; button order: notifications → status → refresh | theme → username → Sign Out → `?`; thin separators group functional areas; `?` moved to far right
+- **Browser tab title** — now shows current view name (`PCC — Virtual Machines`, `PCC — Disk Health`, etc.) instead of a mix of node names; updates on every navigation
+- **Affinity fix dialog** — replaced bare `confirm()` with a proper modal: shows rule type explanation, current violation detail, migration list (VM chip + source node in red → target node in green), live-migration note, and `⚡ Migrate N VMs` confirm button
+
+### Fixed
+- **PVE login screen flash on page load** — `view-connect` had no `display:none` so it appeared for ~200-400ms during async backend detection/session verify; now hidden by default and covered by an `#init-overlay` spinner until init completes
+- **Datacenter Options tab crash** — `cfg is not defined` error caused by a stray variable name in the Tags section; replaced with correct `o['allowed-tags']` reference (handles both string and array formats); also wires up the tags field so it's saved on submit
+- **Datacenter allowed-tags not saved** — `saveDatacenterOptions()` was rendering the tags input but not including it in the PUT request params
+
+---
+
 ## Monitoring features (2026-06)
 
 ### Added

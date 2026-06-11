@@ -34,6 +34,8 @@
 - **Capacity planning** — trend-based forecasting of when CPU, RAM or disk will be exhausted
 - **Host Profiles** — capture a reference node's config and detect/fix drift across the fleet
 - **Maintenance drain** — evacuate all VMs from a node before maintenance with one click
+- **Cross-cluster VM copy** — guided 4-step wizard to cold-copy a VM between clusters (vzdump → scp → vzrestore); useful for DR and cluster migrations
+- **Config export/import** — backup and restore all PCC settings (rules, schedules, webhooks, specs) as a JSON file; supports merge or full-replace import
 
 ### Monitoring & alerting
 - **SMART + ZFS health** — per-node physical disk health (SMART status, temperature, wearout) and ZFS pool status (health, usage, fragmentation)
