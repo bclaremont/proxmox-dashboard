@@ -647,7 +647,10 @@ server.on('upgrade', (req, socket, head) => {
   const isHttps  = targetUrl.protocol === 'https:';
   const tPort    = parseInt(targetUrl.port) || (isHttps ? 443 : 80);
   const tHost    = targetUrl.hostname;
-  const wsPath   = `/api2/json/nodes/${node}/${ep}/${vmid}/vncwebsocket?port=${port}&vncticket=${encodeURIComponent(ticket)}`;
+  // Node shell uses sentinel ep '__shell'; its Proxmox URL omits ep/vmid segments.
+  const wsPath = ep === '__shell'
+    ? `/api2/json/nodes/${node}/vncwebsocket?port=${port}&vncticket=${encodeURIComponent(ticket)}`
+    : `/api2/json/nodes/${node}/${ep}/${vmid}/vncwebsocket?port=${port}&vncticket=${encodeURIComponent(ticket)}`;
 
   // Build the HTTP Upgrade request to send to PVE
   const reqHeaders = [

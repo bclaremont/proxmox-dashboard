@@ -6294,9 +6294,12 @@ async function openConsole(node, vmid, type, connId) {
     let wsUrl, vncTicket;
 
     if (ep === 'node') {
-      const res  = await post(`/api2/json/nodes/${node}/termproxy`, {});
+      // vncshell returns a VNC stream — noVNC-compatible, unlike termproxy which
+      // uses a raw xterm.js protocol. The WebSocket endpoint is also different:
+      // node shells connect to /nodes/{node}/vncwebsocket (no ep/vmid segment).
+      const res  = await post(`/api2/json/nodes/${node}/vncshell`, { websocket: 1 });
       vncTicket  = res.data.ticket;
-      wsUrl = _buildVncWsUrl(conn, node, 'nodes', node, 'termproxy', res.data.port, vncTicket);
+      wsUrl = _buildVncWsUrl(conn, node, 'node', null, 'vncwebsocket', res.data.port, vncTicket);
     } else {
       const res  = await post(`/api2/json/nodes/${node}/${ep}/${vmid}/vncproxy`, { websocket: 1 });
       vncTicket  = res.data.ticket;
@@ -6314,12 +6317,16 @@ async function openConsole(node, vmid, type, connId) {
 // In direct mode we route through the nginx proxy on the same host (handles SSL).
 // In backend mode we use the proxy path (PCC backend handles WebSocket proxying).
 function _buildVncWsUrl(conn, node, ep, vmid, wsEndpoint, port, ticket) {
-  const wsProto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const wsProto    = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const isNodeShell = ep === 'node';
 
   if (PCC_BACKEND) {
     const hostStr   = conn ? conn.host : PVE.host;
     const clusterId = hostStr.replace('/proxy/', '');
-    const base = `${wsProto}//${location.host}/vnc-ws/${clusterId}/${node}/${ep}/${vmid}`;
+    // Node shell uses sentinel path __shell/__node so server.js can distinguish it
+    // from VM/LXC console paths and build the correct Proxmox API URL.
+    const pathSuffix = isNodeShell ? '__shell/__node' : `${ep}/${vmid}`;
+    const base = `${wsProto}//${location.host}/vnc-ws/${clusterId}/${node}/${pathSuffix}`;
     return `${base}?port=${port}&vncticket=${encodeURIComponent(ticket)}&token=${encodeURIComponent(PCC_TOKEN||'')}`;
   }
 
@@ -6333,7 +6340,11 @@ function _buildVncWsUrl(conn, node, ep, vmid, wsEndpoint, port, ticket) {
     : (PVE.useToken  ? PVE.tokenAuth  : 'PVEAuthCookie=' + PVE.ticket);
   const rawPveAuth = pveAuth.replace(/%/g,'%25').replace(/&/g,'%26').replace(/#/g,'%23');
 
-  const base = `${wsProto}//${location.host}/api2/json/nodes/${node}/${ep}/${vmid}/${wsEndpoint}`;
+  // Node shell: /nodes/{node}/vncwebsocket (no ep/vmid segments in path)
+  const apiPath = isNodeShell
+    ? `/api2/json/nodes/${node}/${wsEndpoint}`
+    : `/api2/json/nodes/${node}/${ep}/${vmid}/${wsEndpoint}`;
+  const base = `${wsProto}//${location.host}${apiPath}`;
   return `${base}?port=${port}&vncticket=${encodeURIComponent(ticket)}&pveauth=${rawPveAuth}`;
 }
 
