@@ -10242,11 +10242,11 @@ async function loadAudit() {
     rawAuditTasks = all;
 
     // Populate filter dropdowns
-    const nodes = [...new Set(all.map(t => t.node))];
+    const nodeNames = [...new Set(all.map(t => t.node))];
     const types = [...new Set(all.map(t => t.type).filter(Boolean))].sort();
     const nodeEl = document.getElementById('audit-node-filter');
     const typeEl = document.getElementById('audit-type-filter');
-    nodeEl.innerHTML = '<option value="">All Nodes</option>' + nodes.map(n => `<option value="${n}">${n}</option>`).join('');
+    nodeEl.innerHTML = '<option value="">All Nodes</option>' + nodeNames.map(n => `<option value="${n}">${n}</option>`).join('');
     typeEl.innerHTML = '<option value="">All Types</option>' + types.map(t => `<option value="${t}">${t}</option>`).join('');
 
     // Stats
