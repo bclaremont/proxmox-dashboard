@@ -3524,6 +3524,32 @@ function getConnName(connId) {
   return c ? (c.name || c.host) : connId;
 }
 
+// Returns the direct Proxmox web UI URL (port 8006) for a connection.
+// In standalone mode PVE.host is a proxy path so we look up the real host
+// from the _pccClusterHosts map populated at login. Falls back to replacing
+// the port in the raw URL for direct mode.
+function _getPveUIUrl(conn) {
+  let raw;
+  if (conn) {
+    raw = (window._pccClusterHosts && window._pccClusterHosts[conn.id]) || conn.host || '';
+  } else {
+    if (PVE.host && PVE.host.startsWith('/proxy/')) {
+      const id = PVE.host.replace('/proxy/', '');
+      raw = (window._pccClusterHosts && window._pccClusterHosts[id]) || '';
+    } else {
+      raw = PVE.host || '';
+    }
+  }
+  if (!raw || raw.startsWith('/')) return '#';
+  try {
+    const u = new URL(raw);
+    u.port = '8006';
+    u.pathname = '/';
+    u.search = '';
+    return u.toString();
+  } catch { return raw; }
+}
+
 function connHeaders(conn, extra={}) {
   const h = {};
   if (PCC_BACKEND && PCC_TOKEN) {
@@ -15606,10 +15632,12 @@ function renderUpdates() {
       </table>
     </div>`).join('');
 
+  const _updConn = getViewConn('updates-conn');
+  const _pveUrl  = _getPveUIUrl(_updConn);
   el.innerHTML = stats + `
     <div style="background:rgba(210,153,34,.1);border:1px solid rgba(210,153,34,.3);border-radius:var(--radius);padding:9px 14px;font-size:12px;color:var(--yellow);margin-bottom:16px">
       ⚠ Apply updates via the Proxmox web UI, SSH, or Proxmox scheduled tasks to avoid disrupting running VMs.
-      <a href="${PVE.host.replace(':8080',':8006')}" target="_blank" style="color:var(--blue);margin-left:6px">Open Proxmox UI →</a>
+      ${_pveUrl !== '#' ? `<a href="${escHtml(_pveUrl)}" target="_blank" style="color:var(--blue);margin-left:6px">Open Proxmox UI →</a>` : ''}
     </div>` + tables;
 }
 
