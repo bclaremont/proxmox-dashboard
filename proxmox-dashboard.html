@@ -251,6 +251,8 @@
     /* Cluster selector dropdowns */
     select.conn-sel{width:auto!important;min-width:140px;max-width:260px;}
     select.conn-sel.cluster-active{border-color:var(--blue)!important;background:rgba(88,166,255,.1)!important;color:var(--blue)!important;font-weight:600;}
+    select.cluster-filter-sel{width:auto!important;min-width:140px;max-width:260px;}
+    select.cluster-filter-sel.cluster-active{border-color:var(--blue)!important;background:rgba(88,166,255,.1)!important;color:var(--blue)!important;font-weight:600;}
     /* Quick filter pills */
     .filter-pill{padding:4px 10px;border-radius:12px;border:1px solid var(--border);background:transparent;color:var(--muted);font-family:var(--font);font-size:11px;cursor:pointer;transition:all .15s;white-space:nowrap;}
     .filter-pill:hover{border-color:var(--muted);color:var(--text);}
@@ -951,6 +953,7 @@
       <div class="section-header">
         <span class="section-title">Virtual Machines (QEMU/KVM)</span>
         <div style="display:flex;gap:6px;align-items:center">
+          <select class="cluster-filter-sel" id="vms-conn" style="display:none;padding:5px 8px;font-size:13px" onchange="renderVMTable()"><option value="_all">All Clusters</option></select>
           <div class="view-toggle">
             <button class="view-toggle-btn active" id="vms-view-table" onclick="setVMView('table')" title="Table view">≡</button>
             <button class="view-toggle-btn" id="vms-view-cards" onclick="setVMView('cards')" title="Card view">⊞</button>
@@ -981,6 +984,7 @@
       <div class="section-header">
         <span class="section-title">LXC Containers</span>
         <div style="display:flex;gap:6px;align-items:center">
+          <select class="cluster-filter-sel" id="cts-conn" style="display:none;padding:5px 8px;font-size:13px" onchange="renderCTTable()"><option value="_all">All Clusters</option></select>
           <div class="view-toggle">
             <button class="view-toggle-btn active" id="cts-view-table" onclick="setCTView('table')" title="Table view">≡</button>
             <button class="view-toggle-btn" id="cts-view-cards" onclick="setCTView('cards')" title="Card view">⊞</button>
@@ -1009,6 +1013,13 @@
 
     <!-- NODES -->
     <div id="view-nodes" style="display:none">
+      <div class="section-header">
+        <span class="section-title">Nodes</span>
+        <div style="display:flex;gap:6px;align-items:center">
+          <select class="cluster-filter-sel" id="nodes-conn" style="display:none;padding:5px 8px;font-size:13px" onchange="renderNodes()"><option value="_all">All Clusters</option></select>
+          <button class="btn small" onclick="refreshAll()">Refresh</button>
+        </div>
+      </div>
       <div id="node-cards"></div>
     </div>
 
@@ -1099,7 +1110,10 @@
 
     <!-- HEATMAP -->
     <div id="view-heatmap" style="display:none">
-      <div class="section-header"><span class="section-title">Resource Heatmap — Cluster Capacity at a Glance</span></div>
+      <div class="section-header">
+        <span class="section-title">Resource Heatmap — Cluster Capacity at a Glance</span>
+        <select class="cluster-filter-sel" id="heatmap-conn" style="display:none;padding:5px 8px;font-size:13px" onchange="renderHeatmap()"><option value="_all">All Clusters</option></select>
+      </div>
       <div id="heatmap-content"></div>
     </div>
 
@@ -3629,6 +3643,31 @@ function populateConnSelectors() {
       el._connSelWired = true;
     }
   });
+  _populateClusterFilters();
+}
+
+function _clusterFilterRefresh(el) {
+  el.classList.toggle('cluster-active', el.value !== '_all');
+}
+
+function _populateClusterFilters() {
+  ['vms-conn','cts-conn','nodes-conn','heatmap-conn'].forEach(selId => {
+    const el = document.getElementById(selId);
+    if (!el) return;
+    const cur      = el.value || '_all';
+    const hasExtra = extraConns.length > 0;
+    el.style.display = hasExtra ? '' : 'none';
+    if (!hasExtra) { el.value = '_all'; return; }
+    el.innerHTML =
+      `<option value="_all"${cur==='_all'?' selected':''}>All Clusters</option>` +
+      `<option value=""${cur===''?' selected':''}>Primary</option>` +
+      extraConns.map(c=>`<option value="${c.id}"${c.id===cur?' selected':''}>${escHtml(c.name||c.host)}</option>`).join('');
+    _clusterFilterRefresh(el);
+    if (!el._cfWired) {
+      el.addEventListener('change', () => _clusterFilterRefresh(el));
+      el._cfWired = true;
+    }
+  });
 }
 
 // Aggregate helpers
@@ -4801,8 +4840,12 @@ function _ctFilter(f) {
 }
 
 function renderVMTable(){
-  const tagF = document.getElementById('vms-tag-filter')?.value||'';
-  const all  = allVMs().filter(x => !x.template);
+  const tagF       = document.getElementById('vms-tag-filter')?.value||'';
+  const connFilter = document.getElementById('vms-conn')?.value ?? '_all';
+  const baseList   = connFilter === '_all' ? allVMs() :
+                     connFilter === ''     ? PVE.vms :
+                     (extraConns.find(c=>c.id===connFilter)?.vms || []);
+  const all  = baseList.filter(x => !x.template);
   const run  = all.filter(x => x.status === 'running').length;
   const stop = all.filter(x => x.status !== 'running').length;
   // Update pill labels with counts
@@ -4838,9 +4881,13 @@ function renderVMTable(){
 }
 
 function renderCTTable(){
-  const tagF = document.getElementById('cts-tag-filter')?.value||'';
+  const tagF       = document.getElementById('cts-tag-filter')?.value||'';
+  const connFilter = document.getElementById('cts-conn')?.value ?? '_all';
+  const baseList   = connFilter === '_all' ? allCTs() :
+                     connFilter === ''     ? PVE.containers :
+                     (extraConns.find(c=>c.id===connFilter)?.containers || []);
   const sorted = _sortItems(
-    allCTs()
+    baseList
       .filter(x => !tagF || parseTags(x.tags||'').includes(tagF))
       .filter(x => _ctStatusFilter === 'all' || x.status === _ctStatusFilter),
     ctSort.col, ctSort.dir);
@@ -4964,8 +5011,12 @@ function vmRow(x,showType=false){
 }
 
 function renderNodes(){
-  const nodes = allNodes();
-  const multiCluster = extraConns.length > 0;
+  const connFilter     = document.getElementById('nodes-conn')?.value ?? '_all';
+  const showAll        = connFilter === '_all';
+  const nodes          = showAll        ? allNodes() :
+                         connFilter==='' ? PVE.nodeStatuses :
+                         (extraConns.find(c=>c.id===connFilter)?.nodeStatuses || []);
+  const multiCluster   = showAll && extraConns.length > 0;
 
   const _nodeCard = n => {
     const s=n.statusData||{};
@@ -4995,7 +5046,7 @@ function renderNodes(){
 
   if (!multiCluster) {
     document.getElementById('node-cards').innerHTML =
-      `<div class="section-header"><span class="section-title">Nodes</span></div><div class="node-grid">${nodes.map(_nodeCard).join('')}</div>`;
+      `<div class="node-grid">${nodes.map(_nodeCard).join('')}</div>`;
     return;
   }
 
@@ -6511,10 +6562,16 @@ function deleteSnapshot(node, vmid, type, snapname) {
 // ── HEATMAP ───────────────────────────────────────────────
 // Shows resource usage across all nodes at a glance
 function renderHeatmap() {
-  const el = document.getElementById('heatmap-content');
-  const nodes = allNodes();
-  const allItems = allVMs().concat(allCTs());
-  const multiCluster = extraConns.length > 0;
+  const el         = document.getElementById('heatmap-content');
+  const connFilter = document.getElementById('heatmap-conn')?.value ?? '_all';
+  const showAll    = connFilter === '_all';
+  const nodes      = showAll        ? allNodes() :
+                     connFilter==='' ? PVE.nodeStatuses :
+                     (extraConns.find(c=>c.id===connFilter)?.nodeStatuses || []);
+  const allItems   = showAll        ? allVMs().concat(allCTs()) :
+                     connFilter==='' ? [...PVE.vms,...PVE.containers] :
+                     (() => { const c=extraConns.find(c=>c.id===connFilter); return c?[...(c.vms||[]),...(c.containers||[])]:[];})();
+  const multiCluster = showAll && extraConns.length > 0;
   if (!nodes.length) { el.innerHTML = '<div class="empty">No nodes loaded — connect first</div>'; return; }
 
   const _heatCard = n => {
