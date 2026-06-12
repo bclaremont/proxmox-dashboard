@@ -10741,9 +10741,9 @@ function dismissTask(upid) {
   tmRender();
 }
 
-function tmRegister(upid, node, label, user) {
+function tmRegister(upid, node, label, connId, user) {
   if (!upid || typeof upid !== 'string' || upid.length < 5) return;
-  tmTasks[upid] = { upid, node, label: label || 'Task', status: 'running', starttime: Date.now(), user: user || '' };
+  tmTasks[upid] = { upid, node, connId: connId||'', label: label || 'Task', status: 'running', starttime: Date.now(), user: user || '' };
   tmShow();
   tmRender();
 }
@@ -10792,19 +10792,39 @@ async function tmPoll() {
   if (!PVE.host || !PVE.nodes.length) return;
   try {
     const allRunning = [];
+
+    // Collect running tasks from the primary cluster
     await Promise.all(PVE.nodes.map(async n => {
       const d = await pveGet(`/api2/json/nodes/${n.node}/tasks?limit=50`).catch(() => ({ data: [] }));
       (d.data || []).forEach(t => {
-        const isRunning = !t.endtime || !t.status || t.status === 'running';
-        if (isRunning) allRunning.push({ ...t, node: n.node });
+        if (!t.endtime || !t.status || t.status === 'running')
+          allRunning.push({ ...t, node: n.node, connId: '' });
       });
     }));
 
-    // Register any new running tasks we haven't seen yet
+    // Collect running tasks from extra clusters that have active tracked tasks
+    const activeExtraIds = [...new Set(
+      Object.values(tmTasks)
+        .filter(t => t.status === 'running' && t.connId)
+        .map(t => t.connId)
+    )];
+    await Promise.all(activeExtraIds.map(async cid => {
+      const conn = resolveConn(cid);
+      if (!conn) return;
+      await Promise.all((conn.nodes || []).map(async n => {
+        const d = await connGet(conn, `/api2/json/nodes/${n.node}/tasks?limit=50`).catch(() => ({ data: [] }));
+        (d.data || []).forEach(t => {
+          if (!t.endtime || !t.status || t.status === 'running')
+            allRunning.push({ ...t, node: n.node, connId: cid });
+        });
+      }));
+    }));
+
+    // Register any new running tasks we haven't seen yet (picked up via polling)
     allRunning.forEach(t => {
       if (!tmTasks[t.upid]) {
         tmTasks[t.upid] = {
-          upid: t.upid, node: t.node,
+          upid: t.upid, node: t.node, connId: t.connId || '',
           label: tmFriendlyLabel(t.type, t.id || t.vmid),
           status: 'running', starttime: (t.starttime || 0) * 1000,
           user: t.user || ''
@@ -10812,13 +10832,21 @@ async function tmPoll() {
       }
     });
 
-    // Check tasks we track that are no longer in the running list
+    // Tasks we're tracking that are no longer in any cluster's running list
     const runningSet = new Set(allRunning.map(t => t.upid));
     const toCheck = Object.values(tmTasks).filter(t => t.status === 'running' && !runningSet.has(t.upid));
 
     await Promise.all(toCheck.map(async t => {
       try {
-        const s = await pveGet(`/api2/json/nodes/${t.node}/tasks/${encodeURIComponent(t.upid)}/status`);
+        const conn = t.connId ? resolveConn(t.connId) : null;
+        if (t.connId && !conn) {
+          // Connection removed — assume completed
+          tmTasks[t.upid].status = 'ok';
+          tmTasks[t.upid].finishedAt = Date.now();
+          return;
+        }
+        const getter = conn ? p => connGet(conn, p) : pveGet;
+        const s  = await getter(`/api2/json/nodes/${t.node}/tasks/${encodeURIComponent(t.upid)}/status`);
         const st = s.data && s.data.status;
         const ex = s.data && s.data.exitstatus;
         if (st === 'stopped') {
@@ -10828,25 +10856,24 @@ async function tmPoll() {
           if (tmTasks[t.upid].status === 'ok') {
             toast(`✓ ${t.label} completed`, 'success');
           } else {
-            toast(`✗ ${t.label} failed${ex ? ': '+ex : ''}`, 'error');
+            toast(`✗ ${t.label} failed${ex ? ': ' + ex : ''}`, 'error');
           }
           setTimeout(refreshAll, 1500);
         }
       } catch(e) {
-        // UPID no longer queryable — assume done
+        // UPID no longer queryable (task too old or node unreachable) — assume done
         tmTasks[t.upid].status = 'ok';
         tmTasks[t.upid].finishedAt = Date.now();
       }
     }));
 
-    // Clean up dismissed/old finished tasks after 30s
+    // Remove finished tasks after 30s
     const now = Date.now();
     Object.keys(tmTasks).forEach(upid => {
       const t = tmTasks[upid];
       if (t.status !== 'running' && t.finishedAt && (now - t.finishedAt) > 30000) delete tmTasks[upid];
     });
 
-    // Show panel if there are tasks, hide if empty
     if (Object.keys(tmTasks).length) tmShow();
     tmRender();
 
@@ -10878,9 +10905,12 @@ vmAction = async function(node, vmid, type, action, connId='') {
       ? await connPost(conn, `/api2/json/nodes/${node}/${ep}/${vmid}/status/${action}`)
       : await pvePost(`/api2/json/nodes/${node}/${ep}/${vmid}/status/${action}`);
     const upid = res && res.data;
-    toast(`${action} sent to ${type.toUpperCase()} ${vmid}`, 'success');
-    if (upid && typeof upid === 'string') tmRegister(upid, node, label);
-    else setTimeout(refreshAll, 2000);
+    if (upid && typeof upid === 'string') {
+      tmRegister(upid, node, label, connId);
+    } else {
+      toast(`${action} sent`, 'info');
+      setTimeout(refreshAll, 2000);
+    }
   } catch(e) { toast(`Failed to ${action} ${vmid}: ` + e.message, 'error'); }
 };
 
@@ -10901,9 +10931,12 @@ migrateVM = async function(node, vmid, type, targetNode, online, withLocal, targ
       ? await connPost(conn, `/api2/json/nodes/${node}/${endpoint}/${vmid}/migrate`, params)
       : await pvePost(`/api2/json/nodes/${node}/${endpoint}/${vmid}/migrate`, params);
     const upid = res && res.data;
-    toast('Migration task started', 'success');
-    if (upid && typeof upid === 'string') tmRegister(upid, node, label);
-    else setTimeout(refreshAll, 3000);
+    if (upid && typeof upid === 'string') {
+      tmRegister(upid, node, label, connId);
+    } else {
+      toast('Migration task started', 'info');
+      setTimeout(refreshAll, 3000);
+    }
   } catch(e) { toast('Migration failed: ' + e.message, 'error'); }
 };
 
