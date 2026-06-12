@@ -6285,40 +6285,27 @@ function _findConnForNode(nodeName) {
 }
 
 async function openConsole(node, vmid, type, connId) {
-  const conn   = connId ? resolveConn(connId) : _findConnForNode(node);
-  const post   = conn ? (p, d) => connPost(conn, p, d) : pvePost;
-  const ep     = (type === 'qemu' || type === 'vm') ? 'qemu' : (type === 'lxc' || type === 'ct') ? 'lxc' : 'node';
-  const label  = ep === 'node' ? `shell — ${node}` : `${ep.toUpperCase()} ${vmid} (${node})`;
+  const conn  = connId ? resolveConn(connId) : _findConnForNode(node);
+  const post  = conn ? (p, d) => connPost(conn, p, d) : pvePost;
+  const ep    = (type === 'qemu' || type === 'vm') ? 'qemu' : (type === 'lxc' || type === 'ct') ? 'lxc' : 'node';
+  const label = ep === 'node' ? `shell — ${node}` : `${ep.toUpperCase()} ${vmid} (${node})`;
 
   try {
-    let wsUrl, vncTicket;
-
     if (ep === 'node') {
-      // vncshell returns a VNC stream — noVNC-compatible, unlike termproxy which
-      // uses a raw xterm.js protocol. The WebSocket endpoint is also different:
-      // node shells connect to /nodes/{node}/vncwebsocket (no ep/vmid segment).
-      //
-      // When using API token auth (PVEAPIToken=user@realm!name=...), Proxmox
-      // passes the full token ID as the user context. vncshell rejects this
-      // because 'user@realm!name' is not a valid username format. We must
-      // extract the base user (everything before the '!') and pass it explicitly.
-      const authStr = conn
-        ? (conn.useToken ? conn.tokenAuth : '')
-        : (PVE.useToken  ? PVE.tokenAuth  : '');
-      const tokenUser = authStr.match(/PVEAPIToken=([^!]+)!/)?.[1] || null;
-      const shellParams = { websocket: 1 };
-      if (tokenUser) shellParams.user = tokenUser;
-      const res  = await post(`/api2/json/nodes/${node}/vncshell`, shellParams);
-      vncTicket  = res.data.ticket;
-      wsUrl = _buildVncWsUrl(conn, node, 'node', null, 'vncwebsocket', res.data.port, vncTicket);
+      // Use termproxy for node shells. vncshell calls verify_username() on the auth
+      // context user which rejects API token IDs (user@realm!token) — a hard PVE
+      // limitation. termproxy skips that call and works with both ticket and token auth.
+      // termproxy speaks a simple framing protocol (not RFB), so we use shell-console.html.
+      const res   = await post(`/api2/json/nodes/${node}/termproxy`, { websocket: 1 });
+      const wsUrl = _buildVncWsUrl(conn, node, 'node', null, 'vncwebsocket', res.data.port, res.data.ticket);
+      const url   = `/shell-console.html?ws=${encodeURIComponent(wsUrl)}&label=${encodeURIComponent(label)}&user=${encodeURIComponent(res.data.user||'')}&ticket=${encodeURIComponent(res.data.ticket||'')}`;
+      window.open(url, `pcc-shell-${node}`, 'width=1024,height=768,noopener');
     } else {
-      const res  = await post(`/api2/json/nodes/${node}/${ep}/${vmid}/vncproxy`, { websocket: 1 });
-      vncTicket  = res.data.ticket;
-      wsUrl = _buildVncWsUrl(conn, node, ep, vmid, 'vncwebsocket', res.data.port, vncTicket);
+      const res   = await post(`/api2/json/nodes/${node}/${ep}/${vmid}/vncproxy`, { websocket: 1 });
+      const wsUrl = _buildVncWsUrl(conn, node, ep, vmid, 'vncwebsocket', res.data.port, res.data.ticket);
+      const url   = `/console.html?ws=${encodeURIComponent(wsUrl)}&label=${encodeURIComponent(label)}&ep=${ep}&ticket=${encodeURIComponent(res.data.ticket)}`;
+      window.open(url, `pcc-console-${vmid}`, 'width=1024,height=768,noopener');
     }
-
-    const consoleUrl = `/console.html?ws=${encodeURIComponent(wsUrl)}&label=${encodeURIComponent(label)}&ep=${ep}&ticket=${encodeURIComponent(vncTicket)}`;
-    window.open(consoleUrl, `pcc-console-${vmid||node}`, 'width=1024,height=768,noopener');
   } catch(e) {
     toast('Console error: ' + e.message, 'error');
   }

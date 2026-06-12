@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PCC Shell</title>
+  <link rel="stylesheet" href="/vendor/xterm.css">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { width: 100%; height: 100%; background: #0d0d0d; overflow: hidden; font-family: system-ui, sans-serif; }
+
+    #bar {
+      position: fixed; top: 0; left: 0; right: 0; z-index: 99;
+      height: 36px; background: rgba(15,15,15,.95); backdrop-filter: blur(6px);
+      border-bottom: 1px solid rgba(255,255,255,.08);
+      display: flex; align-items: center; gap: 6px; padding: 0 10px;
+    }
+    #bar .label { color: rgba(255,255,255,.55); font-size: 12px; margin-right: auto;
+                  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .status { font-size: 11px; font-family: monospace; padding: 2px 8px; border-radius: 10px; white-space: nowrap; }
+    .status.connecting { background: rgba(234,179,8,.15); color: #facc15; }
+    .status.connected  { background: rgba(34,197,94,.15);  color: #4ade80; }
+    .status.error      { background: rgba(239,68,68,.15);  color: #f87171; }
+    #bar button {
+      background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.1);
+      color: rgba(255,255,255,.7); padding: 3px 9px; border-radius: 4px;
+      cursor: pointer; font-size: 11px; white-space: nowrap; transition: background .15s;
+    }
+    #bar button:hover { background: rgba(255,255,255,.14); color: #fff; }
+
+    #terminal-wrap { position: fixed; top: 36px; left: 0; right: 0; bottom: 0; padding: 4px; }
+    .xterm { height: 100%; }
+
+    #overlay {
+      position: fixed; inset: 36px 0 0 0;
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      gap: 10px; background: #0d0d0d; color: rgba(255,255,255,.5); font-size: 13px;
+      text-align: center; padding: 20px; z-index: 10;
+    }
+    .spinner { width: 28px; height: 28px; border: 2px solid rgba(255,255,255,.1);
+               border-top-color: #f97316; border-radius: 50%; animation: spin .7s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    #overlay.hidden { display: none; }
+    #debug { font-size: 10px; font-family: monospace; color: rgba(255,255,255,.25);
+             margin-top: 6px; max-width: 620px; word-break: break-all; line-height: 1.5; }
+    #retry-btn { margin-top: 6px; padding: 5px 14px; background: rgba(249,115,22,.2);
+                 border: 1px solid rgba(249,115,22,.4); color: #f97316; border-radius: 5px;
+                 cursor: pointer; font-size: 12px; }
+    #retry-btn:hover { background: rgba(249,115,22,.35); }
+  </style>
+</head>
+<body>
+
+<div id="bar">
+  <span class="label" id="lbl">Connecting…</span>
+  <span class="status connecting" id="st">⟳ connecting</span>
+  <button id="fs-btn">⛶ Fullscreen</button>
+  <button id="close-btn">✕ Close</button>
+</div>
+
+<div id="overlay">
+  <div class="spinner" id="spin"></div>
+  <div id="overlay-msg">Opening shell session…</div>
+  <div id="debug"></div>
+  <button id="retry-btn" style="display:none">↺ Retry</button>
+</div>
+
+<div id="terminal-wrap"></div>
+
+<script src="/vendor/xterm.js"></script>
+<script src="/vendor/addon-fit.js"></script>
+<script>
+// termproxy framing protocol (Proxmox):
+//   On open:    send "{user}:{ticket}\n"
+//   Connecting: wait for first two bytes being "OK" (79, 75); rest is terminal data
+//   Send data:  "0:{byteLength}:{rawData}"
+//   Resize:     "1:{cols}:{rows}:"
+//   Keepalive:  "2"  (every 30s)
+
+(function () {
+  var p       = new URLSearchParams(location.search);
+  var wsUrl   = p.get('ws');
+  var label   = p.get('label')  || 'Shell';
+  var user    = p.get('user')   || '';
+  var ticket  = p.get('ticket') || '';
+
+  var lbl     = document.getElementById('lbl');
+  var st      = document.getElementById('st');
+  var overlay = document.getElementById('overlay');
+  var omsg    = document.getElementById('overlay-msg');
+  var dbg     = document.getElementById('debug');
+  var spin    = document.getElementById('spin');
+  var retryBtn= document.getElementById('retry-btn');
+
+  lbl.textContent = label;
+  document.title  = label + ' — PCC';
+
+  document.getElementById('fs-btn').addEventListener('click', function () {
+    if (!document.fullscreenElement) document.documentElement.requestFullscreen().catch(function(){});
+    else document.exitFullscreen();
+  });
+  document.getElementById('close-btn').addEventListener('click', function () { window.close(); });
+  retryBtn.addEventListener('click', function () { location.reload(); });
+
+  function setStatus(cls, text) { st.className = 'status ' + cls; st.textContent = text; }
+  function showError(msg) {
+    spin.style.display = 'none';
+    omsg.textContent   = msg;
+    retryBtn.style.display = '';
+    setStatus('error', '✕ error');
+  }
+
+  if (!wsUrl) { showError('Missing WebSocket URL — close this window and try again.'); return; }
+
+  dbg.textContent = 'WS: ' + wsUrl;
+
+  var term = new Terminal({
+    cursorBlink: true,
+    fontSize: 14,
+    fontFamily: 'Consolas, "Liberation Mono", "Courier New", monospace',
+    theme: { background: '#0d0d0d', foreground: '#d4d4d4', cursor: '#f97316', selectionBackground: 'rgba(249,115,22,.3)' },
+    scrollback: 5000,
+    allowProposedApi: true,
+  });
+
+  var fitAddon = new FitAddon.FitAddon();
+  term.loadAddon(fitAddon);
+  term.open(document.getElementById('terminal-wrap'));
+
+  function fitTerm() {
+    try { fitAddon.fit(); } catch(e) {}
+  }
+
+  var ws;
+  var connected = false;
+  var pingTimer;
+
+  function connect() {
+    setStatus('connecting', '⟳ connecting');
+    omsg.textContent = 'Opening WebSocket connection…';
+
+    ws = new WebSocket(wsUrl, 'binary');
+    ws.binaryType = 'arraybuffer';
+
+    ws.onopen = function () {
+      // Authenticate to the termproxy process
+      ws.send(user + ':' + ticket + '\n');
+    };
+
+    ws.onmessage = function (evt) {
+      var data = new Uint8Array(evt.data);
+      if (!connected) {
+        // termproxy sends "OK" as first two bytes when auth succeeds
+        if (data[0] === 79 && data[1] === 75) {
+          connected = true;
+          overlay.classList.add('hidden');
+          setStatus('connected', '● connected');
+          // Send initial terminal size
+          fitTerm();
+          ws.send('1:' + term.cols + ':' + term.rows + ':');
+          // Write any data that came after "OK" in the same frame
+          if (data.length > 2) term.write(data.slice(2));
+          // Start keepalive
+          pingTimer = setInterval(function () {
+            if (ws && ws.readyState === WebSocket.OPEN) ws.send('2');
+          }, 30000);
+        } else {
+          ws.close();
+          showError('Shell authentication failed.');
+        }
+        return;
+      }
+      term.write(data);
+    };
+
+    ws.onclose = function (evt) {
+      connected = false;
+      clearInterval(pingTimer);
+      if (evt.code === 1000 || evt.code === 1001) {
+        spin.style.display = 'none';
+        omsg.textContent   = 'Session ended.';
+        overlay.classList.remove('hidden');
+        setStatus('error', '○ disconnected');
+      } else {
+        overlay.classList.remove('hidden');
+        showError('Connection lost' + (evt.reason ? ': ' + evt.reason : '.'));
+      }
+    };
+
+    ws.onerror = function () {
+      overlay.classList.remove('hidden');
+      showError('WebSocket connection error.');
+    };
+  }
+
+  // Forward keystrokes to the shell using termproxy framing
+  term.onData(function (data) {
+    if (!connected || !ws || ws.readyState !== WebSocket.OPEN) return;
+    // Convert to bytes and send with length prefix
+    var encoded = unescape(encodeURIComponent(data));
+    ws.send('0:' + encoded.length + ':' + data);
+  });
+
+  // Notify termproxy of terminal resize
+  term.onResize(function (size) {
+    if (connected && ws && ws.readyState === WebSocket.OPEN) {
+      ws.send('1:' + size.cols + ':' + size.rows + ':');
+    }
+  });
+
+  window.addEventListener('resize', function () {
+    clearTimeout(window._shellFitTimer);
+    window._shellFitTimer = setTimeout(fitTerm, 150);
+  });
+
+  connect();
+}());
+</script>
+</body>
+</html>
