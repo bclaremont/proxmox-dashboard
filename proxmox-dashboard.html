@@ -19216,7 +19216,8 @@ function closeDLModal(e) {
 
 let _rptTab = 'summary';
 let _rptCache = {}; // keyed by connFilter value → {backup, snapshots}
-let _rptOsCache = {}; // keyed by "connId|node/vmid" → OS string or null
+let _rptOsCache   = {}; // keyed by "connId|node/vmid" → OS string or null
+let _rptAgentCache = {}; // keyed by "connId|node/vmid" → true (ok) | false (no agent) | undefined (not checked)
 
 function loadReports() {
   // Populate cluster selector
@@ -19232,7 +19233,8 @@ function loadReports() {
 
 function _rptConnChange() {
   _rptCache = {};
-  _rptOsCache = {}; // OS info is per-cluster, clear on change
+  _rptOsCache    = {};
+  _rptAgentCache = {};
   renderReports();
   if (_rptTab === 'inventory') {
     const { vms } = _rptGetFilteredData();
@@ -19366,6 +19368,7 @@ async function _rptFetchSnapshots(cacheKey) {
 
 // Fetch OS info for VMs not yet cached.
 // LXC: ostype is in the list data. QEMU running: agent/osinfo. QEMU stopped: config ostype.
+// Also records agent availability in _rptAgentCache for running QEMU VMs.
 async function _rptFetchOsInfo(vms) {
   const toFetch = vms.filter(v => !v.template && !(_rptOsCache[`${v.connId||''}|${v.node}/${v.vmid}`] !== undefined));
   if (!toFetch.length) return;
@@ -19385,10 +19388,13 @@ async function _rptFetchOsInfo(vms) {
           const d = await get(`/api2/json/nodes/${v.node}/qemu/${v.vmid}/agent/osinfo`);
           const r = d?.data?.result;
           _rptOsCache[key] = r?.['pretty-name'] || r?.name || r?.id || null;
+          _rptAgentCache[key] = true;
           return;
-        } catch {}
+        } catch {
+          _rptAgentCache[key] = false; // running but agent didn't respond
+        }
       }
-      // Fallback: config ostype (gives coarse info like "l26", "win10")
+      // Fallback: config ostype
       try {
         const d = await get(`/api2/json/nodes/${v.node}/qemu/${v.vmid}/config`);
         _rptOsCache[key] = d?.data?.ostype || null;
@@ -19397,13 +19403,26 @@ async function _rptFetchOsInfo(vms) {
       }
     }));
   }
-  // Patch cells in place so we don't need a full re-render
+  // Patch OS cells and agent badges in place
   toFetch.forEach(v => {
-    const key = `${v.connId||''}|${v.node}/${v.vmid}`;
-    const val = _rptOsCache[key];
+    const key  = `${v.connId||''}|${v.node}/${v.vmid}`;
+    const val  = _rptOsCache[key];
     const cell = document.querySelector(`[data-oskey="${CSS.escape(key)}"]`);
-    if (cell) cell.textContent = val || '—';
+    if (!cell) return;
+    const noAgent = v.type !== 'lxc' && v.status === 'running' && _rptAgentCache[key] === false;
+    cell.innerHTML = `${escHtml(val||'—')}${noAgent?'<span title="QEMU guest agent not running" style="margin-left:5px;background:rgba(234,179,8,.2);color:var(--yellow);font-size:9px;padding:1px 5px;border-radius:10px;font-weight:700">no agent</span>':''}`;
   });
+  // After all fetches done, patch the no-agent summary warning if it's visible
+  _rptPatchNoAgentWarning(vms);
+}
+
+function _rptPatchNoAgentWarning(vms) {
+  const el = document.getElementById('rpt-no-agent-warn');
+  if (!el) return;
+  const noAgentVMs = vms.filter(v => !v.template && v.type !== 'lxc' && v.status === 'running' && _rptAgentCache[`${v.connId||''}|${v.node}/${v.vmid}`] === false);
+  if (!noAgentVMs.length) { el.style.display = 'none'; return; }
+  el.style.display = '';
+  el.innerHTML = `<strong style="color:var(--yellow)">${noAgentVMs.length} running VM${noAgentVMs.length!==1?'s':''} with no QEMU guest agent</strong> — ${noAgentVMs.slice(0,5).map(v=>`<strong>${escHtml(v.name||String(v.vmid))}</strong>`).join(', ')}${noAgentVMs.length>5?` and ${noAgentVMs.length-5} more`:''} <button class="btn small" style="margin-left:8px" onclick="_rptSwitch('inventory')">View Inventory →</button>`;
 }
 
 function renderReports() {
@@ -19412,8 +19431,8 @@ function renderReports() {
 
   const { nodes, vms, storage, connFilter } = _rptGetFilteredData();
 
-  // Storage tab: if selected connection has no cached storage, fetch then re-render
-  if (_rptTab === 'storage' && storage.length === 0 && connFilter !== '') {
+  // Storage / Thin Provisioning tabs: fetch storage data if not yet loaded
+  if ((_rptTab === 'storage' || _rptTab === 'thin') && storage.length === 0 && connFilter !== '') {
     el.innerHTML = '<div class="empty"><span class="loading"></span> Loading storage data…</div>';
     _rptFetchMissingStorage().then(() => renderReports());
     return;
@@ -19474,6 +19493,7 @@ function renderReports() {
       <div class="dtab ${_rptTab==='backups'?'active':''}" onclick="_rptSwitch('backups')">Backup Coverage</div>
       <div class="dtab ${_rptTab==='snapshots'?'active':''}" onclick="_rptSwitch('snapshots')">Snapshots</div>
       <div class="dtab ${_rptTab==='efficiency'?'active':''}" onclick="_rptSwitch('efficiency')">Efficiency</div>
+      <div class="dtab ${_rptTab==='thin'?'active':''}" onclick="_rptSwitch('thin')">Thin Provisioning</div>
     </div>
 
     ${_rptTab === 'summary' ? `
@@ -19513,6 +19533,9 @@ function renderReports() {
           <strong style="color:var(--yellow)">${warnStaleSnap.length} VM/CT${warnStaleSnap.length!==1?'s':''} with snapshots older than 30 days</strong> <button class="btn small" style="margin-left:8px" onclick="_rptSwitch('snapshots')">View Snapshots →</button></div>`:''}
       </div>` : ''}
       ${!bkCache?`<div style="font-size:12px;color:var(--muted);margin-bottom:16px">💡 Load <a href="javascript:_rptSwitch('backups')" style="color:var(--accent)">Backup Coverage</a> and <a href="javascript:_rptSwitch('snapshots')" style="color:var(--accent)">Snapshots</a> tabs to add backup and snapshot warnings here.</div>`:''}
+
+      <!-- No-agent warning — patched in-place by _rptPatchNoAgentWarning after async OS fetch -->
+      <div id="rpt-no-agent-warn" style="display:none;background:var(--bg2);border:1px solid var(--yellow);border-left:3px solid var(--yellow);border-radius:var(--radius);padding:10px 14px;font-size:13px;margin-bottom:8px"></div>
 
       <!-- Per-node mini cards -->
       <div class="section-header" style="margin-bottom:10px"><span class="section-title">Per Node</span></div>
@@ -19727,6 +19750,86 @@ function renderReports() {
         </table></div>`;
     })() : ''}
 
+    ${_rptTab === 'thin' ? (() => {
+      // Thin-capable storage types where overcommit is intentional / possible
+      const THIN_TYPES = new Set(['zfspool','lvmthin','rbd','cephfs','glusterfs']);
+
+      // De-duplicate shared storage pools (same pool name appears once per node)
+      const seenPools = new Set();
+      const imagePools = storage.filter(s => s.content?.includes('images') && s.total > 0);
+      const uniquePools = imagePools.filter(s => {
+        const k = s.shared ? s.storage : `${s.node}/${s.storage}`;
+        if (seenPools.has(k)) return false;
+        seenPools.add(k); return true;
+      });
+
+      const totalPhysical  = uniquePools.reduce((a,s) => a + s.total, 0);
+      const totalUsedReal  = uniquePools.reduce((a,s) => a + (s.used||0), 0);
+      const totalAllocated = vms.filter(v => !v.template).reduce((a,v) => a + (v.maxdisk||0), 0);
+      const overcommitRatio = totalPhysical ? totalAllocated / totalPhysical : 0;
+
+      if (!totalPhysical) return `<div class="empty">No image storage data loaded — visit the <a href="javascript:_rptSwitch('storage')" style="color:var(--accent)">Storage</a> tab first, or select a specific cluster.</div>`;
+
+      // Per-node breakdown: local storage capacity vs VMs allocated on that node
+      const nodeRows = nodes.map(n => {
+        const nodeLocalPools = imagePools.filter(s => s.node === n.node && !s.shared);
+        const nodeSharedPools= imagePools.filter(s => s.node === n.node &&  s.shared);
+        const localCap  = nodeLocalPools.reduce((a,s) => a + s.total, 0);
+        const localUsed = nodeLocalPools.reduce((a,s) => a + (s.used||0), 0);
+        const vmAlloc   = vms.filter(v => v.node === n.node && !v.template).reduce((a,v) => a + (v.maxdisk||0), 0);
+        const ratio     = localCap ? vmAlloc / localCap : null;
+        const ratioCol  = ratio === null ? 'var(--muted)' : ratio > 1.5 ? 'var(--red)' : ratio > 1 ? 'var(--yellow)' : 'var(--green)';
+        const vmCount   = vms.filter(v => v.node === n.node && !v.template).length;
+        return `<tr>
+          <td><strong>${escHtml(n.node)}</strong></td>
+          <td style="font-size:12px;color:var(--muted)">${n.connId?getConnName(n.connId):'Primary'}</td>
+          <td style="text-align:right;font-size:12px">${fmtGiB(localCap)||'—'}</td>
+          <td style="text-align:right;font-size:12px">${fmtGiB(localUsed)||'—'}</td>
+          <td style="text-align:right;font-size:12px">${fmtGiB(vmAlloc)||'—'}</td>
+          <td style="text-align:right;font-size:12px;color:var(--muted)">${nodeSharedPools.length ? nodeSharedPools.map(s=>escHtml(s.storage)).join(', ') : '—'}</td>
+          <td style="text-align:right;font-weight:700;color:${ratioCol}">${ratio !== null ? ratio.toFixed(2)+'x' : '—'}</td>
+          <td style="text-align:right;font-size:12px;color:var(--muted)">${vmCount}</td>
+        </tr>`;
+      }).join('') || '<tr><td colspan="8" class="empty">No data</td></tr>';
+
+      // Pool detail rows
+      const poolRows = uniquePools.map(s => {
+        const isThin = THIN_TYPES.has(s.type);
+        const realPct = s.total ? (s.used/s.total*100) : 0;
+        return `<tr>
+          <td><strong>${escHtml(s.storage)}</strong></td>
+          <td style="font-size:12px;color:var(--muted)">${s.shared?'<span style="color:var(--blue);font-size:10px">shared</span>':escHtml(s.node)}</td>
+          <td style="font-size:12px;color:var(--muted)">${s.type||'—'}</td>
+          <td style="font-size:12px">${isThin?'<span style="color:var(--green);font-weight:600">✓ thin</span>':'<span style="color:var(--muted)">pre-alloc</span>'}</td>
+          <td style="text-align:right;font-size:12px">${fmtGiB(s.total)}</td>
+          <td style="text-align:right;font-size:12px">${fmtGiB(s.used||0)}</td>
+          <td><div style="display:flex;align-items:center;gap:5px"><div class="gauge-bar" style="flex:1"><div class="gauge-fill ${gaugeClass(realPct)}" style="width:${Math.min(realPct,100)}%"></div></div><span style="font-size:11px;min-width:36px;text-align:right;color:${realPct>90?'var(--red)':realPct>75?'var(--yellow)':'var(--text)'}">${realPct.toFixed(1)}%</span></div></td>
+        </tr>`;
+      }).join('') || '<tr><td colspan="7" class="empty">No storage data</td></tr>';
+
+      const overCol = overcommitRatio > 1.5 ? 'red' : overcommitRatio > 1 ? 'orange' : 'green';
+      return `
+        <div class="stats-grid" style="margin-bottom:20px">
+          <div class="stat-card accent-blue"><div class="label">Physical Capacity</div><div class="value" style="font-size:18px">${fmtGiB(totalPhysical)}</div><div class="sub">image-capable pools</div></div>
+          <div class="stat-card accent-blue"><div class="label">Actually Used</div><div class="value" style="font-size:18px">${fmtGiB(totalUsedReal)}</div><div class="sub">${totalPhysical?(totalUsedReal/totalPhysical*100).toFixed(1)+'% of physical':''}</div></div>
+          <div class="stat-card accent-${overCol}"><div class="label">VM Disk Allocated</div><div class="value" style="font-size:18px">${fmtGiB(totalAllocated)}</div><div class="sub">thin-provisioned total</div></div>
+          <div class="stat-card accent-${overCol}"><div class="label">Overcommit Ratio</div><div class="value" style="color:${overcommitRatio>1.5?'var(--red)':overcommitRatio>1?'var(--yellow)':'var(--green)'}">${overcommitRatio.toFixed(2)}x</div><div class="sub">${overcommitRatio>1?'⚠ overcommitted':'within physical capacity'}</div></div>
+        </div>
+        ${overcommitRatio > 1 ? `<div style="background:var(--bg2);border:1px solid ${overcommitRatio>1.5?'var(--red)':'var(--yellow)'};border-left:3px solid ${overcommitRatio>1.5?'var(--red)':'var(--yellow)'};border-radius:var(--radius);padding:10px 14px;font-size:13px;margin-bottom:16px">
+          <strong style="color:${overcommitRatio>1.5?'var(--red)':'var(--yellow)'}">Overcommitted ${overcommitRatio.toFixed(2)}x</strong> — VMs have been allocated ${fmtGiB(totalAllocated)} across storage with only ${fmtGiB(totalPhysical)} physical capacity. This is normal with thin-provisioned storage (ZFS, LVM-thin, Ceph) but risky if VMs actually fill their disks. Currently ${fmtGiB(totalUsedReal)} (${(totalUsedReal/totalPhysical*100).toFixed(1)}%) is physically occupied.
+        </div>` : ''}
+        <div class="section-header" style="margin-bottom:10px"><span class="section-title">Per-Node Breakdown (local storage vs local VM allocation)</span></div>
+        <div class="table-wrap" style="overflow-x:auto;margin-bottom:20px"><table>
+          <thead><tr><th>Node</th><th>Cluster</th><th style="text-align:right">Local Storage</th><th style="text-align:right">Used (real)</th><th style="text-align:right">VMs Allocated</th><th>Shared Pools</th><th style="text-align:right">Local Ratio</th><th style="text-align:right">VMs</th></tr></thead>
+          <tbody>${nodeRows}</tbody>
+        </table></div>
+        <div class="section-header" style="margin-bottom:10px"><span class="section-title">Storage Pool Detail</span></div>
+        <div class="table-wrap" style="overflow-x:auto"><table>
+          <thead><tr><th>Pool</th><th>Node / Scope</th><th>Type</th><th>Thin?</th><th style="text-align:right">Capacity</th><th style="text-align:right">Used</th><th style="min-width:140px">Used %</th></tr></thead>
+          <tbody>${poolRows}</tbody>
+        </table></div>`;
+    })() : ''}
+
     <div style="margin-top:16px;font-size:11px;color:var(--muted)">Generated ${now}</div>`;
 }
 
@@ -19763,9 +19866,11 @@ function _rptInventoryRows(vms) {
       const ipKey  = `${v.connId||''}|${v.node}/${v.vmid}`;
       const ip     = _vmIPCache[ipKey] || '—';
       const uptime = v.uptime ? fmtUptime(v.uptime) : '—';
-      const osKey  = `${v.connId||''}|${v.node}/${v.vmid}`;
-      const osVal  = _rptOsCache[osKey];
-      const osText = osVal !== undefined ? (osVal || '—') : (v.type==='lxc'&&v.ostype ? v.ostype : '…');
+      const osKey    = `${v.connId||''}|${v.node}/${v.vmid}`;
+      const osVal    = _rptOsCache[osKey];
+      const osText   = osVal !== undefined ? (osVal || '—') : (v.type==='lxc'&&v.ostype ? v.ostype : '…');
+      const noAgent  = v.type !== 'lxc' && v.status === 'running' && _rptAgentCache[osKey] === false;
+      const agentBadge = noAgent ? '<span title="QEMU guest agent not running" style="margin-left:5px;background:rgba(234,179,8,.2);color:var(--yellow);font-size:9px;padding:1px 5px;border-radius:10px;font-weight:700">no agent</span>' : '';
       return `<tr>
         <td><span class="type-chip ${v.type==='lxc'?'ct':'vm'}" style="font-size:9px">${(v.type||'vm').toUpperCase()}</span></td>
         <td style="font-size:12px;color:var(--muted)">${v.vmid}</td>
@@ -19777,7 +19882,7 @@ function _rptInventoryRows(vms) {
         <td style="min-width:100px">${ramBar}</td>
         <td style="text-align:right;font-size:12px">${disk}</td>
         <td style="font-family:monospace;font-size:11px;color:var(--teal)">${ip}</td>
-        <td style="font-size:11px;color:var(--muted);white-space:nowrap" data-oskey="${osKey}">${escHtml(osText)}</td>
+        <td style="font-size:11px;color:var(--muted);white-space:nowrap" data-oskey="${osKey}">${escHtml(osText)}${agentBadge}</td>
         <td style="font-size:12px;color:var(--muted)">${uptime}</td>
         <td style="font-size:11px">${v.tags?renderTagChips(parseTags(v.tags),false):''}</td>
       </tr>`;
