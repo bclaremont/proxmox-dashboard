@@ -85,6 +85,10 @@
     .nav-item.active{background:rgba(249,115,22,.12);border-color:rgba(249,115,22,.3);color:var(--accent);border-left:3px solid var(--accent);padding-left:15px;}
     .nav-item svg{width:15px;height:15px;flex-shrink:0;}
     .nav-badge{margin-left:auto;background:var(--red);color:#fff;font-size:10px;padding:1px 6px;border-radius:10px;font-weight:700;}
+    .nav-sub-header{font-size:9px;text-transform:uppercase;letter-spacing:1.3px;color:var(--muted);padding:10px 10px 2px 18px;pointer-events:none;user-select:none;opacity:.65;}
+    .sidebar-collapsed .nav-sub-header{display:none;}
+    /* Focus styles for keyboard navigation */
+    .btn:focus-visible,.nav-item:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid var(--accent);outline-offset:1px;}
     /* MAIN */
     #main{overflow-y:auto;padding:20px;}
     /* CONNECT */
@@ -571,27 +575,11 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M3 15h18M9 3v18M15 3v18"/></svg>
         Heatmap
       </div>
-      <div class="nav-item" data-view="tasks" onclick="switchView('tasks')">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
-        Tasks
-        <span class="nav-badge" id="task-err-badge" style="display:none">0</span>
-      </div>
-      <div class="nav-item" data-view="syslog" onclick="switchView('syslog')">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
-        System Log
-      </div>
       <div class="nav-item" data-view="clustergraphs" onclick="switchView('clustergraphs')">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
         Cluster Graphs
       </div>
-    </div>
-
-    <!-- FLEET -->
-    <div class="sidebar-section" data-section="fleet">
-      <div class="sidebar-label" onclick="toggleSidebarSection(this)">
-        <span class="sidebar-label-inner"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>Fleet</span>
-        <span class="sidebar-chevron">▾</span>
-      </div>
+      <div class="nav-sub-header">Fleet</div>
       <div class="nav-item" data-view="connections" onclick="switchView('connections')">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="M8.59 13.51l6.83 3.98M15.41 6.51l-6.82 3.98"/></svg>
         Clusters &amp; Hosts
@@ -601,12 +589,30 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
         World Map
       </div>
+      <div class="nav-sub-header">Health &amp; Logs</div>
+      <div class="nav-item" data-view="disks" onclick="switchView('disks')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14c0 1.66 4.03 3 9 3s9-1.34 9-3V5"/><path d="M3 12c0 1.66 4.03 3 9 3s9-1.34 9-3"/></svg>
+        Disk Health
+      </div>
+      <div class="nav-item" data-view="uptime" onclick="switchView('uptime')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+        Uptime Report
+      </div>
+      <div class="nav-item" data-view="tasks" onclick="switchView('tasks')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+        Tasks
+        <span class="nav-badge" id="task-err-badge" style="display:none">0</span>
+      </div>
+      <div class="nav-item" data-view="syslog" onclick="switchView('syslog')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+        System Log
+      </div>
     </div>
 
-    <!-- ACTIONS -->
+    <!-- CREATE & DEPLOY -->
     <div class="sidebar-section" data-section="actions">
       <div class="sidebar-label" onclick="toggleSidebarSection(this)">
-        <span class="sidebar-label-inner"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>Actions</span>
+        <span class="sidebar-label-inner"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>Create &amp; Deploy</span>
         <span class="sidebar-chevron">▾</span>
       </div>
       <div class="nav-item" onclick="openCreateVMModal()">
@@ -666,6 +672,7 @@
         Ceph
         <span class="nav-badge warn" id="ceph-badge" style="display:none">!</span>
       </div>
+      <div class="nav-sub-header">Availability</div>
       <div class="nav-item" data-view="ha" onclick="switchView('ha')">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
         High Availability
@@ -741,6 +748,7 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>
         Tags
       </div>
+      <div class="nav-sub-header">Security</div>
       <div class="nav-item" data-view="certs" onclick="switchView('certs')">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
         Certificates
@@ -755,6 +763,7 @@
         Subscriptions
         <span class="nav-badge warn" id="sub-badge" style="display:none">!</span>
       </div>
+      <div class="nav-sub-header">Operations</div>
       <div class="nav-item" data-view="updates" onclick="switchView('updates')">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
         Updates
@@ -767,14 +776,6 @@
       <div class="nav-item" data-view="reports" onclick="switchView('reports')">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
         Reports &amp; Export
-      </div>
-      <div class="nav-item" data-view="disks" onclick="switchView('disks')">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14c0 1.66 4.03 3 9 3s9-1.34 9-3V5"/><path d="M3 12c0 1.66 4.03 3 9 3s9-1.34 9-3"/></svg>
-        Disk Health
-      </div>
-      <div class="nav-item" data-view="uptime" onclick="switchView('uptime')">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
-        Uptime Report
       </div>
     </div>
 
