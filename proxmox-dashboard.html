@@ -19216,6 +19216,7 @@ function closeDLModal(e) {
 
 let _rptTab = 'summary';
 let _rptCache = {}; // keyed by connFilter value → {backup, snapshots}
+let _rptOsCache = {}; // keyed by "connId|node/vmid" → OS string or null
 
 function loadReports() {
   // Populate cluster selector
@@ -19230,8 +19231,13 @@ function loadReports() {
 }
 
 function _rptConnChange() {
-  _rptCache = {}; // clear lazy-fetch cache when cluster changes
+  _rptCache = {};
+  _rptOsCache = {}; // OS info is per-cluster, clear on change
   renderReports();
+  if (_rptTab === 'inventory') {
+    const { vms } = _rptGetFilteredData();
+    _rptFetchOsInfo(vms);
+  }
 }
 
 function _rptGetFilteredData() {
@@ -19358,6 +19364,48 @@ async function _rptFetchSnapshots(cacheKey) {
   _rptCache[cacheKey] = {...(_rptCache[cacheKey]||{}), snapshots};
 }
 
+// Fetch OS info for VMs not yet cached.
+// LXC: ostype is in the list data. QEMU running: agent/osinfo. QEMU stopped: config ostype.
+async function _rptFetchOsInfo(vms) {
+  const toFetch = vms.filter(v => !v.template && !(_rptOsCache[`${v.connId||''}|${v.node}/${v.vmid}`] !== undefined));
+  if (!toFetch.length) return;
+  const batchSize = 10;
+  for (let i = 0; i < toFetch.length; i += batchSize) {
+    await Promise.all(toFetch.slice(i, i + batchSize).map(async v => {
+      const key  = `${v.connId||''}|${v.node}/${v.vmid}`;
+      const conn = v.connId ? extraConns.find(c => c.id === v.connId) : null;
+      const get  = conn ? (p => connGet(conn, p)) : pveGet;
+      if (v.type === 'lxc') {
+        _rptOsCache[key] = v.ostype || null;
+        return;
+      }
+      // QEMU running — try guest agent
+      if (v.status === 'running') {
+        try {
+          const d = await get(`/api2/json/nodes/${v.node}/qemu/${v.vmid}/agent/osinfo`);
+          const r = d?.data?.result;
+          _rptOsCache[key] = r?.['pretty-name'] || r?.name || r?.id || null;
+          return;
+        } catch {}
+      }
+      // Fallback: config ostype (gives coarse info like "l26", "win10")
+      try {
+        const d = await get(`/api2/json/nodes/${v.node}/qemu/${v.vmid}/config`);
+        _rptOsCache[key] = d?.data?.ostype || null;
+      } catch {
+        _rptOsCache[key] = null;
+      }
+    }));
+  }
+  // Patch cells in place so we don't need a full re-render
+  toFetch.forEach(v => {
+    const key = `${v.connId||''}|${v.node}/${v.vmid}`;
+    const val = _rptOsCache[key];
+    const cell = document.querySelector(`[data-oskey="${CSS.escape(key)}"]`);
+    if (cell) cell.textContent = val || '—';
+  });
+}
+
 function renderReports() {
   const el = document.getElementById('reports-content');
   if (!el) return;
@@ -19397,6 +19445,20 @@ function renderReports() {
   const warnHighStor = storage.filter(s=>s.total>0&&(s.used/s.total)>0.8);
   const warnStopped  = vms.filter(v=>!v.template&&v.status!=='running');
   const cacheKey     = connFilter;
+
+  // Kernel + PVE version mismatch detection
+  const _kernelOf = n => { const k=n.statusData?.kversion; return k?k.replace(/^Linux\s+/,'').split(' ')[0]:null; };
+  const _pveOf    = n => n.statusData?.pveversion || n.pveversion || null;
+  const _majority = (arr) => {
+    const freq={}; arr.forEach(v=>v&&(freq[v]=(freq[v]||0)+1));
+    return Object.entries(freq).sort((a,b)=>b[1]-a[1])[0]?.[0] || null;
+  };
+  const allKernels  = nodes.map(_kernelOf).filter(Boolean);
+  const allPVEVers  = nodes.map(_pveOf).filter(Boolean);
+  const majorKernel = nodes.length > 1 ? _majority(allKernels) : null;
+  const majorPVE    = nodes.length > 1 ? _majority(allPVEVers) : null;
+  const warnKernelMismatch = majorKernel ? nodes.filter(n=>{ const k=_kernelOf(n); return k&&k!==majorKernel; }) : [];
+  const warnPVEMismatch    = majorPVE    ? nodes.filter(n=>{ const p=_pveOf(n);    return p&&p!==majorPVE;    }) : [];
   const bkCache      = _rptCache[cacheKey]?.backup;
   const snCache      = _rptCache[cacheKey]?.snapshots;
   const warnNoBackup = bkCache ? vms.filter(v=>!v.template&&v.status==='running'&&!bkCache.covered.has(`${v.connId||''}|${v.vmid}`)) : null;
@@ -19432,13 +19494,17 @@ function renderReports() {
       </div>
 
       <!-- Warnings -->
-      ${(warnHighDisk.length||warnHighStor.length||warnStopped.length||warnNoBackup?.length||warnStaleSnap?.length) ? `
+      ${(warnHighDisk.length||warnHighStor.length||warnStopped.length||warnNoBackup?.length||warnStaleSnap?.length||warnKernelMismatch.length||warnPVEMismatch.length) ? `
       <div class="section-header" style="margin-bottom:10px"><span class="section-title">⚠ Warnings</span></div>
       <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:20px">
         ${warnHighDisk.map(n=>`<div style="background:var(--bg2);border:1px solid var(--red);border-left:3px solid var(--red);border-radius:var(--radius);padding:10px 14px;font-size:13px">
           <strong style="color:var(--red)">Node disk &gt;80%</strong> — <strong>${escHtml(n.node)}</strong>${n.connId?` [${getConnName(n.connId)}]`:''}: ${((n.statusData.rootfs.used/n.statusData.rootfs.total)*100).toFixed(1)}% used (${fmtGiB(n.statusData.rootfs.used)} / ${fmtGiB(n.statusData.rootfs.total)})</div>`).join('')}
         ${warnHighStor.map(s=>`<div style="background:var(--bg2);border:1px solid var(--yellow);border-left:3px solid var(--yellow);border-radius:var(--radius);padding:10px 14px;font-size:13px">
           <strong style="color:var(--yellow)">Storage &gt;80%</strong> — <strong>${escHtml(s.storage)}</strong> on ${escHtml(s.node)}: ${((s.used/s.total)*100).toFixed(1)}% used (${fmtGiB(s.used)} / ${fmtGiB(s.total)})</div>`).join('')}
+        ${warnKernelMismatch.length?`<div style="background:var(--bg2);border:1px solid var(--yellow);border-left:3px solid var(--yellow);border-radius:var(--radius);padding:10px 14px;font-size:13px">
+          <strong style="color:var(--yellow)">Kernel version mismatch</strong> — ${warnKernelMismatch.map(n=>`<strong>${escHtml(n.node)}</strong> (${escHtml(_kernelOf(n)||'?')})`).join(', ')} differ from majority <code style="background:var(--bg3);padding:1px 5px;border-radius:3px">${escHtml(majorKernel||'')}</code> <button class="btn small" style="margin-left:8px" onclick="_rptSwitch('nodes')">View Nodes →</button></div>`:''}
+        ${warnPVEMismatch.length?`<div style="background:var(--bg2);border:1px solid var(--yellow);border-left:3px solid var(--yellow);border-radius:var(--radius);padding:10px 14px;font-size:13px">
+          <strong style="color:var(--yellow)">PVE version mismatch</strong> — ${warnPVEMismatch.map(n=>`<strong>${escHtml(n.node)}</strong> (${escHtml(_pveOf(n)||'?')})`).join(', ')} differ from majority <code style="background:var(--bg3);padding:1px 5px;border-radius:3px">${escHtml(majorPVE||'')}</code> <button class="btn small" style="margin-left:8px" onclick="_rptSwitch('nodes')">View Nodes →</button></div>`:''}
         ${warnStopped.length?`<div style="background:var(--bg2);border:1px solid var(--border);border-left:3px solid var(--muted);border-radius:var(--radius);padding:10px 14px;font-size:13px">
           <strong>${warnStopped.length} stopped VM/CT${warnStopped.length!==1?'s':''}</strong> — ${warnStopped.slice(0,5).map(v=>escHtml(v.name||String(v.vmid))).join(', ')}${warnStopped.length>5?` and ${warnStopped.length-5} more`:''}</div>`:''}
         ${warnNoBackup?.length?`<div style="background:var(--bg2);border:1px solid var(--red);border-left:3px solid var(--red);border-radius:var(--radius);padding:10px 14px;font-size:13px">
@@ -19480,13 +19546,14 @@ function renderReports() {
         <span style="font-size:12px;color:var(--muted);margin-left:4px">${totalVMs} VM/CT${totalVMs!==1?'s':''}</span>
       </div>
       <div class="table-wrap" style="overflow-x:auto;max-height:560px;overflow-y:auto"><table>
-        <thead><tr><th>Type</th><th>ID</th><th>Name</th><th>Status</th><th>Node</th><th>Cluster</th><th style="min-width:90px">CPU %</th><th style="min-width:90px">RAM %</th><th>Disk</th><th>IP</th><th>Uptime</th><th>Tags</th></tr></thead>
+        <thead><tr><th>Type</th><th>ID</th><th>Name</th><th>Status</th><th>Node</th><th>Cluster</th><th style="min-width:90px">CPU %</th><th style="min-width:90px">RAM %</th><th>Disk</th><th>IP</th><th>OS</th><th>Uptime</th><th>Tags</th></tr></thead>
         <tbody>${_rptInventoryRows(vms)}</tbody>
       </table></div>` : ''}
 
     ${_rptTab === 'nodes' ? `
-      <div style="display:flex;gap:8px;margin-bottom:12px">
+      <div style="display:flex;gap:8px;margin-bottom:12px;align-items:center">
         <button class="btn small primary" onclick="_exportNodesCSV()">↓ CSV</button>
+        ${(warnKernelMismatch.length||warnPVEMismatch.length)?`<span style="font-size:12px;color:var(--yellow)">⚠ Version mismatch detected — highlighted rows differ from cluster majority</span>`:''}
       </div>
       <div class="table-wrap" style="overflow-x:auto"><table>
         <thead><tr><th>Node</th><th>Cluster</th><th style="text-align:right">CPU Cores</th><th style="min-width:120px">CPU %</th><th style="text-align:right">RAM Total</th><th style="text-align:right">RAM Used</th><th style="min-width:120px">RAM %</th><th style="text-align:right">Root Disk</th><th style="min-width:120px">Root %</th><th style="text-align:right">VMs</th><th>PVE Version</th><th>Kernel</th></tr></thead>
@@ -19503,7 +19570,10 @@ function renderReports() {
           const vc   = vms.filter(v=>v.node===n.node&&(v.connId||'')===(n.connId||'')&&!v.template).length;
           const pveVer = s.pveversion||n.pveversion||'—';
           const kernel = s.kversion ? s.kversion.replace(/^Linux\s+/,'').split(' ')[0] : '—';
-          return `<tr>
+          const pveMismatch = majorPVE && pveVer !== '—' && pveVer !== majorPVE;
+          const kernMismatch = majorKernel && kernel !== '—' && kernel !== majorKernel;
+          const mismatchBadge = `<span title="Differs from cluster majority" style="margin-left:5px;background:rgba(234,179,8,.2);color:var(--yellow);font-size:9px;padding:1px 5px;border-radius:10px;font-weight:700;vertical-align:middle">≠</span>`;
+          return `<tr${pveMismatch||kernMismatch?' style="background:rgba(234,179,8,.05)"':''}>
             <td><strong>${escHtml(n.node)}</strong></td>
             <td style="color:var(--muted);font-size:12px">${n.connId?getConnName(n.connId):'Primary'}</td>
             <td style="text-align:right">${cores}</td>
@@ -19514,8 +19584,8 @@ function renderReports() {
             <td style="text-align:right;font-size:12px">${fmtGiB(dskT)}</td>
             <td><div style="display:flex;align-items:center;gap:6px"><div class="gauge-bar" style="flex:1"><div class="gauge-fill ${gaugeClass(dskP)}" style="width:${Math.min(dskP,100)}%"></div></div><span style="font-size:11px;min-width:36px;text-align:right;color:${dskP>90?'var(--red)':dskP>75?'var(--yellow)':'var(--text)'}">${dskP.toFixed(1)}%</span></div></td>
             <td style="text-align:right">${vc}</td>
-            <td style="font-size:12px;color:var(--muted)">${escHtml(pveVer)}</td>
-            <td style="font-size:11px;color:var(--muted);max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escHtml(s.kversion||'')}">${escHtml(kernel)}</td>
+            <td style="font-size:12px;${pveMismatch?'color:var(--yellow);font-weight:600':'color:var(--muted)'}">${escHtml(pveVer)}${pveMismatch?mismatchBadge:''}</td>
+            <td style="font-size:11px;${kernMismatch?'color:var(--yellow);font-weight:600':'color:var(--muted)'};max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escHtml(s.kversion||'')}">${escHtml(kernel)}${kernMismatch?mismatchBadge:''}</td>
           </tr>`;}).join('')||'<tr><td colspan="12" class="empty">No data</td></tr>'}
         </tbody></table></div>` : ''}
 
@@ -19672,6 +19742,10 @@ function _rptSwitch(tab) {
   } else {
     renderReports();
   }
+  if (tab === 'inventory') {
+    const { vms } = _rptGetFilteredData();
+    _rptFetchOsInfo(vms); // async; patches cells in place as results arrive
+  }
 }
 
 function _rptInventoryRows(vms) {
@@ -19689,6 +19763,9 @@ function _rptInventoryRows(vms) {
       const ipKey  = `${v.connId||''}|${v.node}/${v.vmid}`;
       const ip     = _vmIPCache[ipKey] || '—';
       const uptime = v.uptime ? fmtUptime(v.uptime) : '—';
+      const osKey  = `${v.connId||''}|${v.node}/${v.vmid}`;
+      const osVal  = _rptOsCache[osKey];
+      const osText = osVal !== undefined ? (osVal || '—') : (v.type==='lxc'&&v.ostype ? v.ostype : '…');
       return `<tr>
         <td><span class="type-chip ${v.type==='lxc'?'ct':'vm'}" style="font-size:9px">${(v.type||'vm').toUpperCase()}</span></td>
         <td style="font-size:12px;color:var(--muted)">${v.vmid}</td>
@@ -19700,10 +19777,11 @@ function _rptInventoryRows(vms) {
         <td style="min-width:100px">${ramBar}</td>
         <td style="text-align:right;font-size:12px">${disk}</td>
         <td style="font-family:monospace;font-size:11px;color:var(--teal)">${ip}</td>
+        <td style="font-size:11px;color:var(--muted);white-space:nowrap" data-oskey="${osKey}">${escHtml(osText)}</td>
         <td style="font-size:12px;color:var(--muted)">${uptime}</td>
         <td style="font-size:11px">${v.tags?renderTagChips(parseTags(v.tags),false):''}</td>
       </tr>`;
-    }).join('') || '<tr><td colspan="12" class="empty">No VMs match</td></tr>';
+    }).join('') || '<tr><td colspan="13" class="empty">No VMs match</td></tr>';
 }
 
 // ── CSV export helpers ────────────────────────────────────
