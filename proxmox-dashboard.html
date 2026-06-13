@@ -16926,11 +16926,10 @@ async function _hpSnapshotRender() {
   const el = document.getElementById('hp-content'); if (!el) return;
   try {
     const resp = await fetch('/api/node-snapshots?limit=500', { headers: { Authorization: 'Bearer ' + (PCC_TOKEN || '') } });
-    if (!resp.ok) {
-      const txt = await resp.text().catch(() => '');
-      throw new Error(`HTTP ${resp.status}${txt ? ': ' + txt.slice(0,120) : ''}`);
-    }
-    const rows = await resp.json();
+    const rawText = await resp.text();
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}: ${rawText.slice(0, 120)}`);
+    let rows;
+    try { rows = JSON.parse(rawText); } catch(e) { throw new Error(`Non-JSON response (HTTP ${resp.status}): ${rawText.slice(0, 150)}`); }
 
     if (!rows.length) {
       el.innerHTML = `
