@@ -623,6 +623,30 @@ app.all('/proxy/:clusterId/*', authMiddleware, (req, res) => {
   req.pipe(proxyReq);  // stream body directly — works for both form data and file uploads
 });
 
+// ── NODE CONFIG SNAPSHOTS ─────────────────────────────────
+
+app.get('/api/node-snapshots', authMiddleware, (req, res) => {
+  const limit   = Math.min(parseInt(req.query.limit) || 200, 1000);
+  const cluster = req.query.cluster || null;
+  const node    = req.query.node    || null;
+  let sql = 'SELECT * FROM node_config_snapshots';
+  const params = [];
+  const where = [];
+  if (cluster) { where.push('cluster_id = ?'); params.push(cluster); }
+  if (node)    { where.push('node = ?');       params.push(node); }
+  if (where.length) sql += ' WHERE ' + where.join(' AND ');
+  sql += ' ORDER BY ts DESC LIMIT ?';
+  params.push(limit);
+  res.json(db.prepare(sql).all(...params));
+});
+
+app.post('/api/node-snapshots/capture', authMiddleware, adminOnly, async (req, res) => {
+  try {
+    const count = await captureAllNodeConfigs();
+    res.json({ ok: true, count });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
 // ── STATIC + SPA ─────────────────────────────────────────
 
 app.use(express.static(path.join(__dirname, 'public')));
@@ -1031,28 +1055,6 @@ setInterval(async () => {
     await captureAllNodeConfigs();
   } catch(e) { console.error('Node snapshot tick error:', e.message); }
 }, 60000);
-
-app.get('/api/node-snapshots', authMiddleware, (req, res) => {
-  const limit   = Math.min(parseInt(req.query.limit) || 200, 1000);
-  const cluster = req.query.cluster || null;
-  const node    = req.query.node    || null;
-  let sql = 'SELECT * FROM node_config_snapshots';
-  const params = [];
-  const where = [];
-  if (cluster) { where.push('cluster_id = ?'); params.push(cluster); }
-  if (node)    { where.push('node = ?');       params.push(node); }
-  if (where.length) sql += ' WHERE ' + where.join(' AND ');
-  sql += ' ORDER BY ts DESC LIMIT ?';
-  params.push(limit);
-  res.json(db.prepare(sql).all(...params));
-});
-
-app.post('/api/node-snapshots/capture', authMiddleware, adminOnly, async (req, res) => {
-  try {
-    const count = await captureAllNodeConfigs();
-    res.json({ ok: true, count });
-  } catch(e) { res.status(500).json({ error: e.message }); }
-});
 
 // Check digest schedule every 5 minutes
 setInterval(async () => {
