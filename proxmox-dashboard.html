@@ -16925,8 +16925,12 @@ let _hpSnapCache = null;
 async function _hpSnapshotRender() {
   const el = document.getElementById('hp-content'); if (!el) return;
   try {
-    const rows = await fetch('/api/node-snapshots?limit=500', { headers: { Authorization: 'Bearer ' + (PCC_TOKEN || '') } })
-      .then(r => r.json());
+    const resp = await fetch('/api/node-snapshots?limit=500', { headers: { Authorization: 'Bearer ' + (PCC_TOKEN || '') } });
+    if (!resp.ok) {
+      const txt = await resp.text().catch(() => '');
+      throw new Error(`HTTP ${resp.status}${txt ? ': ' + txt.slice(0,120) : ''}`);
+    }
+    const rows = await resp.json();
 
     if (!rows.length) {
       el.innerHTML = `
@@ -17022,10 +17026,15 @@ async function _hpSnapshotCapture() {
   const btn = document.querySelector('#hp-tab-action button');
   if (btn) { btn.disabled = true; btn.textContent = 'Capturing…'; }
   try {
-    const r = await fetch('/api/node-snapshots/capture', {
+    const resp = await fetch('/api/node-snapshots/capture', {
       method: 'POST',
       headers: { Authorization: 'Bearer ' + (PCC_TOKEN || '') },
-    }).then(r => r.json());
+    });
+    if (!resp.ok) {
+      const txt = await resp.text().catch(() => '');
+      throw new Error(`HTTP ${resp.status}${txt ? ': ' + txt.slice(0,120) : ''}`);
+    }
+    const r = await resp.json();
     toast(`Captured ${r.count} node config${r.count !== 1 ? 's' : ''}`, 'success');
     _hpSnapshotRender();
   } catch(e) {
