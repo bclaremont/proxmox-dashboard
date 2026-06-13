@@ -16956,53 +16956,113 @@ async function _hpSnapshotRender() {
     }
 
     function _snapDiff(a, b) {
-      // Returns list of field names that changed between two snapshots
-      const fields = ['dns','timezone','network'];
-      return fields.filter(f => a[f] !== b[f]);
+      return ['dns','timezone','network','status','storage'].filter(f => a[f] !== b[f]);
     }
 
-    function _fmtSnapDns(raw) {
-      try { const d = JSON.parse(raw); return [d.dns,d.dns2,d.search].filter(Boolean).join(' / ') || '—'; } catch { return '—'; }
-    }
-    function _fmtSnapTz(raw) {
-      try { const d = JSON.parse(raw); return d.timezone || d.localtime || '—'; } catch { return '—'; }
-    }
-    function _fmtSnapNet(raw) {
+    function _fmtIfaces(raw) {
       try {
         const ifaces = JSON.parse(raw);
-        if (!Array.isArray(ifaces)) return '—';
-        return ifaces.filter(i=>i.type==='bridge'||i.type==='bond'||i.type==='eth'||i.iface==='lo'===false)
-          .slice(0,4).map(i=>`<code style="font-size:10px">${escHtml(i.iface)}</code>`).join(' ') || '—';
+        if (!Array.isArray(ifaces)) return '<em style="color:var(--muted)">—</em>';
+        const active = ifaces.filter(i => i.iface && i.iface !== 'lo' && i.active !== 0);
+        return active.map(i => {
+          const ip   = i.address ? `<span style="color:var(--text)">${escHtml(i.cidr||i.address)}</span>` : '<span style="color:var(--muted)">no IP</span>';
+          const gw   = i.gateway ? `<span style="color:var(--muted);font-size:10px"> gw ${escHtml(i.gateway)}</span>` : '';
+          const type = i.type ? `<span style="color:var(--muted);font-size:10px">(${escHtml(i.type)})</span>` : '';
+          const ports= i.bridge_ports ? `<span style="color:var(--muted);font-size:10px"> ports:${escHtml(i.bridge_ports)}</span>` : (i.bond_slaves ? `<span style="color:var(--muted);font-size:10px"> slaves:${escHtml(i.bond_slaves)}</span>` : '');
+          return `<div style="line-height:1.8"><code style="font-size:11px;color:var(--accent)">${escHtml(i.iface)}</code> ${type} ${ip}${gw}${ports}</div>`;
+        }).join('') || '<em style="color:var(--muted)">—</em>';
+      } catch { return '<em style="color:var(--muted)">—</em>'; }
+    }
+
+    function _fmtStorage(raw) {
+      try {
+        const stores = JSON.parse(raw);
+        if (!Array.isArray(stores)) return '<em style="color:var(--muted)">—</em>';
+        return stores.map(s => {
+          const usedPct = s.total ? Math.round(s.used/s.total*100) : null;
+          const bar = usedPct !== null ? `<span style="color:${usedPct>85?'var(--red)':usedPct>70?'var(--yellow)':'var(--muted)'}"> ${usedPct}%</span>` : '';
+          return `<div style="line-height:1.8"><code style="font-size:11px;color:var(--accent)">${escHtml(s.storage)}</code> <span style="color:var(--muted);font-size:10px">${escHtml(s.type||'')}${s.shared?' shared':''}</span>${bar}</div>`;
+        }).join('') || '<em style="color:var(--muted)">—</em>';
+      } catch { return '<em style="color:var(--muted)">—</em>'; }
+    }
+
+    function _fmtStatus(raw) {
+      try {
+        const s = JSON.parse(raw);
+        if (!s || typeof s !== 'object') return '—';
+        const lines = [];
+        if (s.pveversion) lines.push(`<div><span style="color:var(--muted);font-size:10px">PVE</span> ${escHtml(s.pveversion)}</div>`);
+        if (s.kversion)   lines.push(`<div><span style="color:var(--muted);font-size:10px">Kernel</span> ${escHtml(s.kversion.replace(/^Linux\s+/,'').split(' ')[0])}</div>`);
+        if (s.cpuinfo?.model) lines.push(`<div style="color:var(--muted);font-size:10px">${escHtml(s.cpuinfo.model)} &times;${s.cpuinfo.cpus||''}</div>`);
+        return lines.join('') || '—';
       } catch { return '—'; }
     }
 
     let html = '';
     for (const [key, g] of Object.entries(byNode)) {
-      const snaps = g.snaps; // already sorted newest-first from server
+      const snaps = g.snaps;
       const clName = clusterNames[g.cluster_id] || g.cluster_id || 'Primary';
-      html += `<div style="margin-bottom:24px">
-        <div style="font-weight:700;font-size:14px;margin-bottom:8px;display:flex;align-items:center;gap:8px">
-          <span>${escHtml(g.node)}</span>
-          <span style="font-size:11px;color:var(--muted);font-weight:400">${escHtml(clName)}</span>
+      const latest = snaps[0];
+
+      // Latest snapshot summary card
+      let latestDns = '—', latestTz = '—', latestHostname = '—';
+      try { const d=JSON.parse(latest.dns); latestDns=[d.dns,d.dns2,d.search].filter(Boolean).join(', '); } catch {}
+      try { const d=JSON.parse(latest.timezone); latestTz=d.timezone||d.localtime||'—'; } catch {}
+      try { const d=JSON.parse(latest.status); latestHostname=d.hostname||g.node; } catch {}
+
+      html += `<div style="margin-bottom:32px">
+        <div style="font-weight:700;font-size:15px;margin-bottom:10px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+          <span>${escHtml(latestHostname)}</span>
+          <span style="font-size:11px;color:var(--muted);font-weight:400">${escHtml(g.node)} &middot; ${escHtml(clName)}</span>
           <span style="font-size:11px;color:var(--muted);font-weight:400;margin-left:auto">${snaps.length} snapshot${snaps.length!==1?'s':''}</span>
           <button class="btn small" onclick="_hpExportSnapshots('${escHtml(key)}')">↓ Export JSON</button>
         </div>
-        <div class="table-wrap"><table>
-          <thead><tr><th>Date / Time</th><th>DNS</th><th>Timezone</th><th>Interfaces</th><th>Changes</th></tr></thead>
-          <tbody>`;
-      snaps.forEach((s, i) => {
-        const prev = snaps[i + 1];
-        const diffs = prev ? _snapDiff(s, prev) : [];
-        const diffBadge = diffs.length ? `<span style="font-size:10px;background:rgba(234,179,8,.15);color:var(--yellow);padding:1px 7px;border-radius:10px">${diffs.join(', ')}</span>` : (i===snaps.length-1?'<span style="font-size:10px;color:var(--muted)">baseline</span>':'<span style="font-size:10px;color:var(--green);padding:1px 7px">no change</span>');
-        html += `<tr>
-          <td style="white-space:nowrap;font-family:monospace;font-size:12px">${new Date(s.ts*1000).toLocaleString()}</td>
-          <td style="font-size:12px;color:var(--muted)">${_fmtSnapDns(s.dns)}</td>
-          <td style="font-size:12px;color:var(--muted)">${_fmtSnapTz(s.timezone)}</td>
-          <td style="font-size:12px">${_fmtSnapNet(s.network)}</td>
-          <td>${diffBadge}</td>
-        </tr>`;
-      });
-      html += `</tbody></table></div></div>`;
+
+        <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:10px;margin-bottom:14px">
+          <div style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);padding:12px">
+            <div style="font-size:10px;font-weight:600;color:var(--muted);text-transform:uppercase;margin-bottom:8px">System</div>
+            ${_fmtStatus(latest.status)}
+            <div style="margin-top:6px;font-size:12px"><span style="color:var(--muted)">DNS:</span> ${escHtml(latestDns||'—')}</div>
+            <div style="font-size:12px"><span style="color:var(--muted)">Timezone:</span> ${escHtml(latestTz)}</div>
+          </div>
+          <div style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);padding:12px">
+            <div style="font-size:10px;font-weight:600;color:var(--muted);text-transform:uppercase;margin-bottom:8px">Network Interfaces</div>
+            ${_fmtIfaces(latest.network)}
+          </div>
+          <div style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);padding:12px">
+            <div style="font-size:10px;font-weight:600;color:var(--muted);text-transform:uppercase;margin-bottom:8px">Storage</div>
+            ${_fmtStorage(latest.storage)}
+          </div>
+        </div>
+
+        ${snaps.length > 1 ? `
+        <details style="margin-top:4px">
+          <summary style="cursor:pointer;font-size:12px;color:var(--muted);user-select:none">▸ Snapshot history (${snaps.length})</summary>
+          <div class="table-wrap" style="margin-top:8px"><table>
+            <thead><tr><th>Date / Time</th><th>PVE Version</th><th>DNS</th><th>Timezone</th><th>Changes vs previous</th></tr></thead>
+            <tbody>${snaps.map((s, i) => {
+              const prev = snaps[i + 1];
+              const diffs = prev ? _snapDiff(s, prev) : [];
+              const diffBadge = diffs.length
+                ? diffs.map(f=>`<span style="font-size:10px;background:rgba(234,179,8,.15);color:var(--yellow);padding:1px 6px;border-radius:10px;margin-right:3px">${f}</span>`).join('')
+                : (i===snaps.length-1
+                  ? '<span style="font-size:10px;color:var(--muted)">baseline</span>'
+                  : '<span style="font-size:10px;color:var(--green)">no change</span>');
+              let sDns='—', sTz='—', sPve='—';
+              try { const d=JSON.parse(s.dns); sDns=[d.dns,d.dns2].filter(Boolean).join(', '); } catch {}
+              try { const d=JSON.parse(s.timezone); sTz=d.timezone||'—'; } catch {}
+              try { const d=JSON.parse(s.status); sPve=d.pveversion||'—'; } catch {}
+              return `<tr>
+                <td style="white-space:nowrap;font-family:monospace;font-size:12px">${new Date(s.ts*1000).toLocaleString()}</td>
+                <td style="font-size:11px;color:var(--muted)">${escHtml(sPve)}</td>
+                <td style="font-size:11px;color:var(--muted)">${escHtml(sDns)}</td>
+                <td style="font-size:11px;color:var(--muted)">${escHtml(sTz)}</td>
+                <td>${diffBadge}</td>
+              </tr>`;
+            }).join('')}</tbody>
+          </table></div>
+        </details>` : ''}
+      </div>`;
     }
     el.innerHTML = html;
     _hpSnapCache = byNode;

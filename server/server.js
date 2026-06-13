@@ -92,9 +92,15 @@ db.exec(`
     dns        TEXT,
     timezone   TEXT,
     hosts      TEXT,
-    network    TEXT
+    network    TEXT,
+    status     TEXT,
+    storage    TEXT
   );
 `);
+
+// Add columns to existing DBs that pre-date the expanded schema
+try { db.exec('ALTER TABLE node_config_snapshots ADD COLUMN status TEXT'); } catch {}
+try { db.exec('ALTER TABLE node_config_snapshots ADD COLUMN storage TEXT'); } catch {}
 
 // Seed default admin on first run
 if (db.prepare('SELECT COUNT(*) AS c FROM users').get().c === 0) {
@@ -1012,7 +1018,7 @@ async function captureAllNodeConfigs() {
   const clusters = db.prepare('SELECT * FROM clusters ORDER BY sort_order').all();
   let total = 0;
   const ins = db.prepare(
-    'INSERT INTO node_config_snapshots (cluster_id, node, dns, timezone, hosts, network) VALUES (?,?,?,?,?,?)'
+    'INSERT INTO node_config_snapshots (cluster_id, node, dns, timezone, hosts, network, status, storage) VALUES (?,?,?,?,?,?,?,?)'
   );
   for (const cluster of clusters) {
     try {
@@ -1021,11 +1027,13 @@ async function captureAllNodeConfigs() {
       for (const n of nodes) {
         if (n.status !== 'online') continue;
         try {
-          const [dns, tz, hosts, net] = await Promise.all([
+          const [dns, tz, hosts, net, status, storage] = await Promise.all([
             clusterApiGet(cluster, `/api2/json/nodes/${n.node}/dns`),
             clusterApiGet(cluster, `/api2/json/nodes/${n.node}/time`),
             clusterApiGet(cluster, `/api2/json/nodes/${n.node}/hosts`),
             clusterApiGet(cluster, `/api2/json/nodes/${n.node}/network`),
+            clusterApiGet(cluster, `/api2/json/nodes/${n.node}/status`),
+            clusterApiGet(cluster, `/api2/json/nodes/${n.node}/storage`),
           ]);
           ins.run(
             cluster.id, n.node,
@@ -1033,6 +1041,8 @@ async function captureAllNodeConfigs() {
             JSON.stringify(tz),
             typeof hosts === 'string' ? hosts : JSON.stringify(hosts),
             JSON.stringify(net),
+            JSON.stringify(status),
+            JSON.stringify(storage),
           );
           total++;
         } catch(e) { console.error(`Node snapshot failed for ${n.node}:`, e.message); }
