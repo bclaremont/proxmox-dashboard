@@ -83,6 +83,17 @@ db.exec(`
     key   TEXT PRIMARY KEY,
     value TEXT NOT NULL
   );
+
+  CREATE TABLE IF NOT EXISTS node_config_snapshots (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts         INTEGER NOT NULL DEFAULT (unixepoch()),
+    cluster_id TEXT    NOT NULL,
+    node       TEXT    NOT NULL,
+    dns        TEXT,
+    timezone   TEXT,
+    hosts      TEXT,
+    network    TEXT
+  );
 `);
 
 // Seed default admin on first run
@@ -522,7 +533,8 @@ app.put('/api/admin/settings', authMiddleware, adminOnly, bodyParser, (req, res)
   const allowed = ['ip_allowlist', 'idle_timeout_mins',
     'digest_enabled','digest_schedule','digest_time','digest_to',
     'smtp_host','smtp_port','smtp_user','smtp_pass','smtp_from',
-    'digest_webhook_url'];
+    'digest_webhook_url',
+    'node_snapshot_enabled','node_snapshot_time'];
   const tx = db.transaction(() => {
     for (const [k, v] of Object.entries(req.body || {})) {
       if (!allowed.includes(k)) continue;
@@ -966,6 +978,81 @@ async function sendDigest(cfg) {
     } catch(e) { console.error('Digest webhook failed:', e.message); }
   }
 }
+
+// ── NODE CONFIG SNAPSHOTS ─────────────────────────────────
+// Nightly disaster-recovery capture: saves DNS, timezone, /etc/hosts
+// and network interface config for every node in every cluster.
+// Purely for reference if a host is lost and needs rebuilding.
+
+async function captureAllNodeConfigs() {
+  const clusters = db.prepare('SELECT * FROM clusters ORDER BY sort_order').all();
+  let total = 0;
+  const ins = db.prepare(
+    'INSERT INTO node_config_snapshots (cluster_id, node, dns, timezone, hosts, network) VALUES (?,?,?,?,?,?)'
+  );
+  for (const cluster of clusters) {
+    try {
+      const nodes = await clusterApiGet(cluster, '/api2/json/nodes');
+      if (!Array.isArray(nodes)) continue;
+      for (const n of nodes) {
+        if (n.status !== 'online') continue;
+        try {
+          const [dns, tz, hosts, net] = await Promise.all([
+            clusterApiGet(cluster, `/api2/json/nodes/${n.node}/dns`),
+            clusterApiGet(cluster, `/api2/json/nodes/${n.node}/time`),
+            clusterApiGet(cluster, `/api2/json/nodes/${n.node}/hosts`),
+            clusterApiGet(cluster, `/api2/json/nodes/${n.node}/network`),
+          ]);
+          ins.run(
+            cluster.id, n.node,
+            JSON.stringify(dns),
+            JSON.stringify(tz),
+            typeof hosts === 'string' ? hosts : JSON.stringify(hosts),
+            JSON.stringify(net),
+          );
+          total++;
+        } catch(e) { console.error(`Node snapshot failed for ${n.node}:`, e.message); }
+      }
+    } catch(e) { console.error(`Node snapshot cluster error (${cluster.name}):`, e.message); }
+  }
+  setSetting('node_snapshot_last_run', new Date().toISOString().slice(0, 10));
+  console.log(`Node config snapshot: captured ${total} node(s).`);
+  return total;
+}
+
+setInterval(async () => {
+  try {
+    if (!getSetting('node_snapshot_enabled', true)) return;
+    const today = new Date().toISOString().slice(0, 10);
+    if (getSetting('node_snapshot_last_run') === today) return;
+    const [h, m] = (getSetting('node_snapshot_time', '02:00') || '02:00').split(':').map(Number);
+    const target = new Date(); target.setHours(h, m, 0, 0);
+    if (Math.abs(Date.now() - target.getTime()) > 5 * 60 * 1000) return;
+    await captureAllNodeConfigs();
+  } catch(e) { console.error('Node snapshot tick error:', e.message); }
+}, 60000);
+
+app.get('/api/node-snapshots', authMiddleware, (req, res) => {
+  const limit   = Math.min(parseInt(req.query.limit) || 200, 1000);
+  const cluster = req.query.cluster || null;
+  const node    = req.query.node    || null;
+  let sql = 'SELECT * FROM node_config_snapshots';
+  const params = [];
+  const where = [];
+  if (cluster) { where.push('cluster_id = ?'); params.push(cluster); }
+  if (node)    { where.push('node = ?');       params.push(node); }
+  if (where.length) sql += ' WHERE ' + where.join(' AND ');
+  sql += ' ORDER BY ts DESC LIMIT ?';
+  params.push(limit);
+  res.json(db.prepare(sql).all(...params));
+});
+
+app.post('/api/node-snapshots/capture', authMiddleware, adminOnly, async (req, res) => {
+  try {
+    const count = await captureAllNodeConfigs();
+    res.json({ ok: true, count });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
 
 // Check digest schedule every 5 minutes
 setInterval(async () => {
