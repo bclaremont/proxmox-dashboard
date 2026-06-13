@@ -1312,7 +1312,7 @@
         <div class="dtab" onclick="switchHPTab('compliance')">Compliance</div>
         <div class="dtab" onclick="switchHPTab('join')">Add Node</div>
         <div class="dtab" onclick="switchHPTab('answerfile')">Answer File</div>
-        <div class="dtab" onclick="switchHPTab('snapshots')" id="hp-tab-snapshots" style="display:none">Config Snapshots</div>
+        <div class="dtab" onclick="switchHPTab('snapshots')" id="hp-tab-snapshots" style="display:none">Host Config Backup</div>
       </div>
       <div id="hp-content"><div class="empty">Loading…</div></div>
     </div>
@@ -16677,7 +16677,7 @@ function switchHPTab(tab) {
   if (actEl) actEl.innerHTML =
     tab === 'profiles'   ? `<button class="btn small primary" onclick="openCaptureProfileModal()">+ Capture from Node</button>` :
     tab === 'compliance' ? `<button class="btn small primary" onclick="runComplianceCheck()">▶ Check All Nodes</button>` :
-    tab === 'snapshots'  ? `<button class="btn small primary" onclick="_hpSnapshotCapture()">⬇ Capture Now</button>` : '';
+    tab === 'snapshots'  ? `<button class="btn small primary" onclick="_hpSnapshotCapture()">⬇ Backup Now</button>` : '';
   // Show snapshots tab only in standalone mode
   const snapTab = document.getElementById('hp-tab-snapshots');
   if (snapTab) snapTab.style.display = PCC_BACKEND ? '' : 'none';
@@ -16935,8 +16935,8 @@ async function _hpSnapshotRender() {
       el.innerHTML = `
         <div style="text-align:center;padding:40px 20px;color:var(--muted)">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="width:48px;height:48px;margin:0 auto 14px;display:block;opacity:.4"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg>
-          <div style="font-size:15px;margin-bottom:8px">No config snapshots yet</div>
-          <div style="font-size:13px;margin-bottom:16px">Snapshots are captured nightly at 02:00 (configurable in Admin settings).<br>Click <strong>Capture Now</strong> to take a snapshot immediately.</div>
+          <div style="font-size:15px;margin-bottom:8px">No host config backups yet</div>
+          <div style="font-size:13px;margin-bottom:16px">Config backups are taken nightly at 02:00 (configurable in Admin settings).<br>Click <strong>Backup Now</strong> to capture immediately.</div>
         </div>`;
       return;
     }
@@ -17037,7 +17037,7 @@ async function _hpSnapshotRender() {
 
         ${snaps.length > 1 ? `
         <details style="margin-top:4px">
-          <summary style="cursor:pointer;font-size:12px;color:var(--muted);user-select:none">▸ Snapshot history (${snaps.length})</summary>
+          <summary style="cursor:pointer;font-size:12px;color:var(--muted);user-select:none">▸ Backup history (${snaps.length})</summary>
           <div class="table-wrap" style="margin-top:8px"><table>
             <thead><tr><th>Date / Time</th><th>PVE Version</th><th>DNS</th><th>Timezone</th><th>Changes vs previous</th></tr></thead>
             <tbody>${snaps.map((s, i) => {
