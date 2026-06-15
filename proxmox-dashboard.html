@@ -5422,7 +5422,21 @@ function confirmAction(node,vmid,type,action,connId=''){
   document.getElementById('modal-bg').classList.add('open');
 }
 
-function openMigrateModal(node, vmid, type, connId='') {
+async function openMigrateModal(node, vmid, type, connId='') {
+  // Always fetch a fresh node list — the cached list can be stale if a node was recently added
+  try {
+    if (!connId) {
+      const d = await pveGet('/api2/json/nodes');
+      if (d.data) PVE.nodes = d.data;
+    } else {
+      const conn = resolveConn(connId);
+      if (conn) {
+        const d = await connGet(conn, '/api2/json/nodes');
+        if (d.data) conn.nodes = d.data;
+      }
+    }
+  } catch {}
+
   // If called with no connId (e.g. sidebar button), find the first cluster with 2+ nodes
   if (!connId && !node) {
     const allConns = [
