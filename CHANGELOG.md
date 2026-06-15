@@ -8,6 +8,15 @@ All notable changes to PCC are documented here.
 
 ---
 
+## Command palette, nodes table view, refresh indicator (2026-06)
+
+### Added
+- **Command palette** (`Ctrl+K` / `Cmd+K`) — full-screen spotlight-style overlay replacing the old inline search bar; fuzzy-searches VMs, containers, nodes, and storage across all connected clusters; opens with quick-navigation shortcuts for every view; keyboard navigation with `↑↓` arrow keys and `Enter` to select; `Esc` to close
+- **Nodes table view** — nodes view now has a card/table toggle (matching VMs/CTs); table columns: Node, Cluster (multi-cluster only), Status, CPU %, RAM %, Uptime, VMs/CTs count, PVE version; columns sortable by clicking headers; view preference persisted in localStorage
+- **Last-refreshed indicator** — topbar shows "just now" / "42s ago" / "3m ago" next to the refresh button; updates every 10 seconds; turns amber after 2 minutes without a refresh, red after 5 minutes
+
+---
+
 ## UI polish, host config backup, reports enhancements (2026-06)
 
 ### Added

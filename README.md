@@ -82,7 +82,9 @@ When deployed on its own Debian VM, PCC adds team and security features:
 - **Email/webhook digest** — scheduled summary reports sent server-side 24/7
 
 ### UI
-- **Command palette** — `Cmd+K` / `Ctrl+K` opens a fuzzy-search overlay across all VMs, containers, nodes and views
+- **Command palette** — `Cmd+K` / `Ctrl+K` opens a fuzzy-search overlay with keyboard navigation across all VMs, containers, nodes and views
+- **Nodes table view** — sortable table view for nodes alongside the existing card grid (toggle per-user, persisted)
+- **Last-refreshed indicator** — topbar shows "just now" / "42s ago" / "3m ago"; turns amber/red if data is stale
 - **Keyboard shortcuts** — `?` for help, `g v` for VMs, `g n` for nodes, and more
 - **Dark theme** — full dark UI with CSS variable system
 

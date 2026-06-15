@@ -65,7 +65,9 @@
     .pill{background:var(--bg3);border:1px solid var(--border);border-radius:20px;padding:4px 12px;font-size:12px;color:var(--muted);}
     .pill.online{border-color:var(--green);color:var(--green);}
     .pill.offline{border-color:var(--red);color:var(--red);}
-    #last-refresh{display:none;}
+    #last-refresh{font-size:11px;color:var(--muted);white-space:nowrap;}
+    #last-refresh.amber{color:var(--yellow);}
+    #last-refresh.stale{color:var(--red);}
     /* LAYOUT */
     #app{display:grid;grid-template-columns:230px 1fr;height:calc(100vh - 58px);}
     /* SIDEBAR */
@@ -291,18 +293,33 @@
 
     /* THEME TOGGLE */
     [data-theme="light"]{--bg:#f0f2f5;--bg2:#ffffff;--bg3:#e8eaed;--border:#d0d7de;--text:#1f2328;--muted:#656d76;}
-    /* SEARCH */
+    /* SEARCH (nav bar — kept for direct click) */
     #search-wrap{position:relative;display:flex;align-items:center;}
     #search-icon{position:absolute;left:10px;color:var(--muted);pointer-events:none;width:14px;height:14px;}
     #search-kbd{position:absolute;right:10px;background:var(--bg2);border:1px solid var(--border);border-radius:4px;padding:1px 5px;font-size:10px;color:var(--muted);pointer-events:none;transition:opacity .15s;}
-    #global-search{background:var(--bg3);border:1px solid var(--border);border-radius:20px;color:var(--text);padding:6px 56px 6px 30px;font-family:var(--font);font-size:13px;outline:none;width:360px;transition:all .2s;}
-    #global-search:focus{border-color:var(--accent);width:520px;background:var(--bg2);}
+    #global-search{background:var(--bg3);border:1px solid var(--border);border-radius:20px;color:var(--text);padding:6px 56px 6px 30px;font-family:var(--font);font-size:13px;outline:none;width:200px;transition:all .2s;cursor:pointer;}
+    #global-search:focus{border-color:var(--accent);width:200px;background:var(--bg2);}
     #global-search:focus ~ #search-kbd{opacity:0;}
-    #search-results{position:absolute;top:58px;left:50%;transform:translateX(-50%);width:520px;background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);z-index:200;box-shadow:0 8px 30px rgba(0,0,0,.4);display:none;}
-    #search-results.show{display:block;}
-    .sr-item{padding:9px 14px;display:flex;align-items:center;gap:10px;cursor:pointer;border-bottom:1px solid var(--border);font-size:13px;}
-    .sr-item:last-child{border-bottom:none;}
-    .sr-item:hover{background:var(--bg3);}
+    #search-results{display:none;}
+    /* COMMAND PALETTE */
+    #cmd-overlay{position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:9000;display:none;align-items:flex-start;justify-content:center;padding-top:15vh;}
+    #cmd-overlay.open{display:flex;}
+    #cmd-box{background:var(--bg2);border:1px solid var(--border);border-radius:10px;width:580px;max-width:94vw;box-shadow:0 24px 60px rgba(0,0,0,.6);overflow:hidden;}
+    #cmd-input-wrap{display:flex;align-items:center;gap:10px;padding:12px 16px;border-bottom:1px solid var(--border);}
+    #cmd-input{flex:1;background:none;border:none;outline:none;font-size:15px;color:var(--text);font-family:var(--font);}
+    #cmd-input::placeholder{color:var(--muted);}
+    #cmd-results{max-height:380px;overflow-y:auto;}
+    .cmd-item{padding:10px 16px;display:flex;align-items:center;gap:12px;cursor:pointer;border-bottom:1px solid var(--border);font-size:13px;}
+    .cmd-item:last-child{border-bottom:none;}
+    .cmd-item:hover,.cmd-item.active{background:var(--bg3);}
+    .cmd-item-icon{width:28px;height:28px;border-radius:6px;background:var(--bg3);display:flex;align-items:center;justify-content:center;font-size:14px;flex-shrink:0;}
+    .cmd-item-body{flex:1;min-width:0;}
+    .cmd-item-label{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+    .cmd-item-sub{color:var(--muted);font-size:11px;margin-top:1px;}
+    .cmd-item-badge{font-size:10px;padding:2px 6px;border-radius:4px;background:var(--bg3);color:var(--muted);flex-shrink:0;}
+    .cmd-section{padding:5px 16px 3px;font-size:10px;text-transform:uppercase;letter-spacing:.1em;color:var(--muted);background:var(--bg2);}
+    #cmd-footer{padding:7px 14px;border-top:1px solid var(--border);display:flex;gap:14px;font-size:11px;color:var(--muted);}
+    #cmd-footer kbd{background:var(--bg3);border:1px solid var(--border);border-radius:3px;padding:1px 5px;font-size:10px;}
     /* HEATMAP */
     .heatmap-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:12px;margin-bottom:20px;}
     .heat-card{background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);padding:14px;text-align:center;}
@@ -520,8 +537,8 @@
   <div class="spacer"></div>
   <div id="search-wrap">
     <svg id="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-    <input id="global-search" type="text" placeholder="Search VMs, nodes, storage…" oninput="globalSearch(this.value)" onblur="setTimeout(()=>hideSearch(),200)"/>
-    <span id="search-kbd">Ctrl K</span>
+    <input id="global-search" type="text" placeholder="Search…" readonly onclick="openCmdPalette()" onfocus="openCmdPalette()"/>
+    <span id="search-kbd">⌘K</span>
     <div id="search-results"></div>
   </div>
   <div id="topbar-stats">
@@ -534,9 +551,10 @@
     <span id="notif-badge" style="display:none"></span>
   </button>
   <span id="conn-status" class="pill offline" title="">disconnected</span>
-  <button class="btn small" id="btn-refresh" onclick="refreshAll()" disabled title="Refresh — never">
+  <button class="btn small" id="btn-refresh" onclick="refreshAll()" disabled title="Refresh">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:14px;height:14px"><path d="M23 4v6h-6M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
   </button>
+  <span id="last-refresh"></span>
   <span id="topbar-uptime" style="display:none"></span>
   <div class="topbar-sep"></div>
   <button class="btn small" onclick="toggleTheme()" title="Toggle light/dark mode">◐</button>
@@ -1043,6 +1061,10 @@
         <span class="section-title">Nodes</span>
         <div style="display:flex;gap:6px;align-items:center">
           <select class="cluster-filter-sel" id="nodes-conn" style="display:none;padding:5px 8px;font-size:13px" onchange="renderNodes()"><option value="_all">All Clusters</option></select>
+          <div class="view-toggle">
+            <button class="view-toggle-btn" id="nodes-view-table" onclick="setNodeView('table')" title="Table view">≡</button>
+            <button class="view-toggle-btn active" id="nodes-view-cards" onclick="setNodeView('cards')" title="Card view">⊞</button>
+          </div>
           <button class="btn small" onclick="refreshAll()">Refresh</button>
         </div>
       </div>
@@ -2553,8 +2575,10 @@ function sortCTTable(col) {
 }
 
 // ── CARD VIEW ─────────────────────────────────────────
-let vmViewMode = localStorage.getItem('pve-vm-view')||'table';
-let ctViewMode = localStorage.getItem('pve-ct-view')||'table';
+let vmViewMode   = localStorage.getItem('pve-vm-view')||'table';
+let ctViewMode   = localStorage.getItem('pve-ct-view')||'table';
+let nodeViewMode = localStorage.getItem('pve-node-view')||'cards';
+let _nodeSort = 'node', _nodeSortDir = 1;
 
 function setVMView(mode) {
   vmViewMode = mode;
@@ -2569,6 +2593,17 @@ function setCTView(mode) {
   document.getElementById('cts-view-table')?.classList.toggle('active', mode==='table');
   document.getElementById('cts-view-cards')?.classList.toggle('active', mode==='cards');
   renderCTTable();
+}
+function setNodeView(mode) {
+  nodeViewMode = mode;
+  localStorage.setItem('pve-node-view', mode);
+  document.getElementById('nodes-view-table')?.classList.toggle('active', mode==='table');
+  document.getElementById('nodes-view-cards')?.classList.toggle('active', mode==='cards');
+  renderNodes();
+}
+function sortNodeTable(col) {
+  if (_nodeSort === col) _nodeSortDir *= -1; else { _nodeSort = col; _nodeSortDir = 1; }
+  renderNodes();
 }
 
 function _renderVMCards(items) {
@@ -3446,6 +3481,8 @@ async function connect() {
     document.getElementById('vms-view-cards')?.classList.toggle('active', vmViewMode==='cards');
     document.getElementById('cts-view-table')?.classList.toggle('active', ctViewMode==='table');
     document.getElementById('cts-view-cards')?.classList.toggle('active', ctViewMode==='cards');
+    document.getElementById('nodes-view-table')?.classList.toggle('active', nodeViewMode==='table');
+    document.getElementById('nodes-view-cards')?.classList.toggle('active', nodeViewMode==='cards');
     loadStoredNotifs();
     updateNotifBadge();
     _updatePageTitle();
@@ -3740,10 +3777,22 @@ async function loadNodes() {
   PVE.nodes = d.data||[];
 }
 
+let _lastRefreshAt = 0;
+
+function _updateRefreshAge() {
+  const el = document.getElementById('last-refresh');
+  if (!el || !_lastRefreshAt) return;
+  const sec = Math.floor((Date.now() - _lastRefreshAt) / 1000);
+  el.className = sec > 300 ? 'stale' : sec > 120 ? 'amber' : '';
+  if (sec < 10) { el.textContent = 'just now'; return; }
+  if (sec < 60)  { el.textContent = `${sec}s ago`; return; }
+  const min = Math.floor(sec / 60);
+  el.textContent = `${min}m ago`;
+}
+setInterval(_updateRefreshAge, 10000);
+
 async function refreshAll() {
   if (!PVE.host) return;
-  const rBtn = document.getElementById('btn-refresh');
-  if (rBtn) rBtn.title = 'Refreshing…';
   try {
     await loadNodes();
     const allVMs=[],allCTs=[],nodeStats=[];
@@ -3765,12 +3814,10 @@ async function refreshAll() {
     updateTopbarStats();
     populateTagFilters();
     updateAffinityBadge();
-    const rBtnOk = document.getElementById('btn-refresh');
-    if (rBtnOk) rBtnOk.title = 'Last refreshed ' + new Date().toLocaleTimeString();
+    _lastRefreshAt = Date.now();
+    _updateRefreshAge();
   } catch(e) {
     toast('Refresh failed: '+e.message,'error');
-    const rBtnFail = document.getElementById('btn-refresh');
-    if (rBtnFail) rBtnFail.title = 'Refresh failed — ' + new Date().toLocaleTimeString();
   }
 }
 
@@ -5085,23 +5132,114 @@ function vmRow(x,showType=false){
 }
 
 function renderNodes(){
-  const connFilter     = document.getElementById('nodes-conn')?.value ?? '_all';
-  const showAll        = connFilter === '_all';
-  const nodes          = showAll        ? allNodes() :
-                         connFilter==='' ? PVE.nodeStatuses :
-                         (extraConns.find(c=>c.id===connFilter)?.nodeStatuses || []);
-  const multiCluster   = showAll && extraConns.length > 0;
+  const connFilter   = document.getElementById('nodes-conn')?.value ?? '_all';
+  const showAll      = connFilter === '_all';
+  const multiCluster = showAll && extraConns.length > 0;
+
+  // Build flat list with cluster label attached
+  let flatNodes;
+  if (!multiCluster) {
+    const raw = showAll ? PVE.nodeStatuses :
+                connFilter==='' ? PVE.nodeStatuses :
+                (extraConns.find(c=>c.id===connFilter)?.nodeStatuses || []);
+    flatNodes = raw.map(n => ({...n, _cluster: 'Primary'}));
+  } else {
+    flatNodes = [
+      ...PVE.nodeStatuses.map(n => ({...n, _cluster: 'Primary'})),
+      ...extraConns.flatMap(c => (c.nodeStatuses||[]).map(n => ({...n, _cluster: c.name||c.host})))
+    ];
+  }
+
+  // Sync toggle buttons
+  document.getElementById('nodes-view-table')?.classList.toggle('active', nodeViewMode==='table');
+  document.getElementById('nodes-view-cards')?.classList.toggle('active', nodeViewMode==='cards');
+
+  if (nodeViewMode === 'table') {
+    _renderNodeTableView(flatNodes, multiCluster);
+  } else {
+    _renderNodeCardsView(flatNodes, multiCluster);
+  }
+}
+
+function _nodeRowData(n) {
+  const s = n.statusData || {};
+  const cpuPct  = s.cpu ? s.cpu * 100 : (n.cpu ? n.cpu * 100 : 0);
+  const memUsed = s.memory?.used || 0;
+  const memTot  = s.memory?.total || 1;
+  const memPct  = (memUsed / memTot) * 100;
+  const online  = n.status === 'online' || (s && Object.keys(s).length > 0);
+  const vmCount = allVMs().concat(allCTs()).filter(x => x.node === n.node).length;
+  return { s, cpuPct, memUsed, memTot, memPct, online, vmCount,
+           uptime: s.uptime || n.uptime || 0, pveversion: s.pveversion || n.pveversion || '—' };
+}
+
+function _renderNodeTableView(flatNodes, multiCluster) {
+  // Sort
+  const sorted = [...flatNodes].sort((a, b) => {
+    const ad = _nodeRowData(a), bd = _nodeRowData(b);
+    let av, bv;
+    switch (_nodeSort) {
+      case 'cpu':     av = ad.cpuPct;    bv = bd.cpuPct;    break;
+      case 'mem':     av = ad.memPct;    bv = bd.memPct;    break;
+      case 'uptime':  av = ad.uptime;    bv = bd.uptime;    break;
+      case 'vms':     av = ad.vmCount;   bv = bd.vmCount;   break;
+      case 'cluster': av = a._cluster;   bv = b._cluster;   break;
+      case 'status':  av = ad.online?0:1; bv = bd.online?0:1; break;
+      default:        av = a.node||'';   bv = b.node||'';
+    }
+    if (typeof av === 'string') return av.localeCompare(bv) * _nodeSortDir;
+    return (av - bv) * _nodeSortDir;
+  });
+
+  const si = col => col === _nodeSort ? (_nodeSortDir > 0 ? ' ▲' : ' ▼') : '';
+  const th = (col, label) =>
+    `<th class="sortable" onclick="sortNodeTable('${col}')" style="cursor:pointer">${label}${si(col)}</th>`;
+
+  const rows = sorted.map(n => {
+    const d = _nodeRowData(n);
+    const cpuStr  = d.cpuPct.toFixed(1) + '%';
+    const memStr  = d.memPct.toFixed(0) + '%';
+    const memFull = `${fmtBytes(d.memUsed)} / ${fmtBytes(d.memTot)}`;
+    const maint   = isMaintenanceMode(n.node);
+    return `<tr style="cursor:pointer" onclick="openNodeDetail(${JSON.stringify(n).replace(/"/g,'&quot;')})">
+      <td><strong>${escHtml(n.node)}</strong>${maint?' <span class="badge warning" style="font-size:9px">MAINT</span>':''}</td>
+      ${multiCluster ? `<td style="color:var(--muted)">${escHtml(n._cluster)}</td>` : ''}
+      <td>${statusBadge(d.online?'online':'offline')}</td>
+      <td><span class="gauge-bar" style="display:inline-block;width:60px;vertical-align:middle;margin-right:5px"><span class="gauge-fill ${gaugeClass(d.cpuPct)}" style="width:${Math.min(d.cpuPct,100)}%;display:block;height:100%"></span></span>${cpuStr}</td>
+      <td title="${memFull}"><span class="gauge-bar" style="display:inline-block;width:60px;vertical-align:middle;margin-right:5px"><span class="gauge-fill ${gaugeClass(d.memPct)}" style="width:${Math.min(d.memPct,100)}%;display:block;height:100%"></span></span>${memStr}</td>
+      <td style="color:var(--muted)">${fmtUptime(d.uptime)}</td>
+      <td style="color:var(--muted)">${d.vmCount}</td>
+      <td style="color:var(--muted)">${escHtml(d.pveversion)}</td>
+    </tr>`;
+  }).join('');
+
+  document.getElementById('node-cards').innerHTML = `<div class="table-wrap"><table>
+    <thead><tr>
+      ${th('node','Node')}
+      ${multiCluster ? th('cluster','Cluster') : ''}
+      ${th('status','Status')}
+      ${th('cpu','CPU %')}
+      ${th('mem','RAM %')}
+      ${th('uptime','Uptime')}
+      ${th('vms','VMs/CTs')}
+      <th>PVE Version</th>
+    </tr></thead>
+    <tbody>${rows || '<tr><td colspan="8" class="empty">No nodes</td></tr>'}</tbody>
+  </table></div>`;
+}
+
+function _renderNodeCardsView(flatNodes, multiCluster) {
+  const _CLUSTER_COLOURS = ['var(--accent)','var(--blue)','var(--purple)','var(--teal)','var(--yellow)','var(--green)'];
 
   const _nodeCard = n => {
-    const s=n.statusData||{};
-    const cpuPct=s.cpu?(s.cpu*100).toFixed(1):(n.cpu?(n.cpu*100).toFixed(1):'—');
-    const memPct=s.memory?((s.memory.used/s.memory.total)*100).toFixed(0):'—';
-    const memStr=s.memory?`${fmtBytes(s.memory.used)}/${fmtBytes(s.memory.total)}`:'—';
-    const online=n.status==='online'||(s&&Object.keys(s).length>0);
-    return `<div class="node-card ${online?'online':'offline'}" onclick="openNodeDetail(${JSON.stringify(n).replace(/"/g,'&quot;')})">
+    const d = _nodeRowData(n);
+    const cpuPct = d.cpuPct.toFixed(1);
+    const memPct = d.memPct.toFixed(0);
+    const memStr = `${fmtBytes(d.memUsed)}/${fmtBytes(d.memTot)}`;
+    return `<div class="node-card ${d.online?'online':'offline'}" onclick="openNodeDetail(${JSON.stringify(n).replace(/"/g,'&quot;')})">
       <div class="node-card-header"><span class="node-name">${n.node}</span>
         <div style="display:flex;gap:5px;align-items:center">
-          ${statusBadge(online?'online':'offline')}
+          ${statusBadge(d.online?'online':'offline')}
           ${isMaintenanceMode(n.node)?'<span class="badge warning" style="font-size:9px">🔧 MAINTENANCE</span>':''}
         </div>
       </div>
@@ -5110,41 +5248,38 @@ function renderNodes(){
       <div class="node-metric"><span class="key">Memory</span><span>${memPct}%</span></div>
       <div class="gauge-bar" style="margin-bottom:10px"><div class="gauge-fill ${gaugeClass(memPct)}" style="width:${Math.min(memPct,100)}%"></div></div>
       <div class="node-metric"><span class="key">RAM</span><span style="color:var(--muted)">${memStr}</span></div>
-      <div class="node-metric"><span class="key">PVE</span><span style="color:var(--muted)">${s.pveversion||n.pveversion||'—'}</span></div>
-      <div class="node-metric"><span class="key">Uptime</span><span style="color:var(--muted)">${fmtUptime(s.uptime||n.uptime)}</span></div>
+      <div class="node-metric"><span class="key">PVE</span><span style="color:var(--muted)">${d.pveversion}</span></div>
+      <div class="node-metric"><span class="key">Uptime</span><span style="color:var(--muted)">${fmtUptime(d.uptime)}</span></div>
       <div style="margin-top:10px;color:var(--muted);font-size:11px">Click for details & graphs →</div>
     </div>`;
   };
 
-  const _CLUSTER_COLOURS = ['var(--accent)','var(--blue)','var(--purple)','var(--teal)','var(--yellow)','var(--green)'];
-
   if (!multiCluster) {
     document.getElementById('node-cards').innerHTML =
-      `<div class="node-grid">${nodes.map(_nodeCard).join('')}</div>`;
+      `<div class="node-grid">${flatNodes.map(_nodeCard).join('')}</div>`;
     return;
   }
 
-  const clusters = [
-    { label: 'Primary', nodes: PVE.nodeStatuses },
-    ...extraConns.filter(c => (c.nodeStatuses||[]).length)
-                 .map(c => ({ label: c.name || c.host, nodes: c.nodeStatuses||[] }))
-  ].filter(g => g.nodes.length);
+  const clusterGroups = {};
+  flatNodes.forEach(n => {
+    if (!clusterGroups[n._cluster]) clusterGroups[n._cluster] = [];
+    clusterGroups[n._cluster].push(n);
+  });
 
-  document.getElementById('node-cards').innerHTML = clusters.map((g, i) => {
+  document.getElementById('node-cards').innerHTML = Object.entries(clusterGroups).map(([label, gnodes], i) => {
     const col = _CLUSTER_COLOURS[i % _CLUSTER_COLOURS.length];
-    const running = g.nodes.reduce((a, n) => {
-      const vms = allVMs().concat(allCTs()).filter(x => x.node === n.node);
-      return a + vms.filter(x => x.status === 'running').length;
+    const running = gnodes.reduce((a, n) => {
+      return a + allVMs().concat(allCTs()).filter(x => x.node === n.node && x.status === 'running').length;
     }, 0);
     return `
       <div style="border-left:4px solid ${col};background:var(--bg2);border-radius:var(--radius);padding:10px 16px;margin-bottom:8px;display:flex;align-items:center;gap:12px">
         <div style="width:10px;height:10px;border-radius:50%;background:${col};flex-shrink:0"></div>
         <div style="flex:1">
-          <span style="font-size:14px;font-weight:700;color:var(--text)">${escHtml(g.label)}</span>
-          <span style="font-size:12px;color:var(--muted);margin-left:10px">${g.nodes.length} node${g.nodes.length!==1?'s':''} · ${running} VM/CT running</span>
+          <span style="font-size:14px;font-weight:700;color:var(--text)">${escHtml(label)}</span>
+          <span style="font-size:12px;color:var(--muted);margin-left:10px">${gnodes.length} node${gnodes.length!==1?'s':''} · ${running} VM/CT running</span>
         </div>
       </div>
-      <div class="node-grid" style="margin-bottom:20px">${g.nodes.map(_nodeCard).join('')}</div>`;
+      <div class="node-grid" style="margin-bottom:20px">${gnodes.map(_nodeCard).join('')}</div>`;
   }).join('');
 }
 
@@ -6331,73 +6466,178 @@ function toggleTheme() {
   if (saved) document.documentElement.setAttribute('data-theme', saved);
 })();
 
-// ── GLOBAL SEARCH ────────────────────────────────────────
-// Searches across VMs, containers, nodes and storage pools
-function globalSearch(q) {
-  const el = document.getElementById('search-results');
-  if (!q || q.length < 2) { el.classList.remove('show'); return; }
-  const ql = q.toLowerCase();
-  const allItems = [...PVE.vms, ...PVE.containers];
-  const matchedItems = allItems.filter(x =>
-    (x.name || '').toLowerCase().includes(ql) || String(x.vmid).includes(ql)
-  );
-  const matchedNodes = PVE.nodeStatuses.filter(n => n.node.toLowerCase().includes(ql));
-  const matchedStorage = PVE.storage.filter(s => s.storage.toLowerCase().includes(ql));
-  const results = [
-    ...matchedItems.map(x => ({
-      icon: x.type === 'vm' ? '🖥' : '📦',
+// ── COMMAND PALETTE ──────────────────────────────────────
+// Ctrl+K / Cmd+K spotlight-style search across all VMs, CTs, nodes, views
+let _cmdIdx = -1;
+let _cmdItems = [];
+
+const _CMD_VIEWS = [
+  { label:'Overview',        icon:'📊', sub:'View · Dashboard',      action:()=>switchView('overview') },
+  { label:'Virtual Machines',icon:'🖥', sub:'View · VM list',        action:()=>switchView('vms') },
+  { label:'Containers',      icon:'📦', sub:'View · LXC list',       action:()=>switchView('containers') },
+  { label:'Nodes',           icon:'⚡', sub:'View · Node list',      action:()=>switchView('nodes') },
+  { label:'Storage',         icon:'💾', sub:'View · Storage pools',  action:()=>switchView('storage') },
+  { label:'Heatmap',         icon:'🌡', sub:'View · Resource heatmap',action:()=>switchView('heatmap') },
+  { label:'Tasks',           icon:'📋', sub:'View · Cluster tasks',  action:()=>switchView('tasks') },
+  { label:'Disk Health',     icon:'🔍', sub:'View · SMART & ZFS',    action:()=>switchView('disks') },
+  { label:'Backups',         icon:'🗄', sub:'View · vzdump jobs',    action:()=>switchView('backups') },
+  { label:'Firewall',        icon:'🔒', sub:'View · Firewall rules', action:()=>switchView('firewall') },
+  { label:'Host Profiles',   icon:'🔧', sub:'View · Host management',action:()=>switchView('hostprofiles') },
+];
+
+function openCmdPalette() {
+  const overlay = document.getElementById('cmd-overlay');
+  const input   = document.getElementById('cmd-input');
+  if (!overlay) return;
+  overlay.classList.add('open');
+  input.value = '';
+  _cmdIdx = -1;
+  _cmdSearch('');
+  setTimeout(() => input.focus(), 30);
+  document.getElementById('global-search')?.blur();
+}
+
+function _cmdClose(e) {
+  if (!e || e.target.id === 'cmd-overlay') {
+    document.getElementById('cmd-overlay')?.classList.remove('open');
+    _cmdItems = [];
+  }
+}
+
+function _cmdSearch(q) {
+  const ql = (q || '').trim().toLowerCase();
+  _cmdIdx = -1;
+
+  // Views always shown when no query, filtered when query present
+  let viewResults = _CMD_VIEWS;
+  if (ql) viewResults = _CMD_VIEWS.filter(v => v.label.toLowerCase().includes(ql));
+
+  // VMs + CTs from all clusters
+  const allItems = [...allVMs(), ...allCTs()];
+  const matchedItems = ql
+    ? allItems.filter(x => (x.name||'').toLowerCase().includes(ql) || String(x.vmid).includes(ql))
+    : [];
+
+  // Nodes from all clusters
+  const allNodeList = allNodes();
+  const matchedNodes = ql
+    ? allNodeList.filter(n => n.node.toLowerCase().includes(ql))
+    : [];
+
+  // Storage
+  const allStor = [...(PVE.storage||[]), ...extraConns.flatMap(c=>c.storage||[])];
+  const matchedStor = ql
+    ? allStor.filter(s => s.storage.toLowerCase().includes(ql))
+    : [];
+
+  const sections = [];
+
+  if (viewResults.length) {
+    sections.push({ title: ql ? 'Views' : 'Quick Navigation', items: viewResults.slice(0,6).map(v => ({
+      icon: v.icon, label: v.label, sub: v.sub, badge: '', action: v.action
+    }))});
+  }
+
+  if (matchedItems.length) {
+    sections.push({ title: 'VMs & Containers', items: matchedItems.slice(0,8).map(x => ({
+      icon: x.type==='vm' ? '🖥' : '📦',
       label: x.name || `VMID ${x.vmid}`,
-      sub: `${x.type.toUpperCase()} ${x.vmid} · ${x.node} · ${x.status}`,
+      sub: `${x.type.toUpperCase()} ${x.vmid} · ${x.node}`,
+      badge: x.status,
       action: () => { closeDetail(); setTimeout(() => openDetail(x), 50); }
-    })),
-    ...matchedNodes.map(n => ({
+    }))});
+  }
+
+  if (matchedNodes.length) {
+    sections.push({ title: 'Nodes', items: matchedNodes.slice(0,4).map(n => ({
       icon: '⚡',
       label: n.node,
       sub: `Node · ${n.status}`,
+      badge: '',
       action: () => { switchView('nodes'); setTimeout(() => openNodeDetail(n), 100); }
-    })),
-    ...matchedStorage.map(s => ({
+    }))});
+  }
+
+  if (matchedStor.length) {
+    sections.push({ title: 'Storage', items: matchedStor.slice(0,4).map(s => ({
       icon: '💾',
       label: s.storage,
-      sub: `Storage · ${s.node} · ${s.type || '—'}`,
+      sub: `${s.node} · ${s.type||'—'}`,
+      badge: '',
       action: () => switchView('storage')
-    }))
-  ].slice(0, 10);
-
-  if (!results.length) {
-    el.innerHTML = '<div class="sr-item" style="color:var(--muted)">No results found</div>';
-  } else {
-    el.innerHTML = results.map((r, i) => `
-      <div class="sr-item" onclick="searchSelect(${i})">
-        <span>${r.icon}</span>
-        <span><strong>${escHtml(r.label)}</strong> <span style="color:var(--muted);font-size:11px">${escHtml(r.sub)}</span></span>
-      </div>`).join('');
+    }))});
   }
-  el._results = results;
-  el.classList.add('show');
-}
-function searchSelect(i) {
-  const el = document.getElementById('search-results');
-  el.classList.remove('show');
-  document.getElementById('global-search').value = '';
-  if (el._results && el._results[i]) el._results[i].action();
-}
-function hideSearch() {
-  document.getElementById('search-results').classList.remove('show');
+
+  _cmdItems = sections.flatMap(s => s.items);
+
+  const el = document.getElementById('cmd-results');
+  if (!el) return;
+
+  if (!_cmdItems.length) {
+    el.innerHTML = '<div style="padding:24px;text-align:center;color:var(--muted);font-size:13px">No results</div>';
+    return;
+  }
+
+  let html = '';
+  let idx = 0;
+  sections.forEach(sec => {
+    html += `<div class="cmd-section">${escHtml(sec.title)}</div>`;
+    sec.items.forEach(item => {
+      const badgeColor = item.badge === 'running' ? 'var(--green)' :
+                         item.badge === 'stopped'  ? 'var(--red)'   : 'var(--muted)';
+      html += `<div class="cmd-item" data-idx="${idx}" onclick="_cmdSelect(${idx})">
+        <div class="cmd-item-icon">${item.icon}</div>
+        <div class="cmd-item-body">
+          <div class="cmd-item-label">${escHtml(item.label)}</div>
+          <div class="cmd-item-sub">${escHtml(item.sub)}</div>
+        </div>
+        ${item.badge ? `<span class="cmd-item-badge" style="color:${badgeColor}">${escHtml(item.badge)}</span>` : ''}
+      </div>`;
+      idx++;
+    });
+  });
+  el.innerHTML = html;
 }
 
-// Ctrl+K / Cmd+K to focus search
+function _cmdSelect(i) {
+  if (i < 0 || i >= _cmdItems.length) return;
+  document.getElementById('cmd-overlay')?.classList.remove('open');
+  _cmdItems[i].action();
+  _cmdItems = [];
+}
+
+function _cmdMoveIdx(dir) {
+  const total = _cmdItems.length;
+  if (!total) return;
+  _cmdIdx = (_cmdIdx + dir + total) % total;
+  document.querySelectorAll('#cmd-results .cmd-item').forEach((el, i) => {
+    el.classList.toggle('active', i === _cmdIdx);
+    if (i === _cmdIdx) el.scrollIntoView({ block: 'nearest' });
+  });
+}
+
+// Keyboard shortcuts — global
 document.addEventListener('keydown', e => {
+  const overlay = document.getElementById('cmd-overlay');
+  const isOpen  = overlay?.classList.contains('open');
+
   if ((e.ctrlKey||e.metaKey) && e.key==='k') {
     e.preventDefault();
-    const s = document.getElementById('global-search');
-    if (s) { s.focus(); s.select(); }
+    if (isOpen) _cmdClose(); else openCmdPalette();
+    return;
   }
-  if (e.key==='Escape') {
-    hideSearch();
-    document.getElementById('global-search')?.blur();
-  }
+  if (!isOpen) return;
+
+  if (e.key === 'ArrowDown') { e.preventDefault(); _cmdMoveIdx(1); }
+  else if (e.key === 'ArrowUp') { e.preventDefault(); _cmdMoveIdx(-1); }
+  else if (e.key === 'Enter') { e.preventDefault(); _cmdSelect(_cmdIdx >= 0 ? _cmdIdx : 0); }
+  else if (e.key === 'Escape') { e.preventDefault(); _cmdClose({}); }
 });
+
+// legacy stubs (referenced elsewhere)
+function globalSearch() {}
+function hideSearch() {}
+function searchSelect() {}
 
 // ── CONSOLE ──────────────────────────────────────────────
 // Opens noVNC console in a new tab via standard Proxmox VE URL
@@ -20382,6 +20622,23 @@ document.addEventListener('click', e => {
   </div>
   <div id="tm-body" style="max-height:280px;overflow-y:auto;">
     <div id="tm-list" style="padding:6px 0;"></div>
+  </div>
+</div>
+
+<!-- COMMAND PALETTE -->
+<div id="cmd-overlay" onclick="_cmdClose(event)">
+  <div id="cmd-box">
+    <div id="cmd-input-wrap">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:16px;height:16px;color:var(--muted);flex-shrink:0"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+      <input id="cmd-input" placeholder="Search VMs, containers, nodes, views…" oninput="_cmdSearch(this.value)" autocomplete="off" spellcheck="false"/>
+      <kbd style="background:var(--bg3);border:1px solid var(--border);border-radius:4px;padding:2px 6px;font-size:10px;color:var(--muted);flex-shrink:0">Esc</kbd>
+    </div>
+    <div id="cmd-results"></div>
+    <div id="cmd-footer">
+      <span><kbd>↑↓</kbd> navigate</span>
+      <span><kbd>↵</kbd> select</span>
+      <span><kbd>Esc</kbd> close</span>
+    </div>
   </div>
 </div>
 
