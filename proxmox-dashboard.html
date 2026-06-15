@@ -2610,7 +2610,13 @@ function _renderVMCards(items) {
   if (!items.length) return '<div class="empty">No VMs found</div>';
   return `<div class="vm-card-grid">${items.map(x => {
     const cpuPct = x.cpu?(x.cpu*100).toFixed(1):0;
-    const memPct = x.mem&&x.maxmem?((x.mem/x.maxmem)*100).toFixed(0):0;
+    const _mk2 = `${x.connId||''}|${x.node}/${x.vmid}`;
+    const _mc2 = _vmMemCache[_mk2];
+    const _memFresh2 = _mc2 && (Date.now()-_mc2.ts < 300000);
+    const _memVal2 = _memFresh2 ? _mc2.mem : x.mem;
+    const _memMax2 = _memFresh2 ? _mc2.maxmem : x.maxmem;
+    const memPct = _memVal2&&_memMax2?((_memVal2/_memMax2)*100).toFixed(0):0;
+    const memFullyAllocated2 = x.type==='vm' && !_memFresh2 && _memVal2 && _memMax2 && _memVal2 >= _memMax2*0.99;
     const running = x.status==='running';
     const cid = x.connId||'';
     const since = x.uptime ? new Date(Date.now()-x.uptime*1000).toLocaleString() : '';
@@ -2624,8 +2630,8 @@ function _renderVMCards(items) {
       </div>
       <div style="font-size:11px;color:var(--muted);margin-bottom:2px">CPU ${cpuPct}%</div>
       <div class="gauge-bar" style="margin-bottom:7px"><div class="gauge-fill ${gaugeClass(+cpuPct)}" style="width:${Math.min(+cpuPct,100)}%"></div></div>
-      <div style="font-size:11px;color:var(--muted);margin-bottom:2px">RAM ${memPct}%</div>
-      <div class="gauge-bar" style="margin-bottom:9px"><div class="gauge-fill ${gaugeClass(+memPct)}" style="width:${Math.min(+memPct,100)}%"></div></div>
+      <div style="font-size:11px;color:var(--muted);margin-bottom:2px" title="${memFullyAllocated2?'All RAM allocated — click for in-guest usage':''}">RAM ${memPct}%${memFullyAllocated2?' <span style="font-size:9px">alloc</span>':''}</div>
+      <div class="gauge-bar" style="margin-bottom:9px"><div class="gauge-fill ${memFullyAllocated2?'low':gaugeClass(+memPct)}" style="width:${Math.min(+memPct,100)}%;${memFullyAllocated2?'opacity:.45':''}"></div></div>
       <div class="actions-row" onclick="event.stopPropagation()">
         ${running
           ? `<button class="btn small warning" onclick="confirmAction('${x.node}','${x.vmid}','${x.type}','shutdown','${cid}')" title="Shutdown">⏻</button>
@@ -4075,6 +4081,11 @@ async function loadDetailOverview(item) {
     const c      = cfg.data || {};
     const cpuPct = status.cpu?(status.cpu*100).toFixed(1):'0';
     const memPct = status.mem&&status.maxmem?((status.mem/status.maxmem)*100).toFixed(0):0;
+    // Cache accurate balloon mem for the list view
+    if (status.mem != null && status.maxmem) {
+      const mk = `${item.connId||''}|${item.node}/${item.vmid}`;
+      _vmMemCache[mk] = { mem: status.mem, maxmem: status.maxmem, ts: Date.now() };
+    }
     const diskPct= status.disk&&status.maxdisk?((status.disk/status.maxdisk)*100).toFixed(0):0;
 
     // OS type mapping
@@ -4110,9 +4121,9 @@ async function loadDetailOverview(item) {
           <div style="margin-top:6px;color:var(--muted);font-size:12px">${cpuDesc}</div>
         </div>
         <div class="info-box">
-          <div class="key">Memory</div>
+          <div class="key">Memory${status.mem >= status.maxmem * 0.99 ? ' <span style="font-size:10px;color:var(--muted);font-weight:400" title="Balloon driver not reporting in-guest usage — value reflects hypervisor allocation">⚠ allocated</span>' : ''}</div>
           <div style="font-size:26px;font-weight:700;color:var(--blue)">${memPct}%</div>
-          <div class="gauge-bar" style="margin-top:8px"><div class="gauge-fill ${gaugeClass(memPct)}" style="width:${Math.min(memPct,100)}%"></div></div>
+          <div class="gauge-bar" style="margin-top:8px"><div class="gauge-fill ${status.mem >= status.maxmem * 0.99 ? 'low' : gaugeClass(memPct)}" style="width:${Math.min(memPct,100)}%"></div></div>
           <div style="margin-top:6px;color:var(--muted);font-size:12px">${fmtBytes(status.mem)} / ${fmtBytes(status.maxmem)}</div>
         </div>
       </div>
@@ -5080,8 +5091,16 @@ function vmRowOverview(x) {
 
 function vmRow(x,showType=false){
   const cpuPct=x.cpu?(x.cpu*100).toFixed(1):'—';
-  const memPct=x.mem&&x.maxmem?((x.mem/x.maxmem)*100).toFixed(0):0;
-  const memStr=x.mem&&x.maxmem?`${fmtBytes(x.mem)}/${fmtBytes(x.maxmem)}`:'—';
+  // Prefer cached /status/current mem (accurate balloon value) if fresh (<5min)
+  const _mk = `${x.connId||''}|${x.node}/${x.vmid}`;
+  const _mc = _vmMemCache[_mk];
+  const _memFresh = _mc && (Date.now()-_mc.ts < 300000);
+  const _memVal  = _memFresh ? _mc.mem    : x.mem;
+  const _memMax  = _memFresh ? _mc.maxmem : x.maxmem;
+  const memPct   = _memVal && _memMax ? ((_memVal/_memMax)*100).toFixed(0) : 0;
+  const memStr   = _memVal && _memMax ? `${fmtBytes(_memVal)}/${fmtBytes(_memMax)}` : '—';
+  // For QEMU VMs: list endpoint mem ≈ maxmem means balloon not active (hypervisor allocation, not in-guest)
+  const memFullyAllocated = x.type==='vm' && !_memFresh && _memVal && _memMax && _memVal >= _memMax*0.99;
   const diskStr=x.disk!=null&&x.maxdisk?`${fmtBytes(x.disk)}/${fmtBytes(x.maxdisk)}`:'—';
   const uptime=x.uptime?fmtUptime(x.uptime):'—';
   const running=x.status==='running';
@@ -5103,10 +5122,10 @@ function vmRow(x,showType=false){
         <div class="gauge-bar"><div class="gauge-fill ${gaugeClass(parseFloat(cpuPct)||0)}" style="width:${Math.min(parseFloat(cpuPct)||0,100)}%"></div></div>
       </div>
     </td>
-    <td>
+    <td title="${memFullyAllocated?'All RAM allocated to VM — actual in-guest usage unavailable without balloon driver':''}">
       <div class="gauge-wrap">
-        <span style="min-width:36px;text-align:right;font-size:12px">${memPct}%</span>
-        <div class="gauge-bar"><div class="gauge-fill ${gaugeClass(memPct)}" style="width:${Math.min(memPct,100)}%"></div></div>
+        <span style="min-width:36px;text-align:right;font-size:12px;${memFullyAllocated?'color:var(--muted)':''}">${memPct}%${memFullyAllocated?' <span style="font-size:9px">alloc</span>':''}</span>
+        <div class="gauge-bar"><div class="gauge-fill ${memFullyAllocated?'low':gaugeClass(memPct)}" style="width:${Math.min(memPct,100)}%;${memFullyAllocated?'opacity:.45':''}"></div></div>
       </div>
       <div style="font-size:11px;color:var(--muted)">${memStr}</div>
     </td>
@@ -6716,7 +6735,8 @@ function _buildVncWsUrl(conn, node, ep, vmid, wsEndpoint, port, ticket) {
 // Fetches VM/CT IP addresses lazily and caches per session.
 // Sources (in order): QEMU guest agent → cloud-init ipconfig0 → LXC net config
 
-const _vmIPCache = {}; // key: "connId|node/vmid" → "1.2.3.4" | "DHCP" | null
+const _vmIPCache  = {}; // key: "connId|node/vmid" → "1.2.3.4" | "DHCP" | null
+const _vmMemCache = {}; // key: "connId|node/vmid" → { mem, maxmem, ts } — from /status/current
 
 async function _getVMIP(x) {
   const key  = `${x.connId||''}|${x.node}/${x.vmid}`;
