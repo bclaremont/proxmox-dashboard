@@ -8,6 +8,30 @@ All notable changes to PCC are documented here.
 
 ---
 
+## UI polish, host config backup, reports enhancements (2026-06)
+
+### Added
+- **Host Config Backup** (Host Profiles → Host Config Backup tab, standalone mode only) — nightly disaster-recovery capture of every node's DNS, timezone, `/etc/hosts`, network interfaces, node status (hostname, PVE version, kernel, CPU), and storage configuration; stored in SQLite `node_config_snapshots` table; per-node summary cards with full interface/storage detail; backup history with per-field change-diff highlighting (e.g. `dns`, `network` badges when something changed vs previous); JSON export per node; **Backup Now** button for immediate capture; configurable schedule time via `node_snapshot_enabled` / `node_snapshot_time` settings
+- **Cluster filter dropdowns** on VMs, Containers, Nodes, and Heatmap views — "All Clusters / Primary / per-cluster" selector; hidden when only one cluster is connected; highlights orange when a filter is active
+- **Task polling** — `vmAction` now registers power operations with the task monitor (`tmRegister`); `tmPoll` polls task completion on both primary and extra clusters; fires ✓ success or ✗ error toast when the task finishes instead of an immediate "sent" toast
+- **Reports: kernel and PVE version mismatch** — Node Utilisation tab highlights rows where kernel or PVE version differs from the cluster majority; `≠` badge in the affected cell; summary tab warning
+- **Reports: OS version column** — VM Inventory shows guest OS via QEMU guest agent `osinfo` (running VMs) or config `ostype` fallback; fetched async and patched in-place
+- **Reports: no guest agent detection** — running QEMU VMs where the guest agent didn't respond get a `no agent` badge in the OS column; summary warning counts them
+- **Reports: Thin Provisioning tab** — shows physical storage per thin-capable pool (ZFS, LVM-thin, RBD, CephFS, GlusterFS), total VM disk allocation, and overcommit ratio; shared pools de-duplicated to avoid double-counting
+- **Overview health banner** — top of the Overview page shows a green "All systems healthy" banner when everything is fine, or clickable warning rows for offline nodes, storage pools >85% full, nodes with CPU/RAM >90%, and recent task errors; each row navigates directly to the relevant view
+- **`⚙ Filters` popover** on VM and CT toolbars — group-by-node toggle and tag filter consolidated into a compact dropdown behind a single button; button highlights orange when any filter is active
+
+### Changed
+- **Section titles cleaned up** — "Virtual Machines (QEMU/KVM)" → "Virtual Machines"; "LXC Containers" → "Containers"; "Resource Heatmap — Cluster Capacity at a Glance" → "Heatmap"; "Reports & Export" → "Reports"
+- **Overview resources header** now shows the actual cluster name instead of the generic "(Primary)"
+- **`tmRegister` signature** extended with optional `user` parameter; stores `connId` to enable correct polling for extra-cluster tasks
+
+### Fixed
+- **Extra-cluster task polling** — `tmPoll` was only polling primary-cluster nodes; tasks on extra clusters would fall through and be silently marked complete; now uses `connGet(conn, path)` for extra-cluster tasks keyed by `connId`
+- **Node Profiles section header duplication** — `renderNodes()` was generating a `<div class="section-header">` inside `#node-cards` after a static one was added to the HTML; removed the dynamic one from the single-cluster code path
+
+---
+
 ## Operations, UI polish, and bug fixes (2026-06)
 
 ### Added

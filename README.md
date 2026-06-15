@@ -33,6 +33,7 @@
 - **Scheduled operations** — start, stop, backup and snapshot VMs on a schedule (24/7 in standalone mode); snapshot retention auto-deletes oldest
 - **Capacity planning** — trend-based forecasting of when CPU, RAM or disk will be exhausted
 - **Host Profiles** — capture a reference node's config and detect/fix drift across the fleet
+- **Host Config Backup** — nightly snapshot of every node's DNS, timezone, network interfaces and storage config saved to SQLite; disaster-recovery reference if a host is lost and needs rebuilding; compare snapshots to see exactly what changed between runs
 - **Maintenance drain** — evacuate all VMs from a node before maintenance with one click
 - **Cross-cluster VM copy** — guided 4-step wizard to cold-copy a VM between clusters (vzdump → scp → vzrestore); useful for DR and cluster migrations
 - **Config export/import** — backup and restore all PCC settings (rules, schedules, webhooks, specs) as a JSON file; supports merge or full-replace import
@@ -46,7 +47,7 @@
 - **Notifications panel** — in-app alert feed with severity colour coding
 
 ### Reporting
-- **Reports & Export** — cluster utilisation summaries, VM inventory, node and storage tables
+- **Reports** — cluster utilisation summaries, VM inventory, node and storage tables
 - **CSV export** — download any report as a dated CSV file
 - **Markdown copy** — copy a formatted report to paste into Notion, email or a ticket
 
