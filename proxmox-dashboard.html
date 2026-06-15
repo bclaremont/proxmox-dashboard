@@ -257,6 +257,14 @@
     .filter-pill{padding:4px 10px;border-radius:12px;border:1px solid var(--border);background:transparent;color:var(--muted);font-family:var(--font);font-size:11px;cursor:pointer;transition:all .15s;white-space:nowrap;}
     .filter-pill:hover{border-color:var(--muted);color:var(--text);}
     .filter-pill.active{background:rgba(249,115,22,.15);border-color:rgba(249,115,22,.5);color:var(--accent);font-weight:600;}
+    .fpop{position:relative;}
+    .fpop-menu{position:absolute;top:calc(100% + 5px);right:0;z-index:300;background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);min-width:190px;padding:6px 0;box-shadow:0 6px 20px rgba(0,0,0,.5);display:none;}
+    .fpop-menu.open{display:block;}
+    .fpop-row{display:flex;align-items:center;gap:9px;padding:7px 14px;font-size:13px;cursor:pointer;user-select:none;}
+    .fpop-row:hover{background:var(--bg3);}
+    .fpop-divider{height:1px;background:var(--border);margin:4px 0;}
+    .health-ok{background:rgba(63,185,80,.07);border:1px solid rgba(63,185,80,.25);border-radius:var(--radius);padding:9px 14px;margin-bottom:16px;display:flex;align-items:center;gap:9px;font-size:13px;color:var(--green);}
+    .health-warns{background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);margin-bottom:16px;overflow:hidden;}
     /* VM group header rows */
     .vm-group-row td{background:var(--bg3)!important;padding:6px 14px!important;font-size:10px;text-transform:uppercase;letter-spacing:1.2px;color:var(--muted);font-weight:700;border-bottom:1px solid var(--border);border-top:2px solid var(--border);}
     .vm-group-row:hover td{background:var(--bg3)!important;}
@@ -951,7 +959,7 @@
     <!-- VMs -->
     <div id="view-vms" style="display:none">
       <div class="section-header">
-        <span class="section-title">Virtual Machines (QEMU/KVM)</span>
+        <span class="section-title">Virtual Machines</span>
         <div style="display:flex;gap:6px;align-items:center">
           <select class="cluster-filter-sel" id="vms-conn" style="display:none;padding:5px 8px;font-size:13px" onchange="renderVMTable()"><option value="_all">All Clusters</option></select>
           <div class="view-toggle">
@@ -963,8 +971,17 @@
             <button class="filter-pill"        id="vms-f-running" onclick="_vmFilter('running')" >● Running</button>
             <button class="filter-pill"        id="vms-f-stopped" onclick="_vmFilter('stopped')" >○ Stopped</button>
           </div>
-          <button class="filter-pill" id="vms-group-btn" onclick="_toggleVMGroup()" title="Group by cluster / node">⊞ Group</button>
-          <select id="vms-tag-filter" style="width:120px;padding:5px 8px;font-size:13px" onchange="renderVMTable()"><option value="">All Tags</option></select>
+          <div class="fpop" id="vms-fpop">
+            <button class="filter-pill" id="vms-fpop-btn" onclick="_fpopToggle('vms-fmenu')">⚙ Filters</button>
+            <div class="fpop-menu" id="vms-fmenu">
+              <div class="fpop-row" onclick="_toggleVMGroup()"><input type="checkbox" id="vms-group-chk" style="pointer-events:none;accent-color:var(--accent)"><span>Group by node</span></div>
+              <div class="fpop-divider"></div>
+              <div style="padding:6px 14px 10px">
+                <div style="font-size:10px;color:var(--muted);margin-bottom:5px;text-transform:uppercase;letter-spacing:.05em">Tag</div>
+                <select id="vms-tag-filter" style="width:100%;padding:4px 7px;font-size:12px" onchange="renderVMTable();_fpopRefresh('vms')"><option value="">All Tags</option></select>
+              </div>
+            </div>
+          </div>
           <button class="btn small primary" onclick="openCreateVMModal()">+ Create VM</button>
           <button class="btn small" onclick="refreshAll()">Refresh</button>
         </div>
@@ -982,7 +999,7 @@
     <!-- CONTAINERS -->
     <div id="view-containers" style="display:none">
       <div class="section-header">
-        <span class="section-title">LXC Containers</span>
+        <span class="section-title">Containers</span>
         <div style="display:flex;gap:6px;align-items:center">
           <select class="cluster-filter-sel" id="cts-conn" style="display:none;padding:5px 8px;font-size:13px" onchange="renderCTTable()"><option value="_all">All Clusters</option></select>
           <div class="view-toggle">
@@ -994,8 +1011,17 @@
             <button class="filter-pill"        id="cts-f-running" onclick="_ctFilter('running')" >● Running</button>
             <button class="filter-pill"        id="cts-f-stopped" onclick="_ctFilter('stopped')" >○ Stopped</button>
           </div>
-          <button class="filter-pill" id="cts-group-btn" onclick="_toggleCTGroup()" title="Group by cluster / node">⊞ Group</button>
-          <select id="cts-tag-filter" style="width:120px;padding:5px 8px;font-size:13px" onchange="renderCTTable()"><option value="">All Tags</option></select>
+          <div class="fpop" id="cts-fpop">
+            <button class="filter-pill" id="cts-fpop-btn" onclick="_fpopToggle('cts-fmenu')">⚙ Filters</button>
+            <div class="fpop-menu" id="cts-fmenu">
+              <div class="fpop-row" onclick="_toggleCTGroup()"><input type="checkbox" id="cts-group-chk" style="pointer-events:none;accent-color:var(--accent)"><span>Group by node</span></div>
+              <div class="fpop-divider"></div>
+              <div style="padding:6px 14px 10px">
+                <div style="font-size:10px;color:var(--muted);margin-bottom:5px;text-transform:uppercase;letter-spacing:.05em">Tag</div>
+                <select id="cts-tag-filter" style="width:100%;padding:4px 7px;font-size:12px" onchange="renderCTTable();_fpopRefresh('cts')"><option value="">All Tags</option></select>
+              </div>
+            </div>
+          </div>
           <button class="btn small primary" onclick="openCreateCTWizard()">+ Create CT</button>
           <button class="btn small success" onclick="openDownloadTemplatesModal()">↓ Download Templates</button>
           <button class="btn small" onclick="refreshAll()">Refresh</button>
@@ -1111,7 +1137,7 @@
     <!-- HEATMAP -->
     <div id="view-heatmap" style="display:none">
       <div class="section-header">
-        <span class="section-title">Resource Heatmap — Cluster Capacity at a Glance</span>
+        <span class="section-title">Heatmap</span>
         <select class="cluster-filter-sel" id="heatmap-conn" style="display:none;padding:5px 8px;font-size:13px" onchange="renderHeatmap()"><option value="_all">All Clusters</option></select>
       </div>
       <div id="heatmap-content"></div>
@@ -1443,7 +1469,7 @@
     <!-- REPORTS & EXPORT -->
     <div id="view-reports" style="display:none">
       <div class="section-header">
-        <span class="section-title">Reports &amp; Export</span>
+        <span class="section-title">Reports</span>
         <div style="display:flex;gap:6px;align-items:center">
           <select id="rpt-conn" style="width:140px;padding:5px 8px;font-size:13px" onchange="_rptConnChange()">
             <option value="_all">All Clusters</option>
@@ -4634,8 +4660,30 @@ function renderOverview() {
     </div>`;
   }).join('');
 
+  // ── Health banner ─────────────────────────────────────────
+  const healthWarns = [];
+  const offlineNodes = nodes.filter(n => n.status !== 'online');
+  if (offlineNodes.length) healthWarns.push({ sev:'error', msg:`${offlineNodes.length} node${offlineNodes.length>1?'s':''} offline: ${offlineNodes.map(n=>n.node).join(', ')}`, go:"switchView('nodes')" });
+  const highStor = PVE.storage.filter(s => s.total && (s.used/s.total) > 0.85);
+  if (highStor.length) healthWarns.push({ sev:'warning', msg:`${highStor.length} storage pool${highStor.length>1?'s':''} above 85%: ${highStor.map(s=>s.storage).join(', ')}`, go:"switchView('storage')" });
+  const hotNodes = liveNodes.filter(n => (n.statusData.cpu||0)>0.9 || (n.statusData.memory?.used||0)/(n.statusData.memory?.total||1)>0.9);
+  if (hotNodes.length) healthWarns.push({ sev:'warning', msg:`${hotNodes.length} node${hotNodes.length>1?'s':''} with high CPU or memory usage`, go:"switchView('nodes')" });
+  if (errTasks>0) healthWarns.push({ sev:'error', msg:`${errTasks} recent task error${errTasks>1?'s':''}`, go:"switchView('tasks')" });
+
+  const healthBanner = healthWarns.length === 0
+    ? `<div class="health-ok"><span style="font-size:16px">✓</span><strong>All systems healthy</strong></div>`
+    : `<div class="health-warns">${healthWarns.map(w=>`
+        <div style="padding:9px 14px;border-left:3px solid ${w.sev==='error'?'var(--red)':'var(--yellow)'};border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px;cursor:pointer" onclick="${w.go}">
+          <span style="color:${w.sev==='error'?'var(--red)':'var(--yellow)'};font-size:14px;flex-shrink:0">${w.sev==='error'?'✗':'⚠'}</span>
+          <span style="font-size:13px;flex:1">${escHtml(w.msg)}</span>
+          <span style="color:var(--muted);font-size:12px">→</span>
+        </div>`).join('')}</div>`;
+
+  const primaryName = PVE.clusterName || PVE.host?.replace(/https?:\/\//,'').replace(/:\d+$/,'') || 'Primary';
+
   // ── Assemble ──────────────────────────────────────────────
   el.innerHTML = `
+    ${healthBanner}
     <!-- Stats row -->
     <div class="stats-grid" style="margin-bottom:20px">
       <div class="stat-card accent-green"><div class="label">Running VMs &amp; CTs</div><div class="value">${running}</div><div class="sub">${stopped} stopped</div></div>
@@ -4647,7 +4695,7 @@ function renderOverview() {
     </div>
 
     <!-- Aggregate resource gauges -->
-    <div class="section-header" style="margin-bottom:10px"><span class="section-title">Cluster Resources (Primary)</span></div>
+    <div class="section-header" style="margin-bottom:10px"><span class="section-title">Resources — ${escHtml(primaryName)}</span></div>
     <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:22px">
       ${gaugeCard('Average CPU', avgCpu, `${liveNodes.length} node(s) reporting`, 'var(--accent)')}
       ${gaugeCard('Total Memory', memPct, `${fmtBytes(totMemUsed)} / ${fmtBytes(totMemTotal)}`, 'var(--blue)')}
@@ -4757,18 +4805,41 @@ let _ctStatusFilter = 'all';
 let _vmGrouped = localStorage.getItem('pve-vm-group') !== '0'; // default ON
 let _ctGrouped = localStorage.getItem('pve-ct-group') !== '0'; // default ON
 
+function _fpopToggle(menuId) {
+  const menu = document.getElementById(menuId);
+  if (!menu) return;
+  const opening = !menu.classList.contains('open');
+  document.querySelectorAll('.fpop-menu.open').forEach(m => m.classList.remove('open'));
+  if (opening) menu.classList.add('open');
+}
+
+document.addEventListener('click', e => {
+  if (!e.target.closest('.fpop')) {
+    document.querySelectorAll('.fpop-menu.open').forEach(m => m.classList.remove('open'));
+  }
+}, true);
+
+function _fpopRefresh(prefix) {
+  const tagSel = document.getElementById(prefix + '-tag-filter');
+  const grpChk = document.getElementById(prefix + '-group-chk');
+  const grouped = prefix === 'vms' ? _vmGrouped : _ctGrouped;
+  if (grpChk) grpChk.checked = !!grouped;
+  const btn = document.getElementById(prefix + '-fpop-btn');
+  if (!btn) return;
+  const hasTag = tagSel?.value && tagSel.value !== '';
+  btn.classList.toggle('active', !!grouped || !!hasTag);
+}
+
 function _toggleVMGroup() {
   _vmGrouped = !_vmGrouped;
   localStorage.setItem('pve-vm-group', _vmGrouped ? '1' : '0');
-  const btn = document.getElementById('vms-group-btn');
-  if (btn) btn.classList.toggle('active', _vmGrouped);
+  _fpopRefresh('vms');
   renderVMTable();
 }
 function _toggleCTGroup() {
   _ctGrouped = !_ctGrouped;
   localStorage.setItem('pve-ct-group', _ctGrouped ? '1' : '0');
-  const btn = document.getElementById('cts-group-btn');
-  if (btn) btn.classList.toggle('active', _ctGrouped);
+  _fpopRefresh('cts');
   renderCTTable();
 }
 
@@ -4841,6 +4912,7 @@ function _ctFilter(f) {
 }
 
 function renderVMTable(){
+  _fpopRefresh('vms');
   const tagF       = document.getElementById('vms-tag-filter')?.value||'';
   const connFilter = document.getElementById('vms-conn')?.value ?? '_all';
   const baseList   = connFilter === '_all' ? allVMs() :
@@ -4882,6 +4954,7 @@ function renderVMTable(){
 }
 
 function renderCTTable(){
+  _fpopRefresh('cts');
   const tagF       = document.getElementById('cts-tag-filter')?.value||'';
   const connFilter = document.getElementById('cts-conn')?.value ?? '_all';
   const baseList   = connFilter === '_all' ? allCTs() :
