@@ -5423,6 +5423,10 @@ function confirmAction(node,vmid,type,action,connId=''){
 }
 
 async function openMigrateModal(node, vmid, type, connId='') {
+  // '__primary__' is used as the primary cluster's picker value so it isn't confused with
+  // "no cluster selected yet" (empty string), which would re-trigger the cluster picker.
+  if (connId === '__primary__') connId = '';
+
   // Always fetch fresh node lists — cached data can be stale if a node was recently added
   try {
     if (connId) {
@@ -5447,7 +5451,7 @@ async function openMigrateModal(node, vmid, type, connId='') {
   // If called with no connId (e.g. sidebar button), find the first cluster with 2+ nodes
   if (!connId && !node) {
     const allConns = [
-      { id: '', name: 'Primary', nodes: PVE.nodes },
+      { id: '__primary__', name: 'Primary', nodes: PVE.nodes },
       ...extraConns.map(c => ({ id: c.id, name: c.name||c.host, nodes: c.nodes||[] }))
     ];
     const eligible = allConns.filter(c => c.nodes.length >= 2);
@@ -5471,7 +5475,7 @@ async function openMigrateModal(node, vmid, type, connId='') {
       const btn = document.getElementById('modal-confirm-btn');
       btn.textContent = 'Next →'; btn.disabled = false;
       btn.onclick = () => {
-        const picked = document.getElementById('mig-cluster-pick')?.value || '';
+        const picked = document.getElementById('mig-cluster-pick')?.value || '__primary__';
         btn.onclick = confirmModal; btn.textContent = 'Confirm'; btn.disabled = false;
         document.getElementById('modal-bg').classList.remove('open');
         openMigrateModal(undefined, undefined, undefined, picked);
