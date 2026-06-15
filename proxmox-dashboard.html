@@ -3822,8 +3822,52 @@ async function refreshAll() {
     updateAffinityBadge();
     _lastRefreshAt = Date.now();
     _updateRefreshAge();
+    // Fix up mem for QEMU VMs showing 100% — list endpoint returns RSS, /status/current returns balloon value
+    _fixQEMUMemory();
   } catch(e) {
     toast('Refresh failed: '+e.message,'error');
+  }
+}
+
+// Fetches /status/current for running QEMU VMs where mem≈maxmem (list RSS ≠ balloon value).
+// Patches PVE.vms in-place and re-renders if on a VM view. Runs in background after refreshAll.
+async function _fixQEMUMemory() {
+  const toFix = PVE.vms.filter(v =>
+    v.status === 'running' && v.mem && v.maxmem && v.mem >= v.maxmem * 0.99
+  );
+  const extraToFix = extraConns.flatMap(c =>
+    (c.vms||[]).filter(v => v.status==='running' && v.mem && v.maxmem && v.mem >= v.maxmem*0.99)
+  );
+  if (!toFix.length && !extraToFix.length) return;
+
+  let patched = 0;
+  await Promise.all([
+    ...toFix.map(async v => {
+      try {
+        const d = await pveGet(`/api2/json/nodes/${v.node}/qemu/${v.vmid}/status/current`);
+        const s = d.data||{};
+        if (s.mem != null && s.maxmem && s.mem < v.maxmem * 0.99) {
+          v.mem = s.mem; patched++;
+          _vmMemCache[`|${v.node}/${v.vmid}`] = { mem: s.mem, maxmem: s.maxmem, ts: Date.now() };
+        }
+      } catch {}
+    }),
+    ...extraToFix.map(async v => {
+      try {
+        const conn = extraConns.find(c=>c.id===v.connId);
+        if (!conn) return;
+        const d = await connGet(conn, `/api2/json/nodes/${v.node}/qemu/${v.vmid}/status/current`);
+        const s = d.data||{};
+        if (s.mem != null && s.maxmem && s.mem < v.maxmem * 0.99) {
+          v.mem = s.mem; patched++;
+          _vmMemCache[`${v.connId}|${v.node}/${v.vmid}`] = { mem: s.mem, maxmem: s.maxmem, ts: Date.now() };
+        }
+      } catch {}
+    })
+  ]);
+
+  if (patched && (currentView==='vms' || currentView==='overview' || currentView==='containers')) {
+    renderCurrentView();
   }
 }
 
@@ -4121,7 +4165,7 @@ async function loadDetailOverview(item) {
           <div style="margin-top:6px;color:var(--muted);font-size:12px">${cpuDesc}</div>
         </div>
         <div class="info-box">
-          <div class="key">Memory${status.mem >= status.maxmem * 0.99 ? ' <span style="font-size:10px;color:var(--muted);font-weight:400" title="Balloon driver not reporting in-guest usage — value reflects hypervisor allocation">⚠ allocated</span>' : ''}</div>
+          <div class="key">Memory${status.mem >= status.maxmem * 0.99 ? ' <span style="font-size:10px;color:var(--muted);font-weight:400" title="Value reflects full hypervisor RSS allocation — balloon driver may be reporting lower in-guest usage">alloc</span>' : ''}</div>
           <div style="font-size:26px;font-weight:700;color:var(--blue)">${memPct}%</div>
           <div class="gauge-bar" style="margin-top:8px"><div class="gauge-fill ${status.mem >= status.maxmem * 0.99 ? 'low' : gaugeClass(memPct)}" style="width:${Math.min(memPct,100)}%"></div></div>
           <div style="margin-top:6px;color:var(--muted);font-size:12px">${fmtBytes(status.mem)} / ${fmtBytes(status.maxmem)}</div>
@@ -5122,7 +5166,7 @@ function vmRow(x,showType=false){
         <div class="gauge-bar"><div class="gauge-fill ${gaugeClass(parseFloat(cpuPct)||0)}" style="width:${Math.min(parseFloat(cpuPct)||0,100)}%"></div></div>
       </div>
     </td>
-    <td title="${memFullyAllocated?'All RAM allocated to VM — actual in-guest usage unavailable without balloon driver':''}">
+    <td title="${memFullyAllocated?'Hypervisor reports full RSS allocation — fetching balloon value…':''}">
       <div class="gauge-wrap">
         <span style="min-width:36px;text-align:right;font-size:12px;${memFullyAllocated?'color:var(--muted)':''}">${memPct}%${memFullyAllocated?' <span style="font-size:9px">alloc</span>':''}</span>
         <div class="gauge-bar"><div class="gauge-fill ${memFullyAllocated?'low':gaugeClass(memPct)}" style="width:${Math.min(memPct,100)}%;${memFullyAllocated?'opacity:.45':''}"></div></div>
