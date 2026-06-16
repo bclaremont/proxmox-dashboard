@@ -3785,6 +3785,20 @@ async function loadNodes() {
 
 let _lastRefreshAt = 0;
 
+// Health banner acknowledgements — keyed by exact condition string so they auto-clear
+// when the underlying state changes (e.g. a different node goes offline).
+// Uses sessionStorage so acknowledged warnings reset on page reload.
+const _healthAckd = new Set(JSON.parse(sessionStorage.getItem('pcc-health-ack')||'[]'));
+function _healthAck(key) {
+  _healthAckd.add(key);
+  sessionStorage.setItem('pcc-health-ack', JSON.stringify([..._healthAckd]));
+  if (currentView === 'overview') renderOverview();
+}
+function _healthClearAck() {
+  _healthAckd.clear();
+  sessionStorage.removeItem('pcc-health-ack');
+}
+
 function _updateRefreshAge() {
   const el = document.getElementById('last-refresh');
   if (!el || !_lastRefreshAt) return;
@@ -4765,21 +4779,38 @@ function renderOverview() {
   // ── Health banner ─────────────────────────────────────────
   const healthWarns = [];
   const offlineNodes = nodes.filter(n => n.status !== 'online');
-  if (offlineNodes.length) healthWarns.push({ sev:'error', msg:`${offlineNodes.length} node${offlineNodes.length>1?'s':''} offline: ${offlineNodes.map(n=>n.node).join(', ')}`, go:"switchView('nodes')" });
+  const _offKey = 'offline:' + offlineNodes.map(n=>n.node).sort().join(',');
+  if (offlineNodes.length) healthWarns.push({ sev:'error', key:_offKey, msg:`${offlineNodes.length} node${offlineNodes.length>1?'s':''} offline: ${offlineNodes.map(n=>n.node).join(', ')}`, go:"switchView('nodes')" });
   const highStor = PVE.storage.filter(s => s.total && (s.used/s.total) > 0.85);
-  if (highStor.length) healthWarns.push({ sev:'warning', msg:`${highStor.length} storage pool${highStor.length>1?'s':''} above 85%: ${highStor.map(s=>s.storage).join(', ')}`, go:"switchView('storage')" });
+  const _storKey = 'storage:' + highStor.map(s=>s.storage).sort().join(',');
+  if (highStor.length) healthWarns.push({ sev:'warning', key:_storKey, msg:`${highStor.length} storage pool${highStor.length>1?'s':''} above 85%: ${highStor.map(s=>s.storage).join(', ')}`, go:"switchView('storage')" });
   const hotNodes = liveNodes.filter(n => (n.statusData.cpu||0)>0.9 || (n.statusData.memory?.used||0)/(n.statusData.memory?.total||1)>0.9);
-  if (hotNodes.length) healthWarns.push({ sev:'warning', msg:`${hotNodes.length} node${hotNodes.length>1?'s':''} with high CPU or memory usage`, go:"switchView('nodes')" });
-  if (errTasks>0) healthWarns.push({ sev:'error', msg:`${errTasks} recent task error${errTasks>1?'s':''}`, go:"switchView('tasks')" });
+  const _hotKey = 'hot:' + hotNodes.map(n=>n.node).sort().join(',');
+  if (hotNodes.length) healthWarns.push({ sev:'warning', key:_hotKey, msg:`${hotNodes.length} node${hotNodes.length>1?'s':''} with high CPU or memory usage`, go:"switchView('nodes')" });
+  const _taskKey = 'tasks:' + errTasks;
+  if (errTasks>0) healthWarns.push({ sev:'error', key:_taskKey, msg:`${errTasks} recent task error${errTasks>1?'s':''}`, go:"switchView('tasks')" });
+
+  const visibleWarns = healthWarns.filter(w => !_healthAckd.has(w.key));
+  const hiddenCount  = healthWarns.length - visibleWarns.length;
 
   const healthBanner = healthWarns.length === 0
     ? `<div class="health-ok"><span style="font-size:16px">✓</span><strong>All systems healthy</strong></div>`
-    : `<div class="health-warns">${healthWarns.map(w=>`
-        <div style="padding:9px 14px;border-left:3px solid ${w.sev==='error'?'var(--red)':'var(--yellow)'};border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px;cursor:pointer" onclick="${w.go}">
-          <span style="color:${w.sev==='error'?'var(--red)':'var(--yellow)'};font-size:14px;flex-shrink:0">${w.sev==='error'?'✗':'⚠'}</span>
-          <span style="font-size:13px;flex:1">${escHtml(w.msg)}</span>
-          <span style="color:var(--muted);font-size:12px">→</span>
-        </div>`).join('')}</div>`;
+    : visibleWarns.length === 0
+      ? `<div class="health-ok" style="cursor:pointer" onclick="_healthClearAck();renderOverview()">
+           <span style="font-size:16px">✓</span>
+           <strong>All systems healthy</strong>
+           <span style="margin-left:auto;font-size:11px;color:var(--muted)">${hiddenCount} acknowledged warning${hiddenCount>1?'s':''} hidden — click to reset</span>
+         </div>`
+      : `<div class="health-warns">
+          ${visibleWarns.map(w=>`
+            <div style="padding:9px 14px;border-left:3px solid ${w.sev==='error'?'var(--red)':'var(--yellow)'};border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px">
+              <span style="color:${w.sev==='error'?'var(--red)':'var(--yellow)'};font-size:14px;flex-shrink:0">${w.sev==='error'?'✗':'⚠'}</span>
+              <span style="font-size:13px;flex:1;cursor:pointer" onclick="${w.go}">${escHtml(w.msg)}</span>
+              <span style="color:var(--muted);font-size:12px;cursor:pointer;flex-shrink:0" onclick="${w.go}" title="Go to view">→</span>
+              <button onclick="event.stopPropagation();_healthAck('${w.key}')" title="Acknowledge — hide until this specific condition changes" style="background:none;border:none;cursor:pointer;color:var(--muted);font-size:14px;padding:0 2px;line-height:1" onmouseover="this.style.color='var(--text)'" onmouseout="this.style.color='var(--muted)'">×</button>
+            </div>`).join('')}
+          ${hiddenCount ? `<div style="padding:6px 14px;font-size:11px;color:var(--muted);border-top:1px solid var(--border);cursor:pointer" onclick="_healthClearAck();renderOverview()">${hiddenCount} acknowledged warning${hiddenCount>1?'s':''} hidden — click to reset</div>` : ''}
+        </div>`;
 
   const primaryName = PVE.clusterName || PVE.host?.replace(/https?:\/\//,'').replace(/:\d+$/,'') || 'Primary';
 
