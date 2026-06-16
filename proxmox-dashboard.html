@@ -85,7 +85,7 @@
     .nav-item{display:flex;align-items:center;gap:9px;padding:8px 10px;border-radius:var(--radius);cursor:pointer;color:var(--muted);transition:all .15s;border:1px solid transparent;font-size:14px;}
     .sidebar-section .nav-item{padding-left:18px;}
     .nav-item:hover{background:var(--bg3);color:var(--text);}
-    .nav-item.active{background:rgba(249,115,22,.12);border-color:rgba(249,115,22,.3);color:var(--accent);border-left:3px solid var(--accent);padding-left:15px;}
+    .nav-item.active{background:rgba(249,115,22,.2);border-color:rgba(249,115,22,.5);color:#fff;border-left:4px solid var(--accent);padding-left:14px;font-weight:600;}
     .nav-item svg{width:15px;height:15px;flex-shrink:0;}
     .nav-badge{margin-left:auto;background:var(--red);color:#fff;font-size:10px;padding:1px 6px;border-radius:10px;font-weight:700;}
     .nav-sub-header{font-size:9px;text-transform:uppercase;letter-spacing:1.3px;color:var(--muted);padding:10px 10px 2px 18px;pointer-events:none;user-select:none;opacity:.65;}
@@ -148,6 +148,12 @@
     tbody tr:last-child{border-bottom:none;}
     tbody tr:hover{background:var(--bg3);}
     td{padding:11px 14px;vertical-align:middle;font-size:13px;}
+    body.compact-rows td{padding:5px 14px;}
+    .stat-trend{font-size:12px;font-weight:700;margin-left:6px;}
+    .stat-trend.up{color:var(--green);}
+    .stat-trend.down{color:var(--red);}
+    .stat-trend.up-bad{color:var(--red);}
+    .stat-trend.down-good{color:var(--green);}
     /* BADGES */
     .badge{display:inline-flex;align-items:center;gap:5px;padding:3px 8px;border-radius:20px;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.5px;}
     .badge.running{background:rgba(63,185,80,.15);color:var(--green);border:1px solid rgba(63,185,80,.3);}
@@ -560,6 +566,7 @@
   <span id="last-refresh"></span>
   <span id="topbar-uptime" style="display:none"></span>
   <div class="topbar-sep"></div>
+  <button class="btn small" id="density-btn" onclick="toggleDensity()" title="Toggle compact/comfortable row density">⇕</button>
   <button class="btn small" onclick="toggleTheme()" title="Toggle light/dark mode">◐</button>
   <div id="topbar-user">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:13px;height:13px;flex-shrink:0"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg>
@@ -4686,6 +4693,14 @@ function _timeAgo(ts) {
   return Math.floor(d/86400000)+'d ago';
 }
 
+let _prevOverviewStats = null;
+function _trendBadge(cur, prev, higherIsBad=false) {
+  if (prev === null || prev === undefined || cur === prev) return '';
+  const up = cur > prev;
+  const cls = up ? (higherIsBad ? 'up-bad' : 'up') : (higherIsBad ? 'down-good' : 'down');
+  return `<span class="stat-trend ${cls}">${up ? '▲' : '▼'}${Math.abs(cur-prev)}</span>`;
+}
+
 function renderOverview() {
   const el = document.getElementById('overview-content');
   if (!el) return;
@@ -4789,16 +4804,22 @@ function renderOverview() {
 
   const primaryName = PVE.clusterName || PVE.host?.replace(/https?:\/\//,'').replace(/:\d+$/,'') || 'Primary';
 
+  // ── Trends vs previous render ─────────────────────────────
+  const p = _prevOverviewStats;
+  const vmCount = allVMs().filter(v=>!v.template).length;
+  const ctCount = allCTs().length;
+  _prevOverviewStats = { running, errTasks, vmCount, ctCount };
+
   // ── Assemble ──────────────────────────────────────────────
   el.innerHTML = `
     ${healthBanner}
     <!-- Stats row -->
     <div class="stats-grid" style="margin-bottom:20px">
-      <div class="stat-card accent-green"><div class="label">Running VMs &amp; CTs</div><div class="value">${running}</div><div class="sub">${stopped} stopped</div></div>
-      <div class="stat-card accent-blue"><div class="label">VMs</div><div class="value">${allVMs().filter(v=>!v.template).length}</div><div class="sub">${allVMs().filter(v=>v.template).length} template${allVMs().filter(v=>v.template).length!==1?'s':''}</div></div>
-      <div class="stat-card accent-purple"><div class="label">Containers</div><div class="value">${allCTs().length}</div><div class="sub">LXC</div></div>
+      <div class="stat-card accent-green"><div class="label">Running VMs &amp; CTs</div><div class="value">${running}${_trendBadge(running,p?.running)}</div><div class="sub">${stopped} stopped</div></div>
+      <div class="stat-card accent-blue"><div class="label">VMs</div><div class="value">${vmCount}${_trendBadge(vmCount,p?.vmCount)}</div><div class="sub">${allVMs().filter(v=>v.template).length} template${allVMs().filter(v=>v.template).length!==1?'s':''}</div></div>
+      <div class="stat-card accent-purple"><div class="label">Containers</div><div class="value">${ctCount}${_trendBadge(ctCount,p?.ctCount)}</div><div class="sub">LXC</div></div>
       <div class="stat-card accent-orange"><div class="label">Nodes</div><div class="value">${nodes.length}</div><div class="sub">${connCount} cluster${connCount!==1?'s':''}/host${connCount!==1?'s':''}</div></div>
-      <div class="stat-card accent-yellow"><div class="label">Task Errors</div><div class="value" style="color:${errTasks>0?'var(--red)':'var(--green)'}">${errTasks}</div><div class="sub">recent</div></div>
+      <div class="stat-card accent-yellow"><div class="label">Task Errors</div><div class="value" style="color:${errTasks>0?'var(--red)':'var(--green)'}">${errTasks}${_trendBadge(errTasks,p?.errTasks,true)}</div><div class="sub">recent</div></div>
       <div class="stat-card"><div class="label">Storage Pools</div><div class="value" style="color:var(--teal)">${PVE.storage.length}</div><div class="sub">primary cluster</div></div>
     </div>
 
@@ -6553,6 +6574,19 @@ function toggleTheme() {
 (function() {
   const saved = localStorage.getItem('pve-theme');
   if (saved) document.documentElement.setAttribute('data-theme', saved);
+})();
+
+function toggleDensity() {
+  const compact = document.body.classList.toggle('compact-rows');
+  localStorage.setItem('pcc-density', compact ? 'compact' : 'comfortable');
+  const btn = document.getElementById('density-btn');
+  if (btn) btn.title = compact ? 'Switch to comfortable rows' : 'Switch to compact rows';
+}
+// Restore saved density on load
+(function() {
+  if (localStorage.getItem('pcc-density') === 'compact') {
+    document.body.classList.add('compact-rows');
+  }
 })();
 
 // ── COMMAND PALETTE ──────────────────────────────────────
