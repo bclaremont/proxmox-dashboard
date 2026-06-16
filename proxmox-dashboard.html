@@ -286,8 +286,10 @@
     ::-webkit-scrollbar-track{background:var(--bg);}
     ::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px;}
     .clickable-row{cursor:pointer;}
-    .clickable-row:hover td{background:rgba(249,115,22,.07)!important;}
+    .clickable-row:hover td{background:rgba(249,115,22,.11)!important;}
     .clickable-row:hover td:first-child{box-shadow:inset 3px 0 0 var(--accent);}
+    .clickable-row:hover td:last-child::after{content:'›';position:absolute;right:10px;top:50%;transform:translateY(-50%);color:var(--accent);font-size:18px;opacity:.6;pointer-events:none;}
+    .clickable-row td:last-child{position:relative;}
     .info-box{background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius);padding:12px 16px;margin-bottom:14px;font-size:13px;line-height:1.7;}
     .info-box .key{color:var(--muted);font-size:12px;}
     .two-col{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:14px;}
@@ -298,8 +300,8 @@
     #search-wrap{position:relative;display:flex;align-items:center;}
     #search-icon{position:absolute;left:10px;color:var(--muted);pointer-events:none;width:14px;height:14px;}
     #search-kbd{position:absolute;right:10px;background:var(--bg2);border:1px solid var(--border);border-radius:4px;padding:1px 5px;font-size:10px;color:var(--muted);pointer-events:none;transition:opacity .15s;}
-    #global-search{background:var(--bg3);border:1px solid var(--border);border-radius:20px;color:var(--text);padding:6px 56px 6px 30px;font-family:var(--font);font-size:13px;outline:none;width:200px;transition:all .2s;cursor:pointer;}
-    #global-search:focus{border-color:var(--accent);width:200px;background:var(--bg2);}
+    #global-search{background:var(--bg3);border:1px solid var(--border);border-radius:20px;color:var(--text);padding:6px 56px 6px 30px;font-family:var(--font);font-size:13px;outline:none;width:200px;transition:width .25s ease,border-color .15s,background .15s;cursor:pointer;}
+    #global-search:focus{border-color:var(--accent);width:340px;background:var(--bg2);}
     #global-search:focus ~ #search-kbd{opacity:0;}
     #search-results{display:none;}
     /* COMMAND PALETTE */
