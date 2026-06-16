@@ -2637,7 +2637,7 @@ function _renderVMCards(items) {
           ? `<button class="btn small warning" onclick="confirmAction('${x.node}','${x.vmid}','${x.type}','shutdown','${cid}')" title="Shutdown">⏻</button>
              <button class="btn small danger" onclick="confirmAction('${x.node}','${x.vmid}','${x.type}','stop','${cid}')" title="Force stop">■</button>`
           : `<button class="btn small success" onclick="vmAction('${x.node}','${x.vmid}','${x.type}','start','${cid}')" title="Start">▶</button>`}
-        ${running?`<button class="btn small" onclick="openConsole('${x.node}','${x.vmid}','${x.type}')" title="Console">⌨</button>`:''}
+        ${running?`<button class="btn small" onclick="openConsole('${x.node}','${x.vmid}','${x.type}','${cid}')" title="Console">⌨</button>`:''}
         <button class="btn small" onclick="openAddVMAlertModal('${x.vmid}','${x.node}','${escHtml(x.name||String(x.vmid))}','${cid}')" title="Add performance alert">🔔</button>
       </div>
       ${since?`<div style="font-size:10px;color:var(--muted);margin-top:5px" title="Running since ${since}">⬆ ${fmtUptime(x.uptime)}</div>`:''}
@@ -4021,7 +4021,7 @@ async function openDetail(item) {
        <button class="btn small" onclick="confirmAction('${item.node}','${item.vmid}','${item.type}','reboot','${cid}')">Reboot</button>`
     : `<button class="btn small success" onclick="vmAction('${item.node}','${item.vmid}','${item.type}','start','${cid}')">▶ Start</button>`;
   document.getElementById('detail-actions').innerHTML += running
-    ? `<button class="btn small" onclick="openConsole('${item.node}','${item.vmid}','${item.type}')">⌨ Console</button>` : '';
+    ? `<button class="btn small" onclick="openConsole('${item.node}','${item.vmid}','${item.type}','${cid}')">⌨ Console</button>` : '';
   document.getElementById('detail-actions').innerHTML += `<button class="btn small" onclick="openCloneModal('${item.node}','${item.vmid}','${item.type}','${(item.name||'').replace(/['"]/g,'')}','${cid}')">⎘ Clone</button>`;
   document.getElementById('detail-actions').innerHTML += `<button class="btn small" onclick="openAddVMAlertModal('${item.vmid}','${item.node}','${(item.name||String(item.vmid)).replace(/['"]/g,'')}','${cid}')" title="Add performance alert rule">🔔 Alert</button>`;
   if (!running && (item.type==='vm'||item.type==='qemu'))
@@ -5158,7 +5158,7 @@ function vmRowOverview(x) {
           ?`<button class="btn small warning" onclick="confirmAction('${x.node}','${x.vmid}','${x.type}','shutdown','${cid}')" title="Shutdown">⏻</button>
              <button class="btn small danger"  onclick="confirmAction('${x.node}','${x.vmid}','${x.type}','stop','${cid}')"     title="Force stop">■</button>`
           :`<button class="btn small success"  onclick="vmAction('${x.node}','${x.vmid}','${x.type}','start','${cid}')"         title="Start">▶</button>`}
-        ${running?`<button class="btn small" onclick="openConsole('${x.node}','${x.vmid}','${x.type||typeVal}')" title="Console">⌨</button>`:''}
+        ${running?`<button class="btn small" onclick="openConsole('${x.node}','${x.vmid}','${x.type||typeVal}','${cid}')" title="Console">⌨</button>`:''}
       </div>
     </td>
   </tr>`;
