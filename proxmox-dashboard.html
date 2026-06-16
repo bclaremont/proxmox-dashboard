@@ -6778,7 +6778,7 @@ async function openConsole(node, vmid, type, connId) {
       // context user which rejects API token IDs (user@realm!token) — a hard PVE
       // limitation. termproxy skips that call and works with both ticket and token auth.
       // termproxy speaks a simple framing protocol (not RFB), so we use shell-console.html.
-      const res   = await post(`/api2/json/nodes/${node}/termproxy`, { websocket: 1 });
+      const res   = await post(`/api2/json/nodes/${node}/termproxy`, {});
       const wsUrl = _buildVncWsUrl(conn, node, 'node', null, 'vncwebsocket', res.data.port, res.data.ticket);
       const url   = `/shell-console.html?ws=${encodeURIComponent(wsUrl)}&label=${encodeURIComponent(label)}&user=${encodeURIComponent(res.data.user||'')}&ticket=${encodeURIComponent(res.data.ticket||'')}`;
       window.open(url, `pcc-shell-${node}`, 'width=1024,height=768,noopener');
