@@ -4048,7 +4048,7 @@ async function openNodeDetail(nodeData) {
   const online = nodeData.status==='online'||(nodeData.statusData&&Object.keys(nodeData.statusData).length>0);
   document.getElementById('detail-status').innerHTML = statusBadge(online?'online':'offline');
   document.getElementById('detail-actions').innerHTML = `
-    <button class="btn small" onclick="openConsole('${nodeData.node}','','node')">⌨ Shell</button>
+    <button class="btn small" onclick="openConsole('${nodeData.node}','','node','${nodeData.connId||''}')">⌨ Shell</button>
     <button class="btn small warning" onclick="openDrainNodeModal(${JSON.stringify(nodeData).replace(/"/g,'&quot;')})">🔧 Drain</button>`;
   // Show node-only tabs, hide VM-only tabs
   document.querySelectorAll('.dtab').forEach(t=>{
@@ -6764,7 +6764,10 @@ function _findConnForNode(nodeName) {
 }
 
 async function openConsole(node, vmid, type, connId) {
-  const conn  = connId ? resolveConn(connId) : _findConnForNode(node);
+  // connId=''        → caller explicitly says primary cluster (skip _findConnForNode)
+  // connId=undefined → not passed (node shell path) → guess from node name
+  const conn = (connId === undefined) ? _findConnForNode(node)
+             : (connId ? resolveConn(connId) : null);
   const post  = conn ? (p, d) => connPost(conn, p, d) : pvePost;
   const ep    = (type === 'qemu' || type === 'vm') ? 'qemu' : (type === 'lxc' || type === 'ct') ? 'lxc' : 'node';
   const label = ep === 'node' ? `shell — ${node}` : `${ep.toUpperCase()} ${vmid} (${node})`;
