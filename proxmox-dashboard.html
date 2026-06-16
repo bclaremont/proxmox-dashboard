@@ -471,7 +471,7 @@
     .tm-err{background:var(--red)!important;animation:none!important;}
     @media(max-width:900px){#app{grid-template-columns:1fr;}#sidebar{display:none;}#detail-panel{width:100%;right:-100% !important;}#detail-panel.open{right:0 !important;}}
     /* WORLD MAP */
-    #world-map{height:480px;border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;z-index:1;}
+    #world-map{height:480px;border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;z-index:1;background:var(--bg2);}
     .leaflet-popup-content-wrapper{background:var(--bg2);border:1px solid var(--border);color:var(--text);box-shadow:0 4px 16px rgba(0,0,0,.4);border-radius:var(--radius);}
     .leaflet-popup-tip{background:var(--bg2);}
     .leaflet-popup-close-button{color:var(--muted)!important;}
@@ -937,26 +937,9 @@
         <div style="display:flex;gap:6px">
           <button class="btn small primary" onclick="openSetLocationModal()">📍 Set Locations</button>
           <button class="btn small" onclick="renderWorldMap()">Refresh</button>
-          <button class="btn small" id="wm-revoke-btn" onclick="_wmRevoke()" style="display:none" title="Disable map tiles and reset consent">🚫 Disable tiles</button>
         </div>
       </div>
-      <!-- Consent gate — shown before any tiles are fetched -->
-      <div id="world-map-consent" style="display:none">
-        <div class="empty-state" style="padding:60px 24px">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" width="52" height="52"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
-          <div class="es-title">Enable World Map</div>
-          <div class="es-msg">
-            This view loads map tiles from <strong style="color:var(--text)">tile.openstreetmap.de</strong>,
-            operated by <a href="https://www.fossgis.de" target="_blank" style="color:var(--accent)">FOSSGIS e.V.</a> (Germany).
-            Your browser will connect to their servers to display the map background.
-            <br><br>
-            Tile data is © <a href="https://www.openstreetmap.org/copyright" target="_blank" style="color:var(--accent)">OpenStreetMap contributors</a> (ODbL).
-          </div>
-          <button class="btn primary" onclick="_wmConsent()" style="margin-top:8px">🗺 Load Map</button>
-          <div style="font-size:11px;color:var(--muted);margin-top:8px">Your preference is saved locally and can be revoked at any time.</div>
-        </div>
-      </div>
-      <div id="world-map" style="display:none"></div>
+      <div id="world-map"></div>
       <div id="world-map-legend" style="margin-top:16px"></div>
     </div>
 
@@ -4663,18 +4646,7 @@ function switchView(view) {
   if(view==='uptime') renderUptimeReport();
   if(view==='sdn') loadSDN();
   if(view==='connections') renderConnections();
-  if(view==='worldmap') {
-    if (localStorage.getItem('pcc-map-consent') === '1') {
-      document.getElementById('world-map-consent').style.display = 'none';
-      document.getElementById('world-map').style.display = '';
-      document.getElementById('wm-revoke-btn').style.display = '';
-      initWorldMap(); renderWorldMap();
-    } else {
-      document.getElementById('world-map-consent').style.display = '';
-      document.getElementById('world-map').style.display = 'none';
-      document.getElementById('wm-revoke-btn').style.display = 'none';
-    }
-  }
+  if(view==='worldmap') { initWorldMap(); renderWorldMap(); }
   if(view==='subscriptions') loadSubscriptions();
   if(view==='tfa') loadTFA();
   if(view==='tags') loadTagsView();
@@ -13686,33 +13658,11 @@ function _mapConns() {
 }
 
 // Map tile consent helpers — tiles only load after explicit user consent (GDPR)
-function _wmConsent() {
-  localStorage.setItem('pcc-map-consent', '1');
-  document.getElementById('world-map-consent').style.display = 'none';
-  document.getElementById('world-map').style.display = '';
-  document.getElementById('wm-revoke-btn').style.display = '';
-  initWorldMap();
-  renderWorldMap();
-}
-
-function _wmRevoke() {
-  localStorage.removeItem('pcc-map-consent');
-  if (worldMap) { worldMap.remove(); worldMap = null; }
-  document.getElementById('world-map').style.display = 'none';
-  document.getElementById('world-map-consent').style.display = '';
-  document.getElementById('wm-revoke-btn').style.display = 'none';
-  toast('Map tiles disabled — consent cleared', 'info');
-}
 
 function initWorldMap() {
   if (worldMap) return;
   if (typeof L === 'undefined') return;
   worldMap = L.map('world-map', { zoomControl:true }).setView([30, 10], 2);
-  // EU-hosted tile server: FOSSGIS e.V. (Germany) — tile.openstreetmap.de
-  L.tileLayer('https://tile.openstreetmap.de/{z}/{x}/{y}.png', {
-    attribution:'© <a href="https://www.openstreetmap.org/copyright" target="_blank">OpenStreetMap contributors</a> | Tiles: <a href="https://www.fossgis.de" target="_blank">FOSSGIS e.V.</a>',
-    maxZoom:18
-  }).addTo(worldMap);
 }
 
 function renderWorldMap() {
