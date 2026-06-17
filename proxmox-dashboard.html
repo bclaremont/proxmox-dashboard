@@ -3955,16 +3955,17 @@ async function loadSyslog() {
     // First fetch: get entries + total count in one request
     const first = await get(`/api2/json/nodes/${node}/syslog?limit=${limit}`);
     const total = first.total || 0;
+    const firstLen = (first.data||[]).length;
     let rawEntries;
     if (total > limit) {
       // More entries exist — fetch the tail
       const start = total - limit;
       const tail = await get(`/api2/json/nodes/${node}/syslog?limit=${limit}&start=${start}`);
       rawEntries = tail.data || [];
-      if (statusEl) statusEl.textContent = `${node}: last ${rawEntries.length.toLocaleString()} of ${total.toLocaleString()} entries`;
+      if (statusEl) statusEl.textContent = `${node}: last ${rawEntries.length} of ${total} total [dbg: first=${firstLen}]`;
     } else {
       rawEntries = first.data || [];
-      if (statusEl) statusEl.textContent = `${node}: ${rawEntries.length.toLocaleString()} entries${total ? '' : ' (total unknown)'}`;
+      if (statusEl) statusEl.textContent = `${node}: ${rawEntries.length} entries, total=${total} [dbg: first=${firstLen}]`;
     }
     rawSyslog = rawEntries;
     filterSyslog();
