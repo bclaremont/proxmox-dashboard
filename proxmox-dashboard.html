@@ -2581,6 +2581,7 @@ let vmViewMode   = localStorage.getItem('pve-vm-view')||'table';
 let ctViewMode   = localStorage.getItem('pve-ct-view')||'table';
 let nodeViewMode = localStorage.getItem('pve-node-view')||'cards';
 let _nodeSort = 'node', _nodeSortDir = 1;
+const _nodeHistory = {}; // node key → [{cpu, mem}, ...] ring-buffer for sparklines
 
 function setVMView(mode) {
   vmViewMode = mode;
@@ -3786,6 +3787,7 @@ async function refreshExtraConn(conn) {
       ns.push({...n, statusData:s, connId:conn.id});
     }));
     conn.vms=vms; conn.containers=cts; conn.nodeStatuses=ns;
+    ns.forEach(n => { _recordNodeHist(conn.id+':'+n.node, _nodeRowData(n)); });
     conn.status='connected'; conn.error='';
   } catch(e) { conn.status='error'; conn.error=e.message; }
 }
@@ -3834,7 +3836,7 @@ function _updateRefreshAge() {
   const min = Math.floor(sec / 60);
   el.textContent = `${min}m ago`;
 }
-setInterval(_updateRefreshAge, 10000);
+setInterval(_updateRefreshAge, 1000);
 
 async function refreshAll() {
   if (!PVE.host) return;
@@ -3851,6 +3853,7 @@ async function refreshAll() {
       nodeStats.push({...n,statusData:status});
     }));
     PVE.vms=allVMs; PVE.containers=allCTs; PVE.nodeStatuses=nodeStats;
+    nodeStats.forEach(n => { _recordNodeHist(n.node, _nodeRowData(n)); });
     await Promise.all([loadTasks(), loadStorageBackground(), loadUpdatesBackground(),
       ...extraConns.map(c => refreshExtraConn(c))]);
     renderCurrentView();
@@ -5328,6 +5331,28 @@ function _nodeRowData(n) {
            uptime: s.uptime || n.uptime || 0, pveversion: s.pveversion || n.pveversion || '—' };
 }
 
+function _recordNodeHist(key, d) {
+  const h = (_nodeHistory[key] = _nodeHistory[key] || []);
+  h.push({cpu: d.cpuPct, mem: d.memPct});
+  if (h.length > 20) h.shift();
+}
+
+function _sparkSVG(key, w, h) {
+  const hist = _nodeHistory[key];
+  if (!hist || hist.length < 2) return `<svg width="${w}" height="${h}"></svg>`;
+  const line = (prop, color) => {
+    const vals = hist.map(p => p[prop]);
+    const max = Math.max(...vals, 5); // floor at 5% so idle nodes still show shape
+    const pts = vals.map((v, i) => {
+      const x = ((i / (vals.length - 1)) * w).toFixed(1);
+      const y = (h - (v / max) * (h - 2) - 1).toFixed(1);
+      return `${x},${y}`;
+    }).join(' ');
+    return `<polyline points="${pts}" fill="none" stroke="${color}" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"/>`;
+  };
+  return `<svg width="${w}" height="${h}" style="vertical-align:middle;overflow:visible" title="CPU (orange) / RAM (blue) — last ${hist.length} polls">${line('cpu','var(--accent)')}${line('mem','var(--blue)')}</svg>`;
+}
+
 function _renderNodeTableView(flatNodes, multiCluster) {
   // Sort
   const sorted = [...flatNodes].sort((a, b) => {
@@ -5356,6 +5381,7 @@ function _renderNodeTableView(flatNodes, multiCluster) {
     const memStr  = d.memPct.toFixed(0) + '%';
     const memFull = `${fmtBytes(d.memUsed)} / ${fmtBytes(d.memTot)}`;
     const maint   = isMaintenanceMode(n.node);
+    const sparkKey = n.connId ? n.connId+':'+n.node : n.node;
     return `<tr style="cursor:pointer" onclick="openNodeDetail(${JSON.stringify(n).replace(/"/g,'&quot;')})">
       <td><strong>${escHtml(n.node)}</strong>${maint?' <span class="badge warning" style="font-size:9px">MAINT</span>':''}</td>
       ${multiCluster ? `<td style="color:var(--muted)">${escHtml(n._cluster)}</td>` : ''}
@@ -5365,6 +5391,7 @@ function _renderNodeTableView(flatNodes, multiCluster) {
       <td style="color:var(--muted)">${fmtUptime(d.uptime)}</td>
       <td style="color:var(--muted)">${d.vmCount}</td>
       <td style="color:var(--muted)">${escHtml(d.pveversion)}</td>
+      <td>${_sparkSVG(sparkKey, 60, 20)}</td>
     </tr>`;
   }).join('');
 
@@ -5378,8 +5405,9 @@ function _renderNodeTableView(flatNodes, multiCluster) {
       ${th('uptime','Uptime')}
       ${th('vms','VMs/CTs')}
       <th>PVE Version</th>
+      <th title="CPU (orange) / RAM (blue) trend over last 20 polls">Trend</th>
     </tr></thead>
-    <tbody>${rows || '<tr><td colspan="8" class="empty">No nodes</td></tr>'}</tbody>
+    <tbody>${rows || '<tr><td colspan="9" class="empty">No nodes</td></tr>'}</tbody>
   </table></div>`;
 }
 
