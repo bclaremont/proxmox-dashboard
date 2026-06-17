@@ -583,8 +583,9 @@ app.all('/proxy/:clusterId/*', authMiddleware, (req, res) => {
     return res.status(500).json({ error: 'Cluster has an invalid host URL' });
   }
 
-  const targetPath = '/' + (req.params[0] || '');
-  const search     = req._parsedUrl?.search || '';
+  // Extract PVE path + query string from originalUrl — strip /proxy/<clusterId> prefix.
+  // Using originalUrl avoids relying on req._parsedUrl which may not be populated.
+  const pveRelPath = req.originalUrl.replace(/^\/proxy\/[^/]+/, '') || '/';
   const isHttps    = targetUrl.protocol === 'https:';
   const transport  = isHttps ? https : http;
 
@@ -607,7 +608,7 @@ app.all('/proxy/:clusterId/*', authMiddleware, (req, res) => {
   const options = {
     hostname: targetUrl.hostname,
     port:     parseInt(targetUrl.port) || (isHttps ? 443 : 80),
-    path:     targetPath + search,
+    path:     pveRelPath,
     method:   req.method,
     headers,
     rejectUnauthorized: false,  // PVE uses self-signed certs on LAN/WireGuard

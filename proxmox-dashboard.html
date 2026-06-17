@@ -3952,19 +3952,19 @@ async function loadSyslog() {
   if (statusEl) statusEl.textContent = '';
   try {
     const limit = parseInt(document.getElementById('syslog-limit')?.value || '500', 10);
-    const head  = await get(`/api2/json/nodes/${node}/syslog?limit=1`);
-    const total = head.total || 0;
+    // First fetch: get entries + total count in one request
+    const first = await get(`/api2/json/nodes/${node}/syslog?limit=${limit}`);
+    const total = first.total || 0;
     let rawEntries;
-    if (total > 0) {
-      const start = Math.max(0, total - limit);
-      const d = await get(`/api2/json/nodes/${node}/syslog?limit=${limit}&start=${start}`);
-      rawEntries = d.data || [];
-      if (statusEl) statusEl.textContent = `Showing last ${rawEntries.length.toLocaleString()} of ${total.toLocaleString()} total entries`;
+    if (total > limit) {
+      // More entries exist — fetch the tail
+      const start = total - limit;
+      const tail = await get(`/api2/json/nodes/${node}/syslog?limit=${limit}&start=${start}`);
+      rawEntries = tail.data || [];
+      if (statusEl) statusEl.textContent = `${node}: last ${rawEntries.length.toLocaleString()} of ${total.toLocaleString()} entries`;
     } else {
-      // total not returned by this Proxmox version — fetch without start (oldest-first fallback)
-      const d = await get(`/api2/json/nodes/${node}/syslog?limit=${limit}`);
-      rawEntries = d.data || [];
-      if (statusEl) statusEl.textContent = `Showing ${rawEntries.length.toLocaleString()} entries`;
+      rawEntries = first.data || [];
+      if (statusEl) statusEl.textContent = `${node}: ${rawEntries.length.toLocaleString()} entries${total ? '' : ' (total unknown)'}`;
     }
     rawSyslog = rawEntries;
     filterSyslog();
