@@ -1094,6 +1094,12 @@
         <div style="display:flex;gap:6px;align-items:center">
           <select class="conn-sel" id="syslog-conn" style="width:140px;padding:5px 8px;font-size:13px" onchange="loadSyslog()"><option value="">Primary</option></select>
           <select id="syslog-node" style="width:140px;padding:5px 8px;font-size:13px" onchange="loadSyslog()"></select>
+          <select id="syslog-limit" style="width:90px;padding:5px 8px;font-size:13px" onchange="loadSyslog()">
+            <option value="500">500 lines</option>
+            <option value="1000">1 000</option>
+            <option value="2000">2 000</option>
+            <option value="5000">5 000</option>
+          </select>
           <input id="syslog-search" type="text" placeholder="Filter…" style="width:150px;padding:5px 10px;font-size:13px" oninput="filterSyslog()" />
           <button class="btn small" onclick="loadSyslog()">Refresh</button>
         </div>
@@ -3938,7 +3944,8 @@ async function loadSyslog() {
   document.getElementById('syslog-body').innerHTML='<tr><td colspan="2" class="empty"><span class="loading"></span> Loading…</td></tr>';
   try {
     // GET /api2/json/nodes/{node}/syslog
-    const d = await get(`/api2/json/nodes/${node}/syslog?limit=500`);
+    const limit = document.getElementById('syslog-limit')?.value || '500';
+    const d = await get(`/api2/json/nodes/${node}/syslog?limit=${limit}`);
     rawSyslog = d.data||[];
     filterSyslog();
   } catch(e) {
