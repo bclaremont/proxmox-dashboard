@@ -25,6 +25,7 @@ const JWT_SECRET = process.env.JWT_SECRET;
 const DB_PATH    = process.env.DB_PATH || '/opt/pcc/data/pcc.db';
 
 if (!JWT_SECRET) { console.error('FATAL: JWT_SECRET not set in /opt/pcc/.env'); process.exit(1); }
+if (JWT_SECRET.length < 32) { console.error('FATAL: JWT_SECRET must be at least 32 characters'); process.exit(1); }
 
 // ── DATABASE ──────────────────────────────────────────────
 
@@ -241,6 +242,27 @@ function audit(username, method, p, clusterId, status, detail) {
   } catch { /* non-fatal */ }
 }
 
+// Block SSRF: cluster hosts must use http/https and must not point at loopback,
+// link-local, or unspecified addresses. Admins configure these, but defence-in-depth
+// prevents a compromised admin account from using PCC as a pivot to internal services.
+const _SSRF_DENY = [
+  /^localhost$/i,
+  /^127\./,
+  /^0\.0\.0\.0$/,
+  /^::1$/,
+  /^0::/,
+  /^169\.254\./,           // link-local
+  /^::ffff:/i,             // IPv4-mapped
+];
+function validateClusterHost(raw) {
+  let u;
+  try { u = new URL(raw); } catch { return 'Invalid URL'; }
+  if (!['http:', 'https:'].includes(u.protocol)) return 'Host must use http or https';
+  const h = u.hostname;
+  if (_SSRF_DENY.some(re => re.test(h))) return `Host '${h}' is not allowed`;
+  return null; // ok
+}
+
 function sanitiseBody(body) {
   if (!body || typeof body !== 'object') return null;
   const s = { ...body };
@@ -254,6 +276,18 @@ function sanitiseBody(body) {
 
 const app = express();
 app.disable('x-powered-by'); // don't reveal Express in response headers
+
+// ── SECURITY HEADERS ──────────────────────────────────────
+app.use((req, res, next) => {
+  res.set('X-Content-Type-Options', 'nosniff');
+  res.set('X-Frame-Options', 'DENY');
+  res.set('Referrer-Policy', 'no-referrer');
+  // Strict CSP for API responses — the SPA HTML file is served as a static file
+  // and its inline scripts pre-date a nonce-based CSP; API routes never return HTML
+  // so this header is safe to apply globally.
+  res.set('Content-Security-Policy', "default-src 'none'; frame-ancestors 'none'");
+  next();
+});
 
 // Body parsers applied only to non-proxy routes so the proxy can stream raw bodies
 const parseJson = express.json();
@@ -472,6 +506,8 @@ app.post('/api/clusters', authMiddleware, adminOnly, bodyParser, (req, res) => {
   const { name, host, auth_type, auth_value, sort_order } = req.body || {};
   if (!name || !host || !auth_value)
     return res.status(400).json({ error: 'name, host and auth_value are required' });
+  const hostErr = validateClusterHost(host.trim());
+  if (hostErr) return res.status(400).json({ error: hostErr });
   const id = 'cluster-' + Date.now();
   db.prepare('INSERT INTO clusters (id, name, host, auth_type, auth_value, sort_order) VALUES (?,?,?,?,?,?)')
     .run(id, name.trim(), host.trim().replace(/\/$/, ''), auth_type || 'token', encryptValue(auth_value.trim()), parseInt(sort_order) || 0);
@@ -483,6 +519,10 @@ app.put('/api/clusters/:id', authMiddleware, adminOnly, bodyParser, (req, res) =
   const cluster = db.prepare('SELECT * FROM clusters WHERE id = ?').get(req.params.id);
   if (!cluster) return res.status(404).json({ error: 'Cluster not found' });
   const { name, host, auth_type, auth_value, sort_order } = req.body || {};
+  if (host) {
+    const hostErr = validateClusterHost(host.trim());
+    if (hostErr) return res.status(400).json({ error: hostErr });
+  }
   db.prepare(`UPDATE clusters SET
     name       = COALESCE(?, name),
     host       = COALESCE(?, host),
@@ -602,7 +642,7 @@ app.all('/proxy/:clusterId/*', authMiddleware, (req, res) => {
 
   // Audit write operations (best-effort, body not yet consumed)
   if (['POST', 'PUT', 'DELETE'].includes(req.method)) {
-    audit(req.user.username, req.method, targetPath, cluster.id, 0, null);
+    audit(req.user.username, req.method, pveRelPath, cluster.id, 0, null);
   }
 
   const options = {
@@ -624,7 +664,8 @@ app.all('/proxy/:clusterId/*', authMiddleware, (req, res) => {
   });
 
   proxyReq.on('error', err => {
-    if (!res.headersSent) res.status(502).json({ error: 'Cannot reach cluster: ' + err.message });
+    console.error(`[proxy] ${cluster.id} ${req.method} ${pveRelPath}: ${err.message}`);
+    if (!res.headersSent) res.status(502).json({ error: 'Cannot reach cluster — check host connectivity' });
   });
 
   req.pipe(proxyReq);  // stream body directly — works for both form data and file uploads
