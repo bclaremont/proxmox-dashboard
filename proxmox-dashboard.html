@@ -1102,6 +1102,7 @@
           </select>
           <input id="syslog-search" type="text" placeholder="Filter…" style="width:150px;padding:5px 10px;font-size:13px" oninput="filterSyslog()" />
           <button class="btn small" onclick="loadSyslog()">Refresh</button>
+          <span id="syslog-status" style="font-size:12px;color:var(--muted);margin-left:4px"></span>
         </div>
       </div>
       <div class="table-wrap" style="max-height:600px;overflow-y:auto">
@@ -3936,20 +3937,35 @@ async function loadSyslog() {
   const conn = getViewConn('syslog-conn');
   const get = conn ? (p=>connGet(conn,p)) : pveGet;
   const nodes = conn ? (conn.nodes||[]) : PVE.nodes;
-  // Repopulate node selector
+  // Repopulate node selector while preserving current selection
   const nodeEl = document.getElementById('syslog-node');
-  if (nodeEl) nodeEl.innerHTML = nodes.map(n=>`<option value="${n.node}">${n.node}</option>`).join('');
+  const prevNode = nodeEl && nodeEl.value;
+  if (nodeEl) {
+    nodeEl.innerHTML = nodes.map(n=>`<option value="${n.node}">${n.node}</option>`).join('');
+    if (prevNode && nodes.some(n=>n.node===prevNode)) nodeEl.value = prevNode;
+  }
   const node = (nodeEl&&nodeEl.value) || (nodes[0]&&nodes[0].node);
   if (!node) return;
   document.getElementById('syslog-body').innerHTML='<tr><td colspan="2" class="empty"><span class="loading"></span> Loading…</td></tr>';
+  const statusEl = document.getElementById('syslog-status');
+  if (statusEl) statusEl.textContent = '';
   try {
-    // GET /api2/json/nodes/{node}/syslog — fetch tail by getting total first
     const limit = parseInt(document.getElementById('syslog-limit')?.value || '500', 10);
     const head  = await get(`/api2/json/nodes/${node}/syslog?limit=1`);
     const total = head.total || 0;
-    const start = Math.max(0, total - limit);
-    const d = await get(`/api2/json/nodes/${node}/syslog?limit=${limit}&start=${start}`);
-    rawSyslog = d.data||[];
+    let rawEntries;
+    if (total > 0) {
+      const start = Math.max(0, total - limit);
+      const d = await get(`/api2/json/nodes/${node}/syslog?limit=${limit}&start=${start}`);
+      rawEntries = d.data || [];
+      if (statusEl) statusEl.textContent = `Showing last ${rawEntries.length.toLocaleString()} of ${total.toLocaleString()} total entries`;
+    } else {
+      // total not returned by this Proxmox version — fetch without start (oldest-first fallback)
+      const d = await get(`/api2/json/nodes/${node}/syslog?limit=${limit}`);
+      rawEntries = d.data || [];
+      if (statusEl) statusEl.textContent = `Showing ${rawEntries.length.toLocaleString()} entries`;
+    }
+    rawSyslog = rawEntries;
     filterSyslog();
   } catch(e) {
     document.getElementById('syslog-body').innerHTML=`<tr><td colspan="2" class="empty">Failed to load syslog: ${e.message}</td></tr>`;
@@ -3973,6 +3989,10 @@ function _parseSyslogTime(text) {
 function filterSyslog() {
   const q = (document.getElementById('syslog-search').value||'').toLowerCase();
   const rows = q ? rawSyslog.filter(l=>(l.t||'').toLowerCase().includes(q)) : rawSyslog;
+  if (q) {
+    const statusEl = document.getElementById('syslog-status');
+    if (statusEl) statusEl.textContent = `${rows.length.toLocaleString()} of ${rawSyslog.length.toLocaleString()} entries match filter`;
+  }
   document.getElementById('syslog-body').innerHTML = rows.length
     ? rows.map(l=>{
         const text = l.t || l.content || '';
