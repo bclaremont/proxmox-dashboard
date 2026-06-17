@@ -982,6 +982,7 @@
             <button class="filter-pill"        id="vms-f-running" onclick="_vmFilter('running')" >● Running</button>
             <button class="filter-pill"        id="vms-f-stopped" onclick="_vmFilter('stopped')" >○ Stopped</button>
           </div>
+          <input id="vms-search" type="text" placeholder="Search…" style="width:160px;padding:5px 10px;font-size:13px;transition:width .25s ease" onfocus="this.style.width='240px'" onblur="this.style.width='160px'" oninput="_vmSearchQ=this.value;renderVMTable()">
           <div class="fpop" id="vms-fpop">
             <button class="filter-pill" id="vms-fpop-btn" onclick="_fpopToggle('vms-fmenu')">⚙ Filters</button>
             <div class="fpop-menu" id="vms-fmenu">
@@ -1022,6 +1023,7 @@
             <button class="filter-pill"        id="cts-f-running" onclick="_ctFilter('running')" >● Running</button>
             <button class="filter-pill"        id="cts-f-stopped" onclick="_ctFilter('stopped')" >○ Stopped</button>
           </div>
+          <input id="cts-search" type="text" placeholder="Search…" style="width:160px;padding:5px 10px;font-size:13px;transition:width .25s ease" onfocus="this.style.width='240px'" onblur="this.style.width='160px'" oninput="_ctSearchQ=this.value;renderCTTable()">
           <div class="fpop" id="cts-fpop">
             <button class="filter-pill" id="cts-fpop-btn" onclick="_fpopToggle('cts-fmenu')">⚙ Filters</button>
             <div class="fpop-menu" id="cts-fmenu">
@@ -4883,12 +4885,12 @@ function renderOverview() {
     ${healthBanner}
     <!-- Stats row -->
     <div class="stats-grid" style="margin-bottom:20px">
-      <div class="stat-card accent-green"><div class="label">Running VMs &amp; CTs</div><div class="value">${running}${_trendBadge(running,p?.running)}</div><div class="sub">${stopped} stopped</div></div>
-      <div class="stat-card accent-blue"><div class="label">VMs</div><div class="value">${vmCount}${_trendBadge(vmCount,p?.vmCount)}</div><div class="sub">${allVMs().filter(v=>v.template).length} template${allVMs().filter(v=>v.template).length!==1?'s':''}</div></div>
-      <div class="stat-card accent-purple"><div class="label">Containers</div><div class="value">${ctCount}${_trendBadge(ctCount,p?.ctCount)}</div><div class="sub">LXC</div></div>
-      <div class="stat-card accent-orange"><div class="label">Nodes</div><div class="value">${nodes.length}</div><div class="sub">${connCount} cluster${connCount!==1?'s':''}/host${connCount!==1?'s':''}</div></div>
-      <div class="stat-card accent-yellow"><div class="label">Task Errors</div><div class="value" style="color:${errTasks>0?'var(--red)':'var(--green)'}">${errTasks}${_trendBadge(errTasks,p?.errTasks,true)}</div><div class="sub">recent</div></div>
-      <div class="stat-card"><div class="label">Storage Pools</div><div class="value" style="color:var(--teal)">${PVE.storage.length}</div><div class="sub">primary cluster</div></div>
+      <div class="stat-card accent-green" style="cursor:pointer" title="View running VMs & CTs" onclick="_vmFilter('running');switchView('vms')"><div class="label">Running VMs &amp; CTs</div><div class="value">${running}${_trendBadge(running,p?.running)}</div><div class="sub">${stopped} stopped</div></div>
+      <div class="stat-card accent-blue" style="cursor:pointer" title="View all VMs" onclick="_vmFilter('all');switchView('vms')"><div class="label">VMs</div><div class="value">${vmCount}${_trendBadge(vmCount,p?.vmCount)}</div><div class="sub">${allVMs().filter(v=>v.template).length} template${allVMs().filter(v=>v.template).length!==1?'s':''}</div></div>
+      <div class="stat-card accent-purple" style="cursor:pointer" title="View all containers" onclick="_ctFilter('all');switchView('containers')"><div class="label">Containers</div><div class="value">${ctCount}${_trendBadge(ctCount,p?.ctCount)}</div><div class="sub">LXC</div></div>
+      <div class="stat-card accent-orange" style="cursor:pointer" title="View nodes" onclick="switchView('nodes')"><div class="label">Nodes</div><div class="value">${nodes.length}</div><div class="sub">${connCount} cluster${connCount!==1?'s':''}/host${connCount!==1?'s':''}</div></div>
+      <div class="stat-card accent-yellow" style="cursor:pointer" title="View tasks" onclick="switchView('tasks')"><div class="label">Task Errors</div><div class="value" style="color:${errTasks>0?'var(--red)':'var(--green)'}">${errTasks}${_trendBadge(errTasks,p?.errTasks,true)}</div><div class="sub">recent</div></div>
+      <div class="stat-card" style="cursor:pointer" title="View storage" onclick="switchView('storage')"><div class="label">Storage Pools</div><div class="value" style="color:var(--teal)">${PVE.storage.length}</div><div class="sub">primary cluster</div></div>
     </div>
 
     <!-- Aggregate resource gauges -->
@@ -4999,6 +5001,18 @@ function filterAll(){ _renderAllTableBody(); }
 
 let _vmStatusFilter = 'all';
 let _ctStatusFilter = 'all';
+let _vmSearchQ = '', _ctSearchQ = '';
+let _activeHlQ = ''; // set per-render so vmRow can highlight without extra arg
+
+function _hl(text, q) {
+  const s = String(text || '');
+  if (!q) return escHtml(s);
+  const idx = s.toLowerCase().indexOf(q.toLowerCase());
+  if (idx < 0) return escHtml(s);
+  return escHtml(s.slice(0, idx))
+    + `<mark style="background:rgba(249,115,22,.35);color:inherit;border-radius:2px;padding:0 1px">${escHtml(s.slice(idx, idx+q.length))}</mark>`
+    + escHtml(s.slice(idx + q.length));
+}
 let _vmGrouped = localStorage.getItem('pve-vm-group') !== '0'; // default ON
 let _ctGrouped = localStorage.getItem('pve-ct-group') !== '0'; // default ON
 
@@ -5123,9 +5137,12 @@ function renderVMTable(){
   const fr = document.getElementById('vms-f-running'); if(fr) fr.textContent = `● Running (${run})`;
   const fs = document.getElementById('vms-f-stopped'); if(fs) fs.textContent = `○ Stopped (${stop})`;
 
+  const _vmQ = _vmSearchQ.trim().toLowerCase();
+  _activeHlQ = _vmQ;
   const sorted = _sortItems(
     all .filter(x => !tagF || parseTags(x.tags||'').includes(tagF))
-        .filter(x => _vmStatusFilter === 'all' || x.status === _vmStatusFilter),
+        .filter(x => _vmStatusFilter === 'all' || x.status === _vmStatusFilter)
+        .filter(x => !_vmQ || String(x.vmid).includes(_vmQ) || (x.name||'').toLowerCase().includes(_vmQ) || (x.node||'').toLowerCase().includes(_vmQ)),
     vmSort.col, vmSort.dir);
   if (vmViewMode==='cards') {
     const c = document.getElementById('vms-content');
@@ -5157,10 +5174,13 @@ function renderCTTable(){
   const baseList   = connFilter === '_all' ? allCTs() :
                      connFilter === ''     ? PVE.containers :
                      (extraConns.find(c=>c.id===connFilter)?.containers || []);
+  const _ctQ = _ctSearchQ.trim().toLowerCase();
+  _activeHlQ = _ctQ;
   const sorted = _sortItems(
     baseList
       .filter(x => !tagF || parseTags(x.tags||'').includes(tagF))
-      .filter(x => _ctStatusFilter === 'all' || x.status === _ctStatusFilter),
+      .filter(x => _ctStatusFilter === 'all' || x.status === _ctStatusFilter)
+      .filter(x => !_ctQ || String(x.vmid).includes(_ctQ) || (x.name||'').toLowerCase().includes(_ctQ) || (x.node||'').toLowerCase().includes(_ctQ)),
     ctSort.col, ctSort.dir);
   if (ctViewMode==='cards') {
     const c = document.getElementById('cts-content');
@@ -5250,10 +5270,10 @@ function vmRow(x,showType=false){
   const cachedIP=_vmIPCache[ipKey];
   const ipLine=`<div class="vm-ip-cell" data-ipkey="${ipKey}" style="font-size:10px;font-family:monospace;margin-top:2px;color:${cachedIP?'var(--teal)':'var(--muted)'}">${cachedIP||'—'}</div>`;
   return `<tr class="clickable-row" onclick="openDetail(${JSON.stringify(x).replace(/"/g,'&quot;')})">
-    <td style="color:var(--muted);font-size:12px;cursor:pointer" data-copy="${x.vmid}" title="Click to copy VMID">${x.vmid}</td>
-    <td>${typeChip}<strong>${x.name||'(unnamed)'}</strong>${ipLine}${connLabel}</td>
-    ${showType?`<td style="color:var(--muted)">${x.node}</td>`:''}
-    <td style="color:var(--muted)">${x.node}</td>
+    <td style="color:var(--muted);font-size:12px;cursor:pointer" data-copy="${x.vmid}" title="Click to copy VMID">${_hl(x.vmid,_activeHlQ)}</td>
+    <td>${typeChip}<strong>${_hl(x.name||'(unnamed)',_activeHlQ)}</strong>${ipLine}${connLabel}</td>
+    ${showType?`<td style="color:var(--muted)">${_hl(x.node,_activeHlQ)}</td>`:''}
+    <td style="color:var(--muted)">${_hl(x.node,_activeHlQ)}</td>
     <td>${statusBadge(x.status)}</td>
     <td>
       <div class="gauge-wrap">
@@ -5467,7 +5487,30 @@ function _renderNodeCardsView(flatNodes, multiCluster) {
 }
 
 function renderSidebarNodes(){
-  // Nodes section removed from sidebar — now only shown in main Nodes view
+  // Add warning badge to the Nodes nav item when any node is over 85% CPU or RAM
+  const allNodes = [
+    ...PVE.nodeStatuses,
+    ...extraConns.flatMap(c => c.nodeStatuses||[])
+  ];
+  const hot = allNodes.filter(n => {
+    const d = _nodeRowData(n);
+    return d.online && (d.cpuPct > 85 || d.memPct > 85);
+  });
+  const navItem = document.querySelector('.nav-item[data-view="nodes"]');
+  if (!navItem) return;
+  let badge = navItem.querySelector('.node-hot-badge');
+  if (hot.length > 0) {
+    if (!badge) {
+      badge = document.createElement('span');
+      badge.className = 'node-hot-badge';
+      badge.style.cssText = 'margin-left:auto;background:var(--yellow);color:#000;border-radius:8px;font-size:10px;font-weight:700;padding:1px 6px;flex-shrink:0;';
+      navItem.appendChild(badge);
+    }
+    badge.textContent = hot.length;
+    badge.title = hot.map(n=>n.node).join(', ') + (hot.length===1?' is':' are') + ' over 85%';
+  } else if (badge) {
+    badge.remove();
+  }
 }
 
 // ── COLLAPSIBLE SIDEBAR SECTIONS ──────────────────────────
