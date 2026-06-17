@@ -982,7 +982,7 @@
             <button class="filter-pill"        id="vms-f-running" onclick="_vmFilter('running')" >● Running</button>
             <button class="filter-pill"        id="vms-f-stopped" onclick="_vmFilter('stopped')" >○ Stopped</button>
           </div>
-          <input id="vms-search" type="text" placeholder="Search…" style="width:160px;padding:5px 10px;font-size:13px;transition:width .25s ease" onfocus="this.style.width='240px'" onblur="this.style.width='160px'" oninput="_vmSearchQ=this.value;renderVMTable()">
+          <input id="vms-search" type="text" placeholder="Search…" style="width:160px;padding:5px 10px;font-size:13px;transition:width .25s ease" onfocus="this.style.width='240px'" onblur="this.style.width='160px'" oninput="_vmSearchQ=this.value;localStorage.setItem('pcc-vm-search',this.value);renderVMTable()">
           <div class="fpop" id="vms-fpop">
             <button class="filter-pill" id="vms-fpop-btn" onclick="_fpopToggle('vms-fmenu')">⚙ Filters</button>
             <div class="fpop-menu" id="vms-fmenu">
@@ -1023,7 +1023,7 @@
             <button class="filter-pill"        id="cts-f-running" onclick="_ctFilter('running')" >● Running</button>
             <button class="filter-pill"        id="cts-f-stopped" onclick="_ctFilter('stopped')" >○ Stopped</button>
           </div>
-          <input id="cts-search" type="text" placeholder="Search…" style="width:160px;padding:5px 10px;font-size:13px;transition:width .25s ease" onfocus="this.style.width='240px'" onblur="this.style.width='160px'" oninput="_ctSearchQ=this.value;renderCTTable()">
+          <input id="cts-search" type="text" placeholder="Search…" style="width:160px;padding:5px 10px;font-size:13px;transition:width .25s ease" onfocus="this.style.width='240px'" onblur="this.style.width='160px'" oninput="_ctSearchQ=this.value;localStorage.setItem('pcc-ct-search',this.value);renderCTTable()">
           <div class="fpop" id="cts-fpop">
             <button class="filter-pill" id="cts-fpop-btn" onclick="_fpopToggle('cts-fmenu')">⚙ Filters</button>
             <div class="fpop-menu" id="cts-fmenu">
@@ -2529,8 +2529,10 @@ function skeletonRows(cols=8, count=5) {
 }
 
 // ── SORTABLE TABLES ───────────────────────────────────
-let vmSort  = { col:'name', dir:1 };
-let ctSort  = { col:'name', dir:1 };
+const _savedVmSort = JSON.parse(localStorage.getItem('pcc-vm-sort')||'null');
+const _savedCtSort = JSON.parse(localStorage.getItem('pcc-ct-sort')||'null');
+let vmSort  = _savedVmSort || { col:'name', dir:1 };
+let ctSort  = _savedCtSort || { col:'name', dir:1 };
 let allSort = { col:'name', dir:1 };
 
 function _sortItems(items, col, dir) {
@@ -2571,10 +2573,12 @@ function _updateSortIcons(tableSelector, col, dir) {
 
 function sortVMTable(col) {
   if (vmSort.col===col) vmSort.dir*=-1; else { vmSort.col=col; vmSort.dir=1; }
+  localStorage.setItem('pcc-vm-sort', JSON.stringify(vmSort));
   renderVMTable();
 }
 function sortCTTable(col) {
   if (ctSort.col===col) ctSort.dir*=-1; else { ctSort.col=col; ctSort.dir=1; }
+  localStorage.setItem('pcc-ct-sort', JSON.stringify(ctSort));
   renderCTTable();
 }
 
@@ -2582,7 +2586,8 @@ function sortCTTable(col) {
 let vmViewMode   = localStorage.getItem('pve-vm-view')||'table';
 let ctViewMode   = localStorage.getItem('pve-ct-view')||'table';
 let nodeViewMode = localStorage.getItem('pve-node-view')||'cards';
-let _nodeSort = 'node', _nodeSortDir = 1;
+const _savedNodeSort = JSON.parse(localStorage.getItem('pcc-node-sort')||'null');
+let _nodeSort = _savedNodeSort?.col || 'node', _nodeSortDir = _savedNodeSort?.dir || 1;
 const _nodeHistory = {}; // node key → [{cpu, mem}, ...] ring-buffer for sparklines
 
 function setVMView(mode) {
@@ -2608,6 +2613,7 @@ function setNodeView(mode) {
 }
 function sortNodeTable(col) {
   if (_nodeSort === col) _nodeSortDir *= -1; else { _nodeSort = col; _nodeSortDir = 1; }
+  localStorage.setItem('pcc-node-sort', JSON.stringify({col:_nodeSort,dir:_nodeSortDir}));
   renderNodes();
 }
 
@@ -5001,8 +5007,20 @@ function filterAll(){ _renderAllTableBody(); }
 
 let _vmStatusFilter = 'all';
 let _ctStatusFilter = 'all';
-let _vmSearchQ = '', _ctSearchQ = '';
+let _vmSearchQ = localStorage.getItem('pcc-vm-search')||'';
+let _ctSearchQ = localStorage.getItem('pcc-ct-search')||'';
 let _activeHlQ = ''; // set per-render so vmRow can highlight without extra arg
+
+// ── PINNED VMs ────────────────────────────────────────
+const _pinnedVMs = new Set(JSON.parse(localStorage.getItem('pcc-pins')||'[]'));
+function _pinKey(x) { return `${x.connId||''}|${x.node}/${x.vmid}`; }
+function _isPinned(x) { return _pinnedVMs.has(_pinKey(x)); }
+function togglePin(node, vmid, connId) {
+  const k = `${connId||''}|${node}/${vmid}`;
+  if (_pinnedVMs.has(k)) _pinnedVMs.delete(k); else _pinnedVMs.add(k);
+  localStorage.setItem('pcc-pins', JSON.stringify([..._pinnedVMs]));
+  renderCurrentView();
+}
 
 function _hl(text, q) {
   const s = String(text || '');
@@ -5124,6 +5142,7 @@ function _ctFilter(f) {
 
 function renderVMTable(){
   _fpopRefresh('vms');
+  const _vsEl = document.getElementById('vms-search'); if (_vsEl && _vsEl.value !== _vmSearchQ) _vsEl.value = _vmSearchQ;
   const tagF       = document.getElementById('vms-tag-filter')?.value||'';
   const connFilter = document.getElementById('vms-conn')?.value ?? '_all';
   const baseList   = connFilter === '_all' ? allVMs() :
@@ -5157,18 +5176,22 @@ function renderVMTable(){
   _updateSortIcons('#vms-content table', vmSort.col, vmSort.dir);
   const vgBtn = document.getElementById('vms-group-btn');
   if (vgBtn) vgBtn.classList.toggle('active', _vmGrouped);
+  const _vmPins = sorted.filter(v=>_isPinned(v)), _vmRest = sorted.filter(v=>!_isPinned(v));
+  const _vmPinSep = _vmPins.length && _vmRest.length ? `<tr class="pin-sep"><td colspan="10" style="padding:2px 10px;font-size:10px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);background:var(--bg)">─── Pinned ───</td></tr>` : '';
   document.getElementById('vm-table-body').innerHTML = sorted.length
-    ? (_vmGrouped ? _renderGrouped(sorted, v=>vmRow(v), 10) : sorted.map(v=>vmRow(v)).join(''))
+    ? (_vmGrouped ? _renderGrouped(sorted, v=>vmRow(v), 10) : _vmPins.map(v=>vmRow(v)).join('')+_vmPinSep+_vmRest.map(v=>vmRow(v)).join(''))
     : `<tr><td colspan="9">${emptyState('<rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/>',
         _vmStatusFilter !== 'all' ? `No ${_vmStatusFilter} VMs` : 'No VMs',
         _vmStatusFilter !== 'all' ? `Switch to "All" to see ${_vmStatusFilter==='running'?'stopped':'running'} VMs.` : 'Connect to a cluster or create your first VM.',
         _vmStatusFilter === 'all' ? `<button class="btn primary" onclick="openCreateVMModal()">+ Create VM</button>` : '')
       }</td></tr>`;
   _fetchAndShowIPs(sorted);
+  _fetchSnapAges(sorted);
 }
 
 function renderCTTable(){
   _fpopRefresh('cts');
+  const _csEl = document.getElementById('cts-search'); if (_csEl && _csEl.value !== _ctSearchQ) _csEl.value = _ctSearchQ;
   const tagF       = document.getElementById('cts-tag-filter')?.value||'';
   const connFilter = document.getElementById('cts-conn')?.value ?? '_all';
   const baseList   = connFilter === '_all' ? allCTs() :
@@ -5195,10 +5218,13 @@ function renderCTTable(){
   _updateSortIcons('#cts-content table', ctSort.col, ctSort.dir);
   const cgBtn = document.getElementById('cts-group-btn');
   if (cgBtn) cgBtn.classList.toggle('active', _ctGrouped);
+  const _ctPins = sorted.filter(c=>_isPinned(c)), _ctRest = sorted.filter(c=>!_isPinned(c));
+  const _ctPinSep = _ctPins.length && _ctRest.length ? `<tr class="pin-sep"><td colspan="10" style="padding:2px 10px;font-size:10px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);background:var(--bg)">─── Pinned ───</td></tr>` : '';
   document.getElementById('ct-table-body').innerHTML = sorted.length
-    ? (_ctGrouped ? _renderGrouped(sorted, c=>vmRow(c), 10) : sorted.map(c=>vmRow(c)).join(''))
-    : `<tr><td colspan="9" class="empty">No containers found</td></tr>`;
+    ? (_ctGrouped ? _renderGrouped(sorted, c=>vmRow(c), 10) : _ctPins.map(c=>vmRow(c)).join('')+_ctPinSep+_ctRest.map(c=>vmRow(c)).join(''))
+    : `<tr><td colspan="10" class="empty">No containers found</td></tr>`;
   _fetchAndShowIPs(sorted);
+  _fetchSnapAges(sorted);
 }
 
 // Dedicated row for the Overview "All VMs & Containers" table.
@@ -5269,9 +5295,11 @@ function vmRow(x,showType=false){
   const ipKey=`${cid}|${x.node}/${x.vmid}`;
   const cachedIP=_vmIPCache[ipKey];
   const ipLine=`<div class="vm-ip-cell" data-ipkey="${ipKey}" style="font-size:10px;font-family:monospace;margin-top:2px;color:${cachedIP?'var(--teal)':'var(--muted)'}">${cachedIP||'—'}</div>`;
+  const pinned=_isPinned(x);
+  const snapKey=ipKey;
   return `<tr class="clickable-row" onclick="openDetail(${JSON.stringify(x).replace(/"/g,'&quot;')})">
     <td style="color:var(--muted);font-size:12px;cursor:pointer" data-copy="${x.vmid}" title="Click to copy VMID">${_hl(x.vmid,_activeHlQ)}</td>
-    <td>${typeChip}<strong>${_hl(x.name||'(unnamed)',_activeHlQ)}</strong>${ipLine}${connLabel}</td>
+    <td>${typeChip}<strong>${_hl(x.name||'(unnamed)',_activeHlQ)}</strong><span class="vm-snap-badge" data-snapkey="${snapKey}" style="display:none;font-size:10px;margin-left:5px"></span>${ipLine}${connLabel}</td>
     ${showType?`<td style="color:var(--muted)">${_hl(x.node,_activeHlQ)}</td>`:''}
     <td style="color:var(--muted)">${_hl(x.node,_activeHlQ)}</td>
     <td>${statusBadge(x.status)}</td>
@@ -5304,6 +5332,8 @@ function vmRow(x,showType=false){
         ${extraConns.length?`<button class="btn small" onclick="openXCopyModal('${x.node}','${x.vmid}','${x.type}','${cid}','${escHtml(x.name||String(x.vmid))}')" title="Copy to another cluster">⎘→</button>`:''}
         <button class="btn small" onclick="openPerfModal('${x.node}','${x.vmid}','${x.type}','${cid}')" title="Performance graphs">📊</button>
         <button class="btn small" onclick="quickSnapSchedule('${x.node}','${x.vmid}','${x.type}','${cid}','${escHtml(x.name||String(x.vmid))}')" title="Schedule snapshot">📸</button>
+        <button class="btn small" onclick="togglePin('${x.node}','${x.vmid}','${cid}')" title="${pinned?'Unpin':'Pin to top'}" style="${pinned?'color:var(--yellow)':''}">${pinned?'★':'☆'}</button>
+        <button class="btn small" id="xpand-${snapKey}" onclick="_toggleRowExpand(this,'${x.node}','${x.vmid}','${x.type}','${cid}')" title="Expand inline">›</button>
       </div>
     </td>
   </tr>`;
@@ -7045,6 +7075,96 @@ async function _fetchAndShowIPs(items) {
       });
     }));
   }
+}
+
+// ── INLINE ROW EXPAND ─────────────────────────────────────
+async function _toggleRowExpand(btn, node, vmid, type, connId) {
+  const tr = btn.closest('tr');
+  const eid = `xrow-${connId||''}-${node}-${vmid}`;
+  const existing = document.getElementById(eid);
+  if (existing) { existing.remove(); btn.textContent='›'; btn.style.transform=''; return; }
+  btn.textContent = '▾';
+  const xtr = document.createElement('tr');
+  xtr.id = eid;
+  xtr.className = 'vm-expand-row';
+  xtr.innerHTML = `<td colspan="10" style="padding:0"><div style="padding:10px 18px 14px;background:var(--bg);border-bottom:1px solid var(--border)"><span class="loading"></span> Loading…</div></td>`;
+  tr.after(xtr);
+  const inner = xtr.querySelector('div');
+  try {
+    const conn = connId ? resolveConn(connId) : null;
+    const g = conn ? (p=>connGet(conn,p)) : pveGet;
+    const base = `/api2/json/nodes/${node}/${type==='vm'?'qemu':'lxc'}/${vmid}`;
+    const [cfgRes, snapRes] = await Promise.all([
+      g(base+'/config'),
+      g(base+'/snapshot').catch(()=>({data:[]}))
+    ]);
+    const cfg = cfgRes.data||{};
+    const snaps = (snapRes.data||[]).filter(s=>s.name!=='current').sort((a,b)=>(b.snaptime||0)-(a.snaptime||0));
+    // Disks
+    const diskRe = type==='vm' ? /^(scsi|virtio|ide|sata)\d+$/ : /^(mp|rootfs)\d*$/;
+    const disks = Object.entries(cfg).filter(([k])=>diskRe.test(k)).map(([k,v])=>`<div style="font-size:12px"><span style="color:var(--muted);min-width:60px;display:inline-block">${k}</span>${escHtml(String(v).split(',')[0])}</div>`).join('');
+    // Networks
+    const nets = Object.entries(cfg).filter(([k])=>/^net\d+$/.test(k)).map(([k,v])=>`<div style="font-size:12px"><span style="color:var(--muted);min-width:60px;display:inline-block">${k}</span>${escHtml(String(v).split(',').filter(p=>/model|bridge|name/i.test(p)).join(', '))}</div>`).join('');
+    // Snapshots
+    const now = Date.now();
+    const snapHtml = snaps.length ? snaps.slice(0,5).map(s=>{
+      const age = s.snaptime ? Math.floor((now-s.snaptime*1000)/86400000) : '?';
+      const col = typeof age==='number'&&age>30?'var(--red)':typeof age==='number'&&age>7?'var(--yellow)':'var(--muted)';
+      return `<span style="font-size:11px;margin-right:10px"><span style="color:${col}">${age}d</span> <span style="color:var(--text)">${escHtml(s.name)}</span></span>`;
+    }).join('') + (snaps.length>5?`<span style="font-size:11px;color:var(--muted)">+${snaps.length-5} more</span>`:'') : `<span style="font-size:12px;color:var(--muted)">None</span>`;
+    // Notes
+    const notes = cfg.description ? `<div style="font-size:12px;color:var(--muted);max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escHtml(cfg.description)}">${escHtml(cfg.description)}</div>` : '';
+    inner.innerHTML = `<div style="display:grid;grid-template-columns:1fr 1fr 1fr ${cfg.description?'1fr':''};gap:14px">
+      <div><div style="font-size:10px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin-bottom:4px">💽 Disks</div>${disks||'<span style="font-size:12px;color:var(--muted)">None</span>'}</div>
+      <div><div style="font-size:10px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin-bottom:4px">🌐 Network</div>${nets||'<span style="font-size:12px;color:var(--muted)">None</span>'}</div>
+      <div><div style="font-size:10px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin-bottom:4px">📸 Snapshots (${snaps.length})</div>${snapHtml}</div>
+      ${cfg.description?`<div><div style="font-size:10px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin-bottom:4px">📝 Notes</div>${notes}</div>`:''}
+    </div>`;
+  } catch(e) {
+    inner.innerHTML = `<span style="color:var(--red);font-size:12px">Failed: ${escHtml(e.message)}</span>`;
+  }
+}
+
+// ── SNAPSHOT AGE BADGES ───────────────────────────────────
+const _snapAgeCache = {}; // key → {count, oldestSec, ts}
+const _SNAP_TTL = 5 * 60 * 1000;
+const _SNAP_WARN_DAYS = 7;
+
+async function _fetchSnapAges(items) {
+  const toFetch = items.filter(x => {
+    const k = `${x.connId||''}|${x.node}/${x.vmid}`;
+    const c = _snapAgeCache[k];
+    return !c || (Date.now() - c.ts > _SNAP_TTL);
+  });
+  for (let i = 0; i < toFetch.length; i += 5) {
+    await Promise.all(toFetch.slice(i, i+5).map(async x => {
+      const k = `${x.connId||''}|${x.node}/${x.vmid}`;
+      const conn = x.connId ? resolveConn(x.connId) : null;
+      const g = conn ? (p=>connGet(conn,p)) : pveGet;
+      const ep = `/api2/json/nodes/${x.node}/${x.type==='vm'?'qemu':'lxc'}/${x.vmid}/snapshot`;
+      try {
+        const d = await g(ep);
+        const snaps = (d.data||[]).filter(s=>s.name!=='current');
+        const oldestSec = snaps.length ? Math.min(...snaps.map(s=>s.snaptime||Infinity)) : null;
+        _snapAgeCache[k] = {count:snaps.length, oldestSec, ts:Date.now()};
+        _updateSnapBadge(k);
+      } catch(e) { _snapAgeCache[k] = {count:0, oldestSec:null, ts:Date.now()}; }
+    }));
+  }
+}
+
+function _updateSnapBadge(key) {
+  const c = _snapAgeCache[key];
+  document.querySelectorAll(`.vm-snap-badge[data-snapkey="${key}"]`).forEach(el => {
+    if (!c || c.count === 0) { el.style.display='none'; return; }
+    const ageDays = c.oldestSec ? Math.floor((Date.now() - c.oldestSec*1000)/86400000) : 0;
+    if (ageDays >= _SNAP_WARN_DAYS) {
+      el.style.display='inline';
+      el.textContent = `📸 ${ageDays}d`;
+      el.title = `${c.count} snapshot${c.count!==1?'s':''} — oldest ${ageDays} day${ageDays!==1?'s':''} ago`;
+      el.style.color = ageDays > 30 ? 'var(--red)' : 'var(--yellow)';
+    } else { el.style.display='none'; }
+  });
 }
 
 // ── SNAPSHOTS ────────────────────────────────────────────
