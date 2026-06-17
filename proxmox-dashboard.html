@@ -2599,6 +2599,29 @@ function sortNodeTable(col) {
   renderNodes();
 }
 
+function _renderVMCardsGrouped(items) {
+  if (!items.length) return '<div class="empty">No VMs found</div>';
+  if (!extraConns.length) return _renderVMCards(items);
+  const _GRP_COLOURS = ['var(--accent)','var(--blue)','var(--purple)','var(--teal)','var(--yellow)','var(--green)'];
+  const order = [], map = new Map();
+  for (const x of items) {
+    const cid = x.connId || '';
+    if (!map.has(cid)) { map.set(cid, { label: cid ? getConnName(cid) : 'Primary', colour: _GRP_COLOURS[order.length % _GRP_COLOURS.length], items: [] }); order.push(cid); }
+    map.get(cid).items.push(x);
+  }
+  return order.map(cid => {
+    const { label, colour, items: grp } = map.get(cid);
+    const run = grp.filter(x=>x.status==='running').length;
+    return `<div style="margin-bottom:22px">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;padding:6px 10px;background:var(--bg2);border-radius:var(--radius);border-left:3px solid ${colour}">
+        <span style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:${colour}">${escHtml(label)}</span>
+        <span style="font-size:11px;color:var(--muted)">${grp.length} total · ${run} running</span>
+      </div>
+      ${_renderVMCards(grp)}
+    </div>`;
+  }).join('');
+}
+
 function _renderVMCards(items) {
   if (!items.length) return '<div class="empty">No VMs found</div>';
   return `<div class="vm-card-grid">${items.map(x => {
@@ -5061,7 +5084,7 @@ function renderVMTable(){
     vmSort.col, vmSort.dir);
   if (vmViewMode==='cards') {
     const c = document.getElementById('vms-content');
-    if (c) c.innerHTML = _renderVMCards(sorted);
+    if (c) c.innerHTML = _renderVMCardsGrouped(sorted);
     return;
   }
   // Restore table structure if card view replaced it
@@ -5096,7 +5119,7 @@ function renderCTTable(){
     ctSort.col, ctSort.dir);
   if (ctViewMode==='cards') {
     const c = document.getElementById('cts-content');
-    if (c) c.innerHTML = _renderVMCards(sorted);
+    if (c) c.innerHTML = _renderVMCardsGrouped(sorted);
     return;
   }
   // Restore table structure if card view replaced it
