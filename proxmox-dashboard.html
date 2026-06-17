@@ -2887,7 +2887,7 @@ async function _xcopyDestChanged() {
   // Populate destination nodes
   const nodeSel = document.getElementById('xc-dest-node');
   if (nodeSel && destConn.nodes?.length) {
-    nodeSel.innerHTML = destConn.nodes.map(n=>`<option value="${n.node}">${n.node}</option>`).join('');
+    nodeSel.innerHTML = destConn.nodes.map(n=>`<option value="${escHtml(n.node)}">${escHtml(n.node)}</option>`).join('');
   }
 
   // Populate source storage
@@ -3076,7 +3076,7 @@ async function loadDiskHealth() {
   const nodeSel = document.getElementById('disk-node-sel');
   if (nodeSel) {
     const cur = nodeSel.value;
-    nodeSel.innerHTML = '<option value="">All Nodes</option>' + nodes.map(n=>`<option value="${n.node}"${n.node===cur?' selected':''}>${n.node}</option>`).join('');
+    nodeSel.innerHTML = '<option value="">All Nodes</option>' + nodes.map(n=>`<option value="${escHtml(n.node)}"${n.node===cur?' selected':''}>${escHtml(n.node)}</option>`).join('');
   }
   const filterNode = nodeSel?.value || '';
   const targetNodes = filterNode ? nodes.filter(n=>n.node===filterNode) : nodes;
@@ -3187,7 +3187,7 @@ function renderUptimeReport() {
             <strong style="margin-left:6px">${escHtml(v.name||String(v.vmid))}</strong>
             <span style="font-size:11px;color:var(--muted);margin-left:4px">${v.vmid}</span>
           </td>
-          <td style="color:var(--muted);font-size:12px">${v.node}</td>
+          <td style="color:var(--muted);font-size:12px">${escHtml(v.node)}</td>
           <td style="font-size:12px;color:var(--muted)">${escHtml(cname)}</td>
           <td><span style="color:${col};font-weight:600">${fmtUptime(v.uptime)}</span>
             ${days>90?'<span style="font-size:10px;color:var(--red);margin-left:6px">⚠ patch?</span>':''}
@@ -3433,7 +3433,7 @@ async function _loadPerfData(node,vmid,type,connId,tf) {
         ${_rrdChart(data,'netout','Net Out','var(--accent)',{fmt:fmtMBs})}
       </div>`;
   } catch(e) {
-    document.getElementById('modal-body').innerHTML=`<div class="empty">Failed to load: ${e.message}</div>`;
+    document.getElementById('modal-body').innerHTML=`<div class="empty">Failed to load: ${escHtml(e.message)}</div>`;
   }
 }
 
@@ -3954,7 +3954,7 @@ async function loadSyslog() {
   const nodeEl = document.getElementById('syslog-node');
   const prevNode = nodeEl && nodeEl.value;
   if (nodeEl) {
-    nodeEl.innerHTML = nodes.map(n=>`<option value="${n.node}">${n.node}</option>`).join('');
+    nodeEl.innerHTML = nodes.map(n=>`<option value="${escHtml(n.node)}">${escHtml(n.node)}</option>`).join('');
     if (prevNode && nodes.some(n=>n.node===prevNode)) nodeEl.value = prevNode;
   }
   const node = (nodeEl&&nodeEl.value) || (nodes[0]&&nodes[0].node);
@@ -3981,7 +3981,7 @@ async function loadSyslog() {
     rawSyslog = rawEntries;
     filterSyslog();
   } catch(e) {
-    document.getElementById('syslog-body').innerHTML=`<tr><td colspan="2" class="empty">Failed to load syslog: ${e.message}</td></tr>`;
+    document.getElementById('syslog-body').innerHTML=`<tr><td colspan="2" class="empty">Failed to load syslog: ${escHtml(e.message)}</td></tr>`;
   }
 }
 
@@ -4302,7 +4302,7 @@ async function loadDetailOverview(item) {
       }).catch(()=>{});
     }
   } catch(e) {
-    el.innerHTML=`<div class="empty">Failed to load status: ${e.message}</div>`;
+    el.innerHTML=`<div class="empty">Failed to load status: ${escHtml(e.message)}</div>`;
   }
 }
 
@@ -4343,7 +4343,7 @@ async function loadNodeDetailOverview(nodeData) {
       </div>
     </div>
     <table class="config-table" style="background:var(--bg3);border-radius:var(--radius)">
-      <tr><td>Hostname</td><td>${nodeData.node}</td></tr>
+      <tr><td>Hostname</td><td>${escHtml(nodeData.node)}</td></tr>
       <tr><td>PVE Version</td><td>${s.pveversion||nodeData.pveversion||'—'}</td></tr>
       <tr><td>Kernel</td><td>${s.kversion||'—'}</td></tr>
       <tr><td>CPU Model</td><td>${cpuInfo.model||'—'}</td></tr>
@@ -4365,7 +4365,7 @@ async function loadDetailConfig(item) {
       </p>
       <div class="table-wrap"><table><thead><tr><th>Key</th><th>Value</th></tr></thead><tbody>${rows}</tbody></table></div>`;
   } catch(e) {
-    el.innerHTML=`<div class="empty">Failed to load config: ${e.message}</div>`;
+    el.innerHTML=`<div class="empty">Failed to load config: ${escHtml(e.message)}</div>`;
   }
 }
 
@@ -4592,7 +4592,7 @@ async function loadDetailGraphs(item, type, vmid, timeframe) {
     detailCharts._exportData = { times, cpuVals, memVals, netIn, netOut, diskR, diskW, ioWait, isNode, timeframe, name: item.name || String(vmid) };
 
   } catch(e) {
-    el.innerHTML = `<div class="empty">Failed to load graphs: ${e.message}</div>`;
+    el.innerHTML = `<div class="empty">Failed to load graphs: ${escHtml(e.message)}</div>`;
   }
 }
 
@@ -4605,7 +4605,7 @@ async function loadDetailTasks(item) {
     el.innerHTML=`<div class="table-wrap"><table>
       <thead><tr><th>Started</th><th>Type</th><th>Status</th><th>Duration</th><th>User</th></tr></thead>
       <tbody>${tasks.map(t=>taskRow(t)).join('')}</tbody></table></div>`;
-  } catch(e){el.innerHTML=`<div class="empty">Failed: ${e.message}</div>`;}
+  } catch(e){el.innerHTML=`<div class="empty">Failed: ${escHtml(e.message)}</div>`;}
 }
 
 function changeTimeframe(tf) {
@@ -4699,12 +4699,12 @@ function switchView(view) {
   if(view==='syslog'){ loadSyslog(); }
   if(view==='storage'){
     const sel=document.getElementById('storage-node-filter');
-    sel.innerHTML='<option value="">All Nodes</option>'+PVE.nodes.map(n=>`<option value="${n.node}">${n.node}</option>`).join('');
+    sel.innerHTML='<option value="">All Nodes</option>'+PVE.nodes.map(n=>`<option value="${escHtml(n.node)}">${escHtml(n.node)}</option>`).join('');
     loadStorage();
   }
   if(view==='network'){
     const sel=document.getElementById('network-node-select');
-    sel.innerHTML=PVE.nodes.map(n=>`<option value="${n.node}">${n.node}</option>`).join('');
+    sel.innerHTML=PVE.nodes.map(n=>`<option value="${escHtml(n.node)}">${escHtml(n.node)}</option>`).join('');
     if(!sel.value&&PVE.nodes.length) sel.value=PVE.nodes[0].node;
     loadNetwork();
   }
@@ -5682,10 +5682,10 @@ async function openMigrateModal(node, vmid, type, connId='', _pickerDone=false) 
   }
 
   const srcOpts = nodeList.map(n =>
-    `<option value="${n.node}" ${n.node === node ? 'selected' : ''}>${n.node}</option>`
+    `<option value="${escHtml(n.node)}" ${n.node === node ? 'selected' : ''}>${escHtml(n.node)}</option>`
   ).join('');
   const tgtOpts = nodeList.map(n =>
-    `<option value="${n.node}" ${n.node !== node ? 'selected' : ''}>${n.node}</option>`
+    `<option value="${escHtml(n.node)}" ${n.node !== node ? 'selected' : ''}>${escHtml(n.node)}</option>`
   ).join('');
 
   const initialTarget = nodeList.find(n => n.node !== node);
@@ -5897,7 +5897,7 @@ function _bulkClusterChanged() {
   const nodeEl = document.getElementById('bulk-node');
   if (nodeEl) {
     nodeEl.innerHTML = `<option value="_all">All nodes</option>` +
-      nodes.map(n => `<option value="${n.node}">${n.node}</option>`).join('');
+      nodes.map(n => `<option value="${escHtml(n.node)}">${escHtml(n.node)}</option>`).join('');
   }
   _bulkActionChanged();
 }
@@ -5912,7 +5912,7 @@ function _bulkActionChanged() {
     const conn   = resolveConn(connId);
     const nodes  = conn ? (conn.nodes||[]) : PVE.nodes;
     const tgtEl  = document.getElementById('bulk-mig-tgt');
-    if (tgtEl) tgtEl.innerHTML = nodes.map(n => `<option value="${n.node}">${n.node}</option>`).join('');
+    if (tgtEl) tgtEl.innerHTML = nodes.map(n => `<option value="${escHtml(n.node)}">${escHtml(n.node)}</option>`).join('');
   }
   _bulkRefreshCounts();
 }
@@ -6022,7 +6022,7 @@ async function loadStorage() {
   const nodes = conn ? (conn.nodes||[]) : PVE.nodes;
   // Repopulate node filter
   const nf = document.getElementById('storage-node-filter');
-  if (nf) nf.innerHTML = '<option value="">All Nodes</option>' + nodes.map(n=>`<option value="${n.node}">${n.node}</option>`).join('');
+  if (nf) nf.innerHTML = '<option value="">All Nodes</option>' + nodes.map(n=>`<option value="${escHtml(n.node)}">${escHtml(n.node)}</option>`).join('');
   try {
     const all = [];
     await Promise.all(nodes.map(async n => {
@@ -6088,7 +6088,7 @@ function renderStorage(overrideData) {
     const content = Array.isArray(s.content) ? s.content.join(', ') : (s.content||'—');
     return `<tr>
       <td><strong>${escHtml(s.storage)}</strong></td>
-      <td style="color:var(--muted)">${s.node}</td>
+      <td style="color:var(--muted)">${escHtml(s.node)}</td>
       <td><span class="type-chip vm">${escHtml(s.type||'—')}</span></td>
       <td style="font-size:12px;color:var(--muted);max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escHtml(content)}">${escHtml(content)}</td>
       <td>${disabled?'<span class="badge stopped"><span class="badge-dot"></span>disabled</span>':'<span class="badge online"><span class="badge-dot"></span>active</span>'}</td>
@@ -6392,7 +6392,7 @@ async function loadNetwork() {
   const get  = conn ? (p=>connGet(conn,p)) : pveGet;
   const nodes= conn ? (conn.nodes||[]) : PVE.nodes;
   const nSel = document.getElementById('network-node-select');
-  if (nSel) nSel.innerHTML = nodes.map(n=>`<option value="${n.node}">${n.node}</option>`).join('');
+  if (nSel) nSel.innerHTML = nodes.map(n=>`<option value="${escHtml(n.node)}">${escHtml(n.node)}</option>`).join('');
   const node = (nSel&&nSel.value) || (nodes[0]&&nodes[0].node);
   if (!node) return;
   _netNode   = node;
@@ -6409,7 +6409,7 @@ async function loadNetwork() {
     if (applyBtn) applyBtn.style.display = pending ? '' : 'none';
     renderNetwork();
   } catch(e) {
-    document.getElementById('network-body').innerHTML=`<tr><td colspan="9" class="empty">Failed: ${e.message}</td></tr>`;
+    document.getElementById('network-body').innerHTML=`<tr><td colspan="9" class="empty">Failed: ${escHtml(e.message)}</td></tr>`;
   }
 }
 
@@ -7199,7 +7199,7 @@ async function loadDetailSnapshots(item) {
           </div>
         </div>`).join('') : '<div class="empty">No snapshots yet</div>'}`;
   } catch(e) {
-    el.innerHTML = `<div class="empty">Failed to load snapshots: ${e.message}</div>`;
+    el.innerHTML = `<div class="empty">Failed to load snapshots: ${escHtml(e.message)}</div>`;
   }
 }
 
@@ -7286,7 +7286,7 @@ function renderHeatmap() {
     const nodeVMs = allItems.filter(x => x.node === n.node && (x.connId||'') === (n.connId||''));
     const running = nodeVMs.filter(x => x.status === 'running').length;
     return `<div class="heat-card" style="border-top:3px solid ${topColor};cursor:pointer" onclick="openNodeDetail(${JSON.stringify(n).replace(/"/g,'&quot;')})">
-      <strong style="font-size:14px">${n.node}</strong>
+      <strong style="font-size:14px">${escHtml(n.node)}</strong>
       <div style="margin-top:10px;font-size:11px;color:var(--muted)">CPU</div>
       <div class="heat-bar" style="background:${heatColor(cpu)}"></div>
       <div style="font-size:15px;font-weight:700">${cpu.toFixed(1)}%</div>
@@ -7530,7 +7530,7 @@ async function loadCeph() {
     document.getElementById('ceph-badge').style.display = (s.health?.status==='HEALTH_OK') ? 'none' : '';
     el.innerHTML = _cephDetailHtml(s, osds, pools);
   } catch(e) {
-    el.innerHTML = `<div class="empty">Failed to load Ceph: ${e.message}</div>`;
+    el.innerHTML = `<div class="empty">Failed to load Ceph: ${escHtml(e.message)}</div>`;
   }
 }
 
@@ -7635,7 +7635,7 @@ async function loadHA() {
 
     // Get all nodes for the migrate dropdown
     const nodes = conn ? (conn.nodes||[]) : PVE.nodes;
-    const nodeOpts = nodes.map(n=>`<option value="${n.node}">${n.node}</option>`).join('');
+    const nodeOpts = nodes.map(n=>`<option value="${escHtml(n.node)}">${escHtml(n.node)}</option>`).join('');
     const cid = haData.connId;
 
     el.innerHTML = `
@@ -7708,7 +7708,7 @@ async function loadHA() {
       </div>`;
 
   } catch(e) {
-    el.innerHTML = `<div class="empty">Failed to load HA: ${e.message}</div>`;
+    el.innerHTML = `<div class="empty">Failed to load HA: ${escHtml(e.message)}</div>`;
   }
 }
 
@@ -7851,7 +7851,7 @@ async function openEditHAResourceModal(sid, connId) {
 function openMigrateHAModal(sid, connId) {
   const conn  = resolveConn(connId);
   const nodes = conn ? (conn.nodes||[]) : PVE.nodes;
-  const nodeOpts = nodes.map(n=>`<option value="${n.node}">${n.node}</option>`).join('');
+  const nodeOpts = nodes.map(n=>`<option value="${escHtml(n.node)}">${escHtml(n.node)}</option>`).join('');
   document.getElementById('modal-title').textContent = `Migrate HA Resource — ${sid}`;
   document.getElementById('modal-body').innerHTML = `
     <p style="color:var(--muted);font-size:13px;margin-bottom:14px">Request the HA manager to migrate <strong style="color:var(--text)">${escHtml(sid)}</strong> to a specific node.</p>
@@ -8111,7 +8111,7 @@ async function loadFirewall() {
         </div>` : `<div class="empty" style="margin-bottom:14px">No rules defined. Click <strong>+ Add Rule</strong> to create one.</div>`}`;
 
   } catch(e) {
-    el.innerHTML = `<div class="empty">Failed to load firewall: ${e.message}</div>`;
+    el.innerHTML = `<div class="empty">Failed to load firewall: ${escHtml(e.message)}</div>`;
   }
 }
 
@@ -8208,7 +8208,7 @@ async function loadBackups() {
         </div>` : '<div class="empty">No recent vzdump tasks found.</div>'}`;
 
   } catch(e) {
-    el.innerHTML = `<div class="empty">Failed to load backups: ${e.message}</div>`;
+    el.innerHTML = `<div class="empty">Failed to load backups: ${escHtml(e.message)}</div>`;
   }
 }
 
@@ -8255,7 +8255,7 @@ async function loadUsers() {
     usersData.domains = dRes.data || [];
     _renderUsersTab();
   } catch(e) {
-    document.getElementById('users-content').innerHTML = `<div class="empty">Failed to load: ${e.message}</div>`;
+    document.getElementById('users-content').innerHTML = `<div class="empty">Failed to load: ${escHtml(e.message)}</div>`;
   }
 }
 
@@ -8872,7 +8872,7 @@ async function loadCerts() {
         </table>
       </div>`;
   } catch(e) {
-    el.innerHTML = `<div class="empty">Failed to load certificates: ${e.message}</div>`;
+    el.innerHTML = `<div class="empty">Failed to load certificates: ${escHtml(e.message)}</div>`;
   }
 }
 
@@ -9166,7 +9166,7 @@ function ctWizConnChanged() {
   const sl = conn ? (conn.storage||[]) : PVE.storage;
   wiz.cd.storage = (sl.find(s=>(s.content||'').includes('rootdir'))||(sl.find(s=>(s.content||'').includes('images')))||{}).storage||'local-lvm';
   const nodeEl = document.getElementById('wiz-node');
-  if (nodeEl) nodeEl.innerHTML = nl.map(n=>`<option value="${n.node}">${n.node}</option>`).join('');
+  if (nodeEl) nodeEl.innerHTML = nl.map(n=>`<option value="${escHtml(n.node)}">${escHtml(n.node)}</option>`).join('');
 }
 
 function openCreateCTWizard() {
@@ -9209,7 +9209,7 @@ async function wizConnChanged() {
   const storList = conn ? (conn.storage||[]) : PVE.storage;
   wiz.d.storage = (storList.find(s=>(s.content||'').includes('images'))||{}).storage || 'local-lvm';
   const nodeEl = document.getElementById('wiz-node');
-  if (nodeEl) nodeEl.innerHTML = nodeList.map(n=>`<option value="${n.node}">${n.node}</option>`).join('');
+  if (nodeEl) nodeEl.innerHTML = nodeList.map(n=>`<option value="${escHtml(n.node)}">${escHtml(n.node)}</option>`).join('');
 }
 
 function closeWizard(e) {
@@ -9286,7 +9286,7 @@ async function wizRender() {
   if (wiz.step===1) {
     const wizConn = resolveConn(d.connId);
     const nodeList = wizConn ? (wizConn.nodes||[]) : PVE.nodes;
-    const nodeOpts = nodeList.map(n=>`<option value="${n.node}"${n.node===d.node?' selected':''}>${n.node}</option>`).join('');
+    const nodeOpts = nodeList.map(n=>`<option value="${escHtml(n.node)}"${n.node===d.node?' selected':''}>${escHtml(n.node)}</option>`).join('');
     const connOpts = extraConns.length
       ? `<div class="form-group"><label>CLUSTER / HOST</label>
           <select id="wiz-conn" onchange="wizConnChanged()">
@@ -9468,7 +9468,7 @@ async function wizLoadISOs() {
       wiz.isos = all.sort((a,b)=>a.name.localeCompare(b.name));
       wiz.isoLoaded = true;
     } catch(e) {
-      if (panel) panel.innerHTML = `<div class="empty">Failed to load ISOs: ${e.message}</div>`;
+      if (panel) panel.innerHTML = `<div class="empty">Failed to load ISOs: ${escHtml(e.message)}</div>`;
       return;
     }
   }
@@ -9544,7 +9544,7 @@ function wizRenderCT() {
   if (wiz.step===1) {
     const ctWizConn = resolveConn(c.connId);
     const ctNodeList = ctWizConn ? (ctWizConn.nodes||[]) : PVE.nodes;
-    const nodeOpts = ctNodeList.map(n=>`<option value="${n.node}"${n.node===c.node?' selected':''}>${n.node}</option>`).join('');
+    const nodeOpts = ctNodeList.map(n=>`<option value="${escHtml(n.node)}"${n.node===c.node?' selected':''}>${escHtml(n.node)}</option>`).join('');
     const ctConnOpts = extraConns.length
       ? `<div class="form-group"><label>CLUSTER / HOST</label>
           <select id="wiz-conn" onchange="ctWizConnChanged()">
@@ -9696,7 +9696,7 @@ async function ctLoadTemplates() {
       wiz.tmpl = all.sort((a,b)=>a.name.localeCompare(b.name));
       wiz.tmplLoaded = true;
     } catch(e) {
-      if (panel) panel.innerHTML = `<div class="empty">Failed to load templates: ${e.message}</div>`;
+      if (panel) panel.innerHTML = `<div class="empty">Failed to load templates: ${escHtml(e.message)}</div>`;
       return;
     }
   }
@@ -10047,7 +10047,7 @@ async function loadNodeTasks(nodeData) {
           </tbody></table></div>`
       : '<div class="empty">No recent tasks on this node</div>';
   } catch(e) {
-    el.innerHTML = `<div class="empty">Failed: ${e.message}</div>`;
+    el.innerHTML = `<div class="empty">Failed: ${escHtml(e.message)}</div>`;
   }
 }
 
@@ -10094,7 +10094,7 @@ async function loadNodeDNS(nodeData) {
         <button class="btn small primary" onclick="saveNodeTimezone('${node}')">💾 Save Timezone</button>
       </div>`;
   } catch(e) {
-    el.innerHTML = `<div class="empty">Failed: ${e.message}</div>`;
+    el.innerHTML = `<div class="empty">Failed: ${escHtml(e.message)}</div>`;
   }
 }
 
@@ -10132,7 +10132,7 @@ async function loadNodeHosts(nodeData) {
       <input type="hidden" id="nhosts-digest" value="${escHtml(hostsData.digest||'')}"/>
       <button class="btn primary" style="margin-top:10px" onclick="saveNodeHosts()">💾 Save Hosts File</button>`;
   } catch(e) {
-    el.innerHTML = `<div class="empty">Failed: ${e.message}</div>`;
+    el.innerHTML = `<div class="empty">Failed: ${escHtml(e.message)}</div>`;
   }
 }
 
@@ -10204,7 +10204,7 @@ async function loadNodeDisks(nodeData) {
           </tr>`).join('')}
           </tbody></table></div>`:''}`;
   } catch(e) {
-    el.innerHTML = `<div class="empty">Failed: ${e.message}</div>`;
+    el.innerHTML = `<div class="empty">Failed: ${escHtml(e.message)}</div>`;
   }
 }
 
@@ -10245,7 +10245,7 @@ async function openNodeSMARTModal(devpath, node) {
         </table>
       </div>`:'<div class="empty">No S.M.A.R.T attributes available for this device</div>'}`;
   } catch(e) {
-    document.getElementById('modal-body').innerHTML = `<div class="empty">Failed: ${e.message}</div>`;
+    document.getElementById('modal-body').innerHTML = `<div class="empty">Failed: ${escHtml(e.message)}</div>`;
   }
 }
 
@@ -10283,7 +10283,7 @@ async function loadNodeServices(nodeData) {
         </tr>`).join('')}
         </tbody></table></div>`;
   } catch(e) {
-    el.innerHTML = `<div class="empty">Failed: ${e.message}</div>`;
+    el.innerHTML = `<div class="empty">Failed: ${escHtml(e.message)}</div>`;
   }
 }
 
@@ -10434,7 +10434,7 @@ async function loadDetailHardware(item) {
 
       ${running?`<div style="margin-top:12px;padding:8px 12px;background:rgba(210,153,34,.1);border:1px solid rgba(210,153,34,.3);border-radius:var(--radius);font-size:12px;color:var(--yellow)">⚠ Some hardware changes require the VM to be stopped to take effect.</div>`:''}`;
   } catch(e) {
-    el.innerHTML = `<div class="empty">Failed to load hardware: ${e.message}</div>`;
+    el.innerHTML = `<div class="empty">Failed to load hardware: ${escHtml(e.message)}</div>`;
   }
 }
 
@@ -10743,7 +10743,7 @@ async function loadDetailOptions(item) {
         </div>
       </form>`;
   } catch(e) {
-    el.innerHTML = `<div class="empty">Failed to load options: ${e.message}</div>`;
+    el.innerHTML = `<div class="empty">Failed to load options: ${escHtml(e.message)}</div>`;
   }
 }
 
@@ -10821,7 +10821,7 @@ async function loadDetailBackup(item) {
         </tbody></table></div>`
       :`<div class="empty">No backups found for this VM.<br><span style="font-size:12px">Click <strong>+ Create Backup</strong> to create one.</span></div>`}`;
   } catch(e) {
-    el.innerHTML = `<div class="empty">Failed to load backups: ${e.message}</div>`;
+    el.innerHTML = `<div class="empty">Failed to load backups: ${escHtml(e.message)}</div>`;
   }
 }
 
@@ -10994,7 +10994,7 @@ async function loadDetailVMFirewall(item) {
           </table>
         </div>` : `<div class="empty">No firewall rules defined for this ${item.type.toUpperCase()}.<br><span style="font-size:12px">Rules can be added in the Proxmox web UI → VM → Firewall.</span></div>`}`;
   } catch(e) {
-    el.innerHTML = `<div class="empty">Failed to load firewall rules: ${e.message}</div>`;
+    el.innerHTML = `<div class="empty">Failed to load firewall rules: ${escHtml(e.message)}</div>`;
   }
 }
 
@@ -11057,7 +11057,7 @@ async function loadAudit() {
 
     filterAudit();
   } catch(e) {
-    tbody.innerHTML = `<tr><td colspan="7" class="empty">Failed to load audit log: ${e.message}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="7" class="empty">Failed to load audit log: ${escHtml(e.message)}</td></tr>`;
   }
 }
 
@@ -11261,7 +11261,7 @@ async function loadClusterGraphs() {
     cgCharts.dskr   = mk('cg-dskr',  dskRSets);
 
   } catch(e) {
-    el.innerHTML = `<div class="empty">Failed to load cluster graphs: ${e.message}</div>`;
+    el.innerHTML = `<div class="empty">Failed to load cluster graphs: ${escHtml(e.message)}</div>`;
   }
 }
 
@@ -11679,7 +11679,7 @@ async function openPrepareTemplateModal(node, vmid, type, name, connId='') {
     _renderPrepModal(node, vmid, ep, name, connId, cfg, isRunning, hasCI, hasAgent, {});
   } catch(e) {
     document.getElementById('modal-body').innerHTML =
-      `<div class="empty">Failed to load VM: ${e.message}</div>`;
+      `<div class="empty">Failed to load VM: ${escHtml(e.message)}</div>`;
     btn.textContent = 'Confirm'; btn.disabled = false;
   }
 }
@@ -12033,7 +12033,7 @@ async function _scheduleTick() {
     _scheduleExecute(s).catch(e => {
       addNotif('schedule_err', 'error',
         `Schedule failed — ${s.name}`,
-        `${s.action} on ${s.vmName||s.vmid}: ${e.message}`,
+        `${s.action} on ${s.vmName||s.vmid}: ${escHtml(e.message)}`,
         `sched-err-${s.id}-${Math.floor(now/3600000)}`);
     });
 
@@ -12193,7 +12193,7 @@ async function _runScheduleNow(id) {
     await _scheduleExecute(s);
     const all = getSchedules(); const sx = all.find(x => x.id === id);
     if (sx) { sx.lastRun = Date.now(); saveSchedules(all); loadSchedules(); }
-  } catch(e) { toast(`Failed: ${e.message}`, 'error'); }
+  } catch(e) { toast(`Failed: ${escHtml(e.message)}`, 'error'); }
 }
 
 function openCreateScheduleModal(editId) {
@@ -12552,7 +12552,7 @@ function openCloneModal(node, vmid, type, name, connId='', preselectedSpecId='')
   const allUsed = new Set(allVMs().concat(allCTs()).map(x=>x.vmid));
   let nextID = parseInt(vmid)+1; while(allUsed.has(nextID)) nextID++;
   const nodeList = conn ? conn.nodes : PVE.nodes;
-  const nodeOpts = nodeList.map(n=>`<option value="${n.node}"${n.node===node?' selected':''}>${n.node}</option>`).join('');
+  const nodeOpts = nodeList.map(n=>`<option value="${escHtml(n.node)}"${n.node===node?' selected':''}>${escHtml(n.node)}</option>`).join('');
   const specs = getCustomSpecs();
   const specOpts = `<option value="">— none —</option>` +
     specs.map(s=>`<option value="${s.id}"${s.id===preselectedSpecId?' selected':''}>${escHtml(s.name)}</option>`).join('');
@@ -12654,7 +12654,7 @@ async function doCloneVM(srcNode, srcVMID, type, connId='') {
           await applyCustomSpec(applyNode, newid, specId, name, conn);
           toast(`Customisation spec applied to VM ${newid}`, 'success');
         } catch(e) {
-          toast(`Clone OK but spec apply failed: ${e.message}`, 'warning');
+          toast(`Clone OK but spec apply failed: ${escHtml(e.message)}`, 'warning');
         }
       }, 3000);
     }
@@ -13152,7 +13152,7 @@ async function loadISOLibrary() {
 
   try {
     await Promise.all(fetchList.map(async ({node, get, connId}) => {
-      const storRes = await get(`/api2/json/nodes/${node}/storage`).catch(e=>{diagLines.push(`Storage failed (${node}): ${e.message}`);return {data:[]};});
+      const storRes = await get(`/api2/json/nodes/${node}/storage`).catch(e=>{diagLines.push(`Storage failed (${node}): ${escHtml(e.message)}`);return {data:[]};});
       const stores = storRes.data || [];
       await Promise.all(stores.map(async s => {
         const d = await get(`/api2/json/nodes/${node}/storage/${s.storage}/content`).catch(()=>({data:[]}));
@@ -14189,7 +14189,7 @@ function removeConn(connId) {
 }
 
 function openAddConnectionModal() {
-  const nodeOpts = PVE.nodes.map(n=>`<option value="${n.node}">${n.node}</option>`).join('');
+  const nodeOpts = PVE.nodes.map(n=>`<option value="${escHtml(n.node)}">${escHtml(n.node)}</option>`).join('');
   document.getElementById('modal-title').textContent = 'Add Cluster / Standalone Host';
   document.getElementById('modal-body').innerHTML = `
     <p style="color:var(--muted);font-size:12px;margin-bottom:14px">
@@ -14402,7 +14402,7 @@ async function runCapacityAnalysis() {
           const cpuT=_trendLabel(f.cpuReg?.slopePerDay||0), memT=_trendLabel(f.memReg?.slopePerDay||0), rootT=_trendLabel(f.rootReg?.slopePerDay||0);
           const worst=_urgencyColor(f.minDays);
           return `<tr>
-            <td><strong>${f.node}</strong></td>
+            <td><strong>${escHtml(f.node)}</strong></td>
             <td>${f.cpuCur.toFixed(1)}%</td>
             <td style="color:${cpuT.col};font-size:12px">${cpuT.icon} ${cpuT.text}</td>
             <td style="color:${cpu.col};font-weight:600">${cpu.label}</td>
@@ -14428,7 +14428,7 @@ async function runCapacityAnalysis() {
           const bar=`<div class="gauge-wrap"><span style="min-width:36px;font-size:12px">${s.pct.toFixed(0)}%</span><div class="gauge-bar"><div class="gauge-fill ${gaugeClass(s.pct)}" style="width:${Math.min(s.pct,100)}%"></div></div></div>`;
           return `<tr>
             <td><strong>${escHtml(s.storage)}</strong></td>
-            <td style="color:var(--muted)">${s.node}</td>
+            <td style="color:var(--muted)">${escHtml(s.node)}</td>
             <td><span class="type-chip vm">${escHtml(s.type||'?')}</span></td>
             <td style="min-width:120px">${bar}</td>
             <td style="font-size:12px;color:var(--muted)">${fmtBytes(s.avail||0)}</td>
@@ -14545,7 +14545,7 @@ async function runCapacityAnalysis() {
     }
 
   } catch(e) {
-    el.innerHTML=`<div class="empty">Analysis failed: ${e.message}</div>`;
+    el.innerHTML=`<div class="empty">Analysis failed: ${escHtml(e.message)}</div>`;
   }
 }
 
@@ -14927,7 +14927,7 @@ async function enforceRule(id) {
       const upid=res&&res.data;
       if(upid&&typeof upid==='string') tmRegister(upid,f.vm.node,`Affinity fix: ${f.vm.vmid} → ${f.toNode}`);
       toast(`${f.vm.name||f.vm.vmid} → ${f.toNode} started`,'success');
-    }catch(e){ toast(`Failed: ${e.message}`,'error'); }
+    }catch(e){ toast(`Failed: ${escHtml(e.message)}`,'error'); }
     await new Promise(r=>setTimeout(r,500));
   }
     setTimeout(renderAffinityView,3000);
@@ -15254,7 +15254,7 @@ async function executeDRSMigration(idx) {
     skipDRSRecommendation(idx);
   } catch(e) {
     if(row) row.style.opacity='1';
-    toast(`Migration failed: ${e.message}`,'error');
+    toast(`Migration failed: ${escHtml(e.message)}`,'error');
   }
 }
 
@@ -15574,7 +15574,7 @@ async function executeStorageDiskMove(idx) {
     if (row) row.style.display = 'none';
   } catch(e) {
     if (row) row.style.opacity = '1';
-    toast(`Disk move failed: ${e.message}`, 'error');
+    toast(`Disk move failed: ${escHtml(e.message)}`, 'error');
   }
 }
 
@@ -15718,7 +15718,7 @@ async function loadDatacenter() {
     dcData.repl   = replRes.data   || [];
     _renderDCTab();
   } catch(e) {
-    el.innerHTML = `<div class="empty">Failed to load datacenter data: ${e.message}</div>`;
+    el.innerHTML = `<div class="empty">Failed to load datacenter data: ${escHtml(e.message)}</div>`;
   }
 }
 
@@ -15940,7 +15940,7 @@ function _renderDCTab() {
               <td style="font-size:12px;${col?'color:'+col:''};word-break:break-word">${escHtml(e.msg||'—')}</td>
             </tr>`;}).join('')||'<tr><td colspan="5" class="empty">No log entries</td></tr>'}
           </tbody></table></div>`;
-    }).catch(e=>{ el.innerHTML=`<div class="empty">Failed: ${e.message}</div>`; });
+    }).catch(e=>{ el.innerHTML=`<div class="empty">Failed: ${escHtml(e.message)}</div>`; });
   }
 }
 
@@ -16129,7 +16129,7 @@ async function _renderMigrationNetworkTab(el, conn, get) {
     if (cidrEl) cidrEl._nodes   = clusterNodes;
 
   } catch(e) {
-    el.innerHTML = `<div class="empty">Failed to load migration config: ${e.message}</div>`;
+    el.innerHTML = `<div class="empty">Failed to load migration config: ${escHtml(e.message)}</div>`;
   }
 }
 
@@ -16211,7 +16211,7 @@ async function _saveMigrationNetwork() {
 // ── REPLICATION JOBS ──────────────────────────────────────
 function openCreateReplModal() {
   const nodes = (resolveConn(dcData.connId)?resolveConn(dcData.connId).nodes:PVE.nodes)||[];
-  const nodeOpts = nodes.map(n=>`<option value="${n.node}">${n.node}</option>`).join('');
+  const nodeOpts = nodes.map(n=>`<option value="${escHtml(n.node)}">${escHtml(n.node)}</option>`).join('');
   const vms = allVMs().concat(allCTs());
   const vmOpts = vms.map(x=>`<option value="${x.vmid}">${x.type.toUpperCase()} ${x.vmid} — ${escHtml(x.name||String(x.vmid))} (${x.node})</option>`).join('');
 
@@ -16341,7 +16341,7 @@ async function loadUpdates() {
   const nodes = conn ? (conn.nodes||[]) : PVE.nodes;
 
   const nf = document.getElementById('updates-node-filter');
-  if (nf) nf.innerHTML = '<option value="">All Nodes</option>' + nodes.map(n=>`<option value="${n.node}">${n.node}</option>`).join('');
+  if (nf) nf.innerHTML = '<option value="">All Nodes</option>' + nodes.map(n=>`<option value="${escHtml(n.node)}">${escHtml(n.node)}</option>`).join('');
 
   rawUpdates = {};
   try {
@@ -16437,7 +16437,7 @@ async function refreshPackageList(node) {
     if (upid && typeof upid === 'string') tmRegister(upid, node, `apt update on ${node}`);
     toast(`apt update started on ${node}`, 'success');
     setTimeout(loadUpdates, 4000);
-  } catch(e) { toast(`apt update failed on ${node}: ${e.message}`, 'error'); }
+  } catch(e) { toast(`apt update failed on ${node}: ${escHtml(e.message)}`, 'error'); }
 }
 
 // ── PROXMOX BACKUP SERVER (PBS) ───────────────────────────
@@ -17039,7 +17039,7 @@ async function _whTest(id) {
     await _sendWebhook(w, payload);
     toast(`Test sent to "${w.name}" — check your endpoint`, 'success');
   } catch(e) {
-    toast(`Test failed: ${e.message}`, 'error');
+    toast(`Test failed: ${escHtml(e.message)}`, 'error');
   }
 }
 
@@ -17505,7 +17505,7 @@ function _renderHPTab() {
             </tr>`).join('')}
             </tbody></table></div>
         </div>`;
-    }).catch(e=>{ el.innerHTML=`<div class="empty">Failed to load cluster info: ${e.message}</div>`; });
+    }).catch(e=>{ el.innerHTML=`<div class="empty">Failed to load cluster info: ${escHtml(e.message)}</div>`; });
   }
 
   // ── ANSWER FILE TAB ──────────────────────────────────────
@@ -17786,7 +17786,7 @@ async function _hpSnapshotCapture() {
 // ── PROFILE CAPTURE ───────────────────────────────────────
 
 async function openCaptureProfileModal() {
-  const nodeOpts=allNodes().map(n=>`<option value="${n.node}">${n.node}${n.connId?' ('+getConnName(n.connId)+')':''}</option>`).join('');
+  const nodeOpts=allNodes().map(n=>`<option value="${escHtml(n.node)}">${n.node}${n.connId?' ('+getConnName(n.connId)+')':''}</option>`).join('');
   document.getElementById('modal-title').textContent='Capture Host Profile';
   document.getElementById('modal-body').innerHTML=`
     <p style="color:var(--muted);font-size:13px;margin-bottom:14px">
@@ -17904,7 +17904,7 @@ async function runComplianceCheck() {
         const search=r.checks.find(c=>c.key==='DNS Search');
         const tz=r.checks.find(c=>c.key==='Timezone');
         return `<tr>
-          <td><strong>${r.node}</strong></td>
+          <td><strong>${escHtml(r.node)}</strong></td>
           <td>${mk(dns)}</td><td>${mk(search)}</td><td>${mk(tz)}</td>
           <td>${r.drift.length?`<span class="badge stopped" style="font-size:10px"><span class="badge-dot"></span>${r.drift.length} drift${r.drift.length!==1?'s':''}</span>`:'<span class="badge running" style="font-size:10px"><span class="badge-dot"></span>compliant</span>'}</td>
           <td onclick="event.stopPropagation()">
@@ -17964,7 +17964,7 @@ async function applyProfileToNode(profileId, node, connId, silent=false) {
       else await pvePut(`/api2/json/nodes/${node}/time`,{timezone:s.timezone});
     }
     if(!silent) toast(`Profile applied to ${node}`,'success');
-  } catch(e){ toast(`Apply to ${node} failed: ${e.message}`,'error'); }
+  } catch(e){ toast(`Apply to ${node} failed: ${escHtml(e.message)}`,'error'); }
 }
 
 function openEditProfileModal(id) {
@@ -18174,7 +18174,7 @@ async function openDrainNodeModal(nodeData) {
   );
   const hasLocalStorage = localStores.length > 0;
 
-  const nodeOpts = otherNodes.map(n=>`<option value="${n.node}">${n.node}</option>`).join('');
+  const nodeOpts = otherNodes.map(n=>`<option value="${escHtml(n.node)}">${escHtml(n.node)}</option>`).join('');
 
   document.getElementById('modal-title').textContent = inMaint
     ? `Exit Maintenance — ${node}` : `Drain Node — ${node}`;
@@ -18328,7 +18328,7 @@ async function openDrainNodeModal(nodeData) {
         log(`[ ok ] ${x.name||x.vmid} → ${target}`,'var(--green)');
         ok++; await new Promise(r=>setTimeout(r,600));
       } catch(e) {
-        log(`[fail] ${x.name||x.vmid}: ${e.message}`,'var(--red)'); fail++;
+        log(`[fail] ${x.name||x.vmid}: ${escHtml(e.message)}`,'var(--red)'); fail++;
       }
     }
 
@@ -18456,7 +18456,7 @@ async function loadTagsView() {
           <td><span class="type-chip ${x.type==='vm'?'vm':'ct'}">${x.type.toUpperCase()}</span></td>
           <td style="color:var(--muted);font-size:12px">${x.vmid}</td>
           <td><strong>${escHtml(x.name||String(x.vmid))}</strong></td>
-          <td style="color:var(--muted);font-size:12px">${x.node}</td>
+          <td style="color:var(--muted);font-size:12px">${escHtml(x.node)}</td>
           <td>${statusBadge(x.status)}</td>
           <td>${renderTagChips(parseTags(x.tags||''))||'<span style="font-size:11px;color:var(--muted)">—</span>'}</td>
           <td onclick="event.stopPropagation()">
@@ -18465,7 +18465,7 @@ async function loadTagsView() {
         </tr>`).join('')||'<tr><td colspan="7" class="empty">No VMs or containers</td></tr>'}
         </tbody></table></div>`;
   } catch(e) {
-    el.innerHTML=`<div class="empty">Failed: ${e.message}</div>`;
+    el.innerHTML=`<div class="empty">Failed: ${escHtml(e.message)}</div>`;
   }
 }
 
@@ -18687,8 +18687,8 @@ function openCreateViewModal(existingView) {
   const f = v.filters||{};
 
   const nodeOpts = ['<option value="">All Nodes</option>',
-    ...PVE.nodeStatuses.map(n=>`<option value="${n.node}"${f.node===n.node?' selected':''}>${escHtml(n.node)}</option>`),
-    ...extraConns.flatMap(c=>(c.nodeStatuses||[]).map(n=>`<option value="${n.node}"${f.node===n.node?' selected':''}>${escHtml((c.name||c.host)+': '+n.node)}</option>`))
+    ...PVE.nodeStatuses.map(n=>`<option value="${escHtml(n.node)}"${f.node===n.node?' selected':''}>${escHtml(n.node)}</option>`),
+    ...extraConns.flatMap(c=>(c.nodeStatuses||[]).map(n=>`<option value="${escHtml(n.node)}"${f.node===n.node?' selected':''}>${escHtml((c.name||c.host)+': '+n.node)}</option>`))
   ].join('');
 
   const connOpts = ['<option value="">All Clusters/Hosts</option>',
@@ -19770,7 +19770,7 @@ async function checkSubNow(node, connId) {
 
 function openUploadISOModal() {
   const node = PVE.nodes[0] && PVE.nodes[0].node || '';
-  const nodeOpts = PVE.nodes.map(n=>`<option value="${n.node}">${n.node}</option>`).join('');
+  const nodeOpts = PVE.nodes.map(n=>`<option value="${escHtml(n.node)}">${escHtml(n.node)}</option>`).join('');
   const storOpts = ulBuildStorageOpts(node, 'iso');
 
   document.getElementById('modal-title').textContent = 'Upload ISO / CT Template';
@@ -19946,7 +19946,7 @@ async function openDownloadTemplatesModal() {
   const tmplStores = (storRes.data||[]).filter(s=>(s.content||'').includes('vztmpl'));
   dlState.storage = (tmplStores[0]||{}).storage || 'local';
 
-  const nodeOpts = PVE.nodes.map(n=>`<option value="${n.node}">${n.node}</option>`).join('');
+  const nodeOpts = PVE.nodes.map(n=>`<option value="${escHtml(n.node)}">${escHtml(n.node)}</option>`).join('');
   const storOpts = tmplStores.map(s=>`<option value="${s.storage}">${s.storage}</option>`).join('') || '<option value="local">local</option>';
 
   el.innerHTML = `
@@ -20072,7 +20072,7 @@ async function doDownloadSelected() {
       if (upid && typeof upid === 'string') tmRegister(upid, node, `Download ${filename}`);
       started++;
     } catch(e) {
-      toast(`Download failed for ${filename}: ${e.message}`, 'error');
+      toast(`Download failed for ${filename}: ${escHtml(e.message)}`, 'error');
     }
   }
 
