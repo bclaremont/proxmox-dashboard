@@ -3943,9 +3943,12 @@ async function loadSyslog() {
   if (!node) return;
   document.getElementById('syslog-body').innerHTML='<tr><td colspan="2" class="empty"><span class="loading"></span> Loading…</td></tr>';
   try {
-    // GET /api2/json/nodes/{node}/syslog
-    const limit = document.getElementById('syslog-limit')?.value || '500';
-    const d = await get(`/api2/json/nodes/${node}/syslog?limit=${limit}`);
+    // GET /api2/json/nodes/{node}/syslog — fetch tail by getting total first
+    const limit = parseInt(document.getElementById('syslog-limit')?.value || '500', 10);
+    const head  = await get(`/api2/json/nodes/${node}/syslog?limit=1`);
+    const total = head.total || 0;
+    const start = Math.max(0, total - limit);
+    const d = await get(`/api2/json/nodes/${node}/syslog?limit=${limit}&start=${start}`);
     rawSyslog = d.data||[];
     filterSyslog();
   } catch(e) {
