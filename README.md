@@ -154,11 +154,15 @@ For production use with HTTPS, team logins and 24/7 scheduling, see the [standal
 - Map tiles served from **EU infrastructure** (FOSSGIS e.V., Germany) with a consent gate
 - Proxmox API tokens **encrypted at rest** (AES-256-GCM)
 - Login **rate limiting** (per-IP) + **account lockout** (per-username)
-- JWT **revocation on logout**, 4-hour token expiry with auto-refresh
-- **IP allowlist** — restrict PCC to named CIDR ranges (standalone mode)
+- JWT **revocation on logout**, 4-hour token expiry with auto-refresh; minimum 32-char secret enforced at startup
+- **IP allowlist** — restrict PCC access to named CIDR ranges (standalone mode)
 - **Login activity log** — every attempt recorded with IP, UA, success/failure
 - **Idle session timeout** — configurable auto-logout with 60-second warning
 - Full **audit log** of all write operations including auth events
+- **SSRF protection** — cluster host URLs validated at save time; localhost, loopback and link-local addresses rejected
+- **Security response headers** — CSP (`default-src 'none'`), `X-Frame-Options: DENY`, `X-Content-Type-Options`, `Referrer-Policy` on all API responses
+- **XSS prevention** — all PVE API data (node names, task fields, snapshot names, error messages) escaped before HTML rendering; onclick handlers use `data-*` attributes throughout
+- **Role-gated shared state** — scheduler-executable keys (`pve-schedules` etc.) require admin role; user-role accounts cannot trigger VM operations
 - See the [Security reference](SETUP.md#security-reference) in SETUP.md for full details
 
 ---

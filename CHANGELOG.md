@@ -8,6 +8,46 @@ All notable changes to PCC are documented here.
 
 ---
 
+## Security hardening — XSS, privilege escalation, SSRF, CRLF (2026-06)
+
+### Fixed
+- **Privilege escalation via shared state** — `PUT /api/shared/:key` now blocks `user`-role accounts from writing `pve-schedules`, `pve-webhooks`, and `pve-alert-thresholds`; previously any authenticated user could inject VM operations into the backend scheduler
+- **Stored XSS — snapshot onclick handlers** — snapshot Rollback/Delete buttons now use `data-*` attributes instead of interpolating snapshot names into `onclick=""` strings; a crafted snapshot name could deliver JS to any admin opening that VM's detail panel
+- **Stored XSS — task log** — `taskRow()` and the backup task inline row now escape `node`, `user`, `type`, `id/vmid` via `escHtml()` before innerHTML rendering
+- **Stored XSS — schedule view** — `loadSchedules()` escapes `vmid`, `node`, `action` and uses `data-id` on all action buttons; combined with the shared-state fix above this closed a complete stored XSS chain
+- **XSS — node cards view** — `n.node` and `d.pveversion` in `_renderNodeCardsView()` now wrapped in `escHtml()`
+- **CRLF injection — VNC WebSocket** — upgrade handler now validates `port` (integer 1–65535), `node/ep/vmid` (alphanumeric), and `vncticket` (no CR/LF) before embedding in raw TCP headers
+- **`e.message` in innerHTML** — 47 error handler locations that inserted raw `${e.message}` into `innerHTML` or `toast()` now use `${escHtml(e.message)}`; prevents XSS if a proxied cluster returns HTML in its HTTP error body
+- **Node names unescaped in DOM** — 59 occurrences of `${n.node}` / `${v.node}` / `${s.node}` in `<option>` text/value, table cells, and headings now wrapped in `escHtml()`
+- **Undefined variable in audit log** — proxy route was logging `targetPath` (undefined) instead of `pveRelPath`; write operations now correctly recorded in the audit log
+- **Proxy error message** — raw `err.message` (could contain internal hostnames) no longer returned to the client; logged server-side only
+- **Node config snapshots** — `GET /api/node-snapshots` now requires admin role; full node network/storage topology should not be readable by user-role accounts
+
+### Added
+- **SSRF protection** — `validateClusterHost()` rejects cluster hosts pointing at localhost, 127.x, ::1, 0.0.0.0 or link-local addresses (169.254.x) at cluster create/update time
+- **Security response headers** — `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`, `Content-Security-Policy: default-src 'none'; frame-ancestors 'none'` added globally on all API responses
+- **JWT_SECRET minimum length** — server refuses to start if `JWT_SECRET` is shorter than 32 characters
+
+---
+
+## UX improvements — pins, search, sparklines, inline expand, snap badges (2026-06)
+
+### Added
+- **Pin favourites** — `★` button on every VM/CT row pins it to the top of the table with a visual separator; pin state persisted in localStorage; `☆` to unpin; pins survive view switches and refreshes
+- **Persistent sort/search state** — active sort column, sort direction, and search query for VM, CT, and Node tables all saved to localStorage and restored on next visit
+- **Snapshot age badges** — each VM/CT row shows a coloured badge when it has snapshots: yellow if the oldest is >7 days, red if >30 days; fetched in background batches of 5 with a 5-minute TTL
+- **Inline row expand** — `›` button on each VM/CT row inserts an expand panel below showing Disks, Network interfaces, Snapshots (latest 5 with age colour) and Notes without opening the full detail panel
+- **Search with highlight** — VM and CT search boxes highlight matched text in orange; search query persisted across refreshes; search bar expands on focus
+- **Node sparklines** — CPU and RAM history sparklines (last 20 data points) shown on sidebar node entries; CPU in accent orange, RAM in blue; ring buffer updated each refresh
+- **Node hot badge** — amber dot appears on the sidebar Nodes navigation item when any node exceeds 85% CPU or RAM
+- **Clickable overview stat cards** — "Running VMs & CTs", "Stopped VMs & CTs", "Offline Nodes" and "Storage Warnings" cards on the Overview are now clickable and navigate directly to the relevant filtered view
+- **Syslog export** — Export button downloads the current (filtered) syslog as a dated `.log` file (`syslog-{node}-{datetime}.log`)
+- **Syslog status counter** — shows `{node}: last N of M entries` so you know how much of the log is loaded; updates when node or line count changes
+- **Overview health warning dismiss** — Acknowledge and Dismiss buttons on Overview health warning rows
+- **Syslog default** — changed from 15 visible lines (CSS clipping) to 100 lines fetched by default; line count selector available (100 / 500 / 1000 / All)
+
+---
+
 ## Command palette, nodes table view, refresh indicator (2026-06)
 
 ### Added
