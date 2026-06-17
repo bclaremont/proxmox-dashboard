@@ -551,7 +551,13 @@ app.get('/api/shared/:key', authMiddleware, (req, res) => {
   res.json({ value: row ? row.value : null });
 });
 
+// Keys that execute server-side actions (scheduler, webhooks) are admin-only.
+// A user-role account writing these could trigger VM operations via the backend scheduler.
+const SHARED_ADMIN_KEYS = new Set(['pve-schedules', 'pve-webhooks', 'pve-alert-thresholds']);
+
 app.put('/api/shared/:key', authMiddleware, bodyParser, (req, res) => {
+  if (SHARED_ADMIN_KEYS.has(req.params.key) && req.user?.role !== 'admin')
+    return res.status(403).json({ error: 'Admins only' });
   const { value } = req.body || {};
   if (value === undefined) return res.status(400).json({ error: 'value required' });
   db.prepare('INSERT OR REPLACE INTO shared_state (key, value, updated_at, updated_by) VALUES (?,?,unixepoch(),?)')
@@ -673,7 +679,7 @@ app.all('/proxy/:clusterId/*', authMiddleware, (req, res) => {
 
 // ── NODE CONFIG SNAPSHOTS ─────────────────────────────────
 
-app.get('/api/node-snapshots', authMiddleware, (req, res) => {
+app.get('/api/node-snapshots', authMiddleware, adminOnly, (req, res) => {
   const limit   = Math.min(parseInt(req.query.limit) || 200, 1000);
   const cluster = req.query.cluster || null;
   const node    = req.query.node    || null;
@@ -714,15 +720,24 @@ server.on('upgrade', (req, socket, head) => {
   if (!match) { socket.destroy(); return; }
 
   const [, clusterId, node, ep, vmid] = match;
-  const port      = parsedUrl.searchParams.get('port');
-  const ticket    = parsedUrl.searchParams.get('vncticket');
+  const port      = parseInt(parsedUrl.searchParams.get('port') || '0', 10);
+  const ticket    = parsedUrl.searchParams.get('vncticket') || '';
   const pccToken  = parsedUrl.searchParams.get('token');
+
+  // Strict input validation to prevent CRLF injection into the raw HTTP Upgrade headers.
+  const _safeId = /^[a-zA-Z0-9_.-]{1,128}$/;
+  if (!_safeId.test(node) || !_safeId.test(ep) || (vmid && !_safeId.test(vmid))) {
+    socket.destroy(); return;
+  }
+  if (!port || port < 1 || port > 65535) { socket.destroy(); return; }
+  // vncticket is base64+URL chars; reject anything with CR/LF
+  if (/[\r\n]/.test(ticket)) { socket.destroy(); return; }
 
   // Verify PCC JWT
   try { jwt.verify(pccToken, JWT_SECRET); } catch { socket.destroy(); return; }
 
   const cluster = db.prepare('SELECT * FROM clusters WHERE id = ?').get(clusterId);
-  if (!cluster || !port || !ticket) { socket.destroy(); return; }
+  if (!cluster || !ticket) { socket.destroy(); return; }
 
   // Build target WebSocket URL on the PVE host
   let targetUrl;

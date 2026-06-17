@@ -5470,7 +5470,7 @@ function _renderNodeCardsView(flatNodes, multiCluster) {
     const memPct = d.memPct.toFixed(0);
     const memStr = `${fmtBytes(d.memUsed)}/${fmtBytes(d.memTot)}`;
     return `<div class="node-card ${d.online?'online':'offline'}" onclick="openNodeDetail(${JSON.stringify(n).replace(/"/g,'&quot;')})">
-      <div class="node-card-header"><span class="node-name">${n.node}</span>
+      <div class="node-card-header"><span class="node-name">${escHtml(n.node)}</span>
         <div style="display:flex;gap:5px;align-items:center">
           ${statusBadge(d.online?'online':'offline')}
           ${isMaintenanceMode(n.node)?'<span class="badge warning" style="font-size:9px">🔧 MAINTENANCE</span>':''}
@@ -5481,7 +5481,7 @@ function _renderNodeCardsView(flatNodes, multiCluster) {
       <div class="node-metric"><span class="key">Memory</span><span>${memPct}%</span></div>
       <div class="gauge-bar" style="margin-bottom:10px"><div class="gauge-fill ${gaugeClass(memPct)}" style="width:${Math.min(memPct,100)}%"></div></div>
       <div class="node-metric"><span class="key">RAM</span><span style="color:var(--muted)">${memStr}</span></div>
-      <div class="node-metric"><span class="key">PVE</span><span style="color:var(--muted)">${d.pveversion}</span></div>
+      <div class="node-metric"><span class="key">PVE</span><span style="color:var(--muted)">${escHtml(d.pveversion)}</span></div>
       <div class="node-metric"><span class="key">Uptime</span><span style="color:var(--muted)">${fmtUptime(d.uptime)}</span></div>
       <div style="margin-top:10px;color:var(--muted);font-size:11px">Click for details & graphs →</div>
     </div>`;
@@ -5597,11 +5597,11 @@ function taskRow(t, showNode=false){
   const rowClass=isErr?'task-row-err':isRun?'task-row-run':'task-row-ok';
   return `<tr class="${rowClass}">
     <td style="font-size:12px;white-space:nowrap">${start}</td>
-    <td style="color:var(--muted)">${t.node||'—'}</td>
-    <td style="color:var(--muted);font-size:12px">${t.user||'—'}</td>
-    <td>${t.type||'—'}</td>
-    <td style="color:var(--muted);font-size:12px">${t.id||t.vmid||'—'}</td>
-    <td>${isOk?'<span class="badge ok">OK</span>':isRun?'<span class="badge warning">Running</span>':`<span class="badge error" title="${escHtml(st)}">${st.substring(0,30)}</span>`}</td>
+    <td style="color:var(--muted)">${escHtml(t.node||'—')}</td>
+    <td style="color:var(--muted);font-size:12px">${escHtml(t.user||'—')}</td>
+    <td>${escHtml(t.type||'—')}</td>
+    <td style="color:var(--muted);font-size:12px">${escHtml(String(t.id||t.vmid||'—'))}</td>
+    <td>${isOk?'<span class="badge ok">OK</span>':isRun?'<span class="badge warning">Running</span>':`<span class="badge error" title="${escHtml(st)}">${escHtml(st.substring(0,30))}</span>`}</td>
     <td style="color:var(--muted);font-size:12px">${dur}</td>
   </tr>`;
 }
@@ -7188,8 +7188,14 @@ async function loadDetailSnapshots(item) {
             ${s.vmstate ? '<div class="snap-meta">💾 VM state included</div>' : ''}
           </div>
           <div class="actions-row">
-            <button class="btn small success" onclick="rollbackSnapshot('${item.node}','${item.vmid}','${item.type}','${s.name}')">Rollback</button>
-            <button class="btn small danger" onclick="deleteSnapshot('${item.node}','${item.vmid}','${item.type}','${s.name}')">Delete</button>
+            <button class="btn small success"
+              data-node="${escHtml(item.node)}" data-vmid="${escHtml(String(item.vmid))}"
+              data-type="${escHtml(item.type)}" data-snap="${escHtml(s.name)}"
+              onclick="rollbackSnapshot(this.dataset.node,this.dataset.vmid,this.dataset.type,this.dataset.snap)">Rollback</button>
+            <button class="btn small danger"
+              data-node="${escHtml(item.node)}" data-vmid="${escHtml(String(item.vmid))}"
+              data-type="${escHtml(item.type)}" data-snap="${escHtml(s.name)}"
+              onclick="deleteSnapshot(this.dataset.node,this.dataset.vmid,this.dataset.type,this.dataset.snap)">Delete</button>
           </div>
         </div>`).join('') : '<div class="empty">No snapshots yet</div>'}`;
   } catch(e) {
@@ -8190,11 +8196,11 @@ async function loadBackups() {
               const isRun = !t.status || t.status === 'running';
               return `<tr class="${isOk ? 'tr-ok' : isRun ? 'tr-run' : 'tr-err'}">
                 <td style="font-size:12px;white-space:nowrap">${t.starttime ? new Date(t.starttime * 1000).toLocaleString() : '—'}</td>
-                <td style="color:var(--muted)">${t.node || '—'}</td>
-                <td style="color:var(--muted)">${t.id || t.vmid || '—'}</td>
+                <td style="color:var(--muted)">${escHtml(t.node || '—')}</td>
+                <td style="color:var(--muted)">${escHtml(String(t.id || t.vmid || '—'))}</td>
                 <td>${isOk ? '<span class="badge running"><span class="badge-dot"></span>OK</span>' : isRun ? '<span class="badge paused"><span class="badge-dot"></span>Running</span>' : `<span class="badge stopped" title="${escHtml(t.status || '')}"><span class="badge-dot"></span>Error</span>`}</td>
                 <td style="font-size:12px;color:var(--muted)">${t.endtime && t.starttime ? fmtUptime(t.endtime - t.starttime) : '—'}</td>
-                <td style="font-size:12px;color:var(--muted)">${t.user || '—'}</td>
+                <td style="font-size:12px;color:var(--muted)">${escHtml(t.user || '—')}</td>
               </tr>`;
             }).join('')}
             </tbody>
@@ -12140,22 +12146,22 @@ function loadSchedules() {
         <td>
           <span class="type-chip ${s.vmType==='lxc'?'ct':'vm'}" style="font-size:9px">${(s.vmType||'vm').toUpperCase()}</span>
           <span style="margin-left:5px">${escHtml(s.vmName||String(s.vmid))}</span>
-          <span style="font-size:11px;color:var(--muted)"> ${s.vmid} · ${s.node}</span>
+          <span style="font-size:11px;color:var(--muted)"> ${escHtml(String(s.vmid))} · ${escHtml(s.node)}</span>
         </td>
-        <td><span style="color:${actionCol[s.action]||'var(--text)'};font-weight:600">${actionIcon[s.action]||'?'} ${s.action}</span></td>
+        <td><span style="color:${actionCol[s.action]||'var(--text)'};font-weight:600">${actionIcon[s.action]||'?'} ${escHtml(s.action||'')}</span></td>
         <td style="font-size:12px;color:var(--muted)">${escHtml(_schedFmtDesc(s))}</td>
         <td style="font-size:12px">${_schedFmtCountdown(s.nextRun)}</td>
         <td style="font-size:11px;color:var(--muted)">${s.lastRun ? new Date(s.lastRun).toLocaleString() : '—'}</td>
         <td>
           <label style="display:flex;align-items:center;gap:5px;cursor:pointer;font-size:12px">
-            <input type="checkbox" ${s.enabled?'checked':''} onchange="_schedToggle('${s.id}',this.checked)" style="width:auto;padding:0;margin:0"/>
+            <input type="checkbox" ${s.enabled?'checked':''} data-id="${escHtml(s.id)}" onchange="_schedToggle(this.dataset.id,this.checked)" style="width:auto;padding:0;margin:0"/>
             <span style="color:${s.enabled?'var(--green)':'var(--muted)'}">${s.enabled?'on':'off'}</span>
           </label>
         </td>
         <td onclick="event.stopPropagation()"><div class="actions-row">
-          <button class="btn small success" onclick="_runScheduleNow('${s.id}')" title="Run now">▶</button>
-          <button class="btn small" onclick="openCreateScheduleModal('${s.id}')">✎</button>
-          <button class="btn small danger" onclick="_schedDelete('${s.id}')">✕</button>
+          <button class="btn small success" data-id="${escHtml(s.id)}" onclick="_runScheduleNow(this.dataset.id)" title="Run now">▶</button>
+          <button class="btn small" data-id="${escHtml(s.id)}" onclick="openCreateScheduleModal(this.dataset.id)">✎</button>
+          <button class="btn small danger" data-id="${escHtml(s.id)}" onclick="_schedDelete(this.dataset.id)">✕</button>
         </div></td>
       </tr>`).join('')}
       </tbody></table></div>`;
