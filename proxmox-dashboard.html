@@ -1102,6 +1102,7 @@
           </select>
           <input id="syslog-search" type="text" placeholder="Filter…" style="width:150px;padding:5px 10px;font-size:13px" oninput="filterSyslog()" />
           <button class="btn small" onclick="loadSyslog()">Refresh</button>
+          <button class="btn small" onclick="exportSyslog()">⬇ Export</button>
           <span id="syslog-status" style="font-size:12px;color:var(--muted);margin-left:4px"></span>
         </div>
       </div>
@@ -4008,6 +4009,20 @@ function filterSyslog() {
     : '<tr><td colspan="2" class="empty">No log entries</td></tr>';
 }
 
+function exportSyslog() {
+  const q = (document.getElementById('syslog-search').value||'').toLowerCase();
+  const rows = q ? rawSyslog.filter(l=>(l.t||'').toLowerCase().includes(q)) : rawSyslog;
+  if (!rows.length) { toast('No log entries to export','error'); return; }
+  const node = document.getElementById('syslog-node')?.value || 'node';
+  const ts = new Date().toISOString().slice(0,19).replace(/T/,'_').replace(/:/g,'-');
+  const text = rows.map(l=>l.t||l.content||'').join('\n');
+  const blob = new Blob([text], {type:'text/plain'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href=url; a.download=`syslog-${node}-${ts}.log`; a.click();
+  URL.revokeObjectURL(url);
+}
+
 // ── RRD / GRAPHS ─────────────────────────────────────────
 
 async function loadRRD(node, type, vmid, timeframe, get=pveGet) {
@@ -4669,11 +4684,7 @@ function switchView(view) {
     el.classList.toggle('active',el.dataset.view===view);
   });
   currentView=view;
-  if(view==='syslog'){
-    const sel=document.getElementById('syslog-node');
-    sel.innerHTML=PVE.nodes.map(n=>`<option value="${n.node}">${n.node}</option>`).join('');
-    loadSyslog();
-  }
+  if(view==='syslog'){ loadSyslog(); }
   if(view==='storage'){
     const sel=document.getElementById('storage-node-filter');
     sel.innerHTML='<option value="">All Nodes</option>'+PVE.nodes.map(n=>`<option value="${n.node}">${n.node}</option>`).join('');
