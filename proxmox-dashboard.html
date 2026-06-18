@@ -1651,6 +1651,12 @@
         <div style="display:flex;gap:6px;align-items:center">
           <select class="conn-sel" id="logs-conn" style="width:140px;padding:5px 8px;font-size:13px" onchange="_logsConnChanged()"><option value="">Primary</option></select>
           <button class="btn small" onclick="loadLogs()">&#x21BB; Refresh</button>
+          <label style="display:flex;align-items:center;gap:5px;font-size:12px;color:var(--muted);cursor:pointer;white-space:nowrap"><input type="checkbox" id="logs-autorefresh" onchange="_logsToggleAutoRefresh()" style="accent-color:var(--accent)"> Auto-refresh</label>
+          <select id="logs-autorefresh-interval" style="padding:4px 6px;font-size:12px;background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);color:var(--text)" onchange="_logsToggleAutoRefresh()">
+            <option value="30">30s</option>
+            <option value="60">1 min</option>
+            <option value="120">2 min</option>
+          </select>
         </div>
       </div>
       <div class="dtabs">
@@ -4183,6 +4189,20 @@ function _logsConnChanged() {
   loadLogs();
 }
 
+let _logsAutoRefreshTimer = null;
+
+function _logsStopAutoRefresh() {
+  clearInterval(_logsAutoRefreshTimer);
+  _logsAutoRefreshTimer = null;
+}
+
+function _logsToggleAutoRefresh() {
+  _logsStopAutoRefresh();
+  if (!document.getElementById('logs-autorefresh')?.checked) return;
+  const secs = parseInt(document.getElementById('logs-autorefresh-interval')?.value || '30');
+  _logsAutoRefreshTimer = setInterval(loadLogs, secs * 1000);
+}
+
 async function loadLogs() {
   window._logsClusterLoaded = false;
   _logsPopulateNodeSel();
@@ -5431,7 +5451,7 @@ function switchView(view) {
   if(view==='users') loadUsers();
   if(view==='certs') loadCerts();
   if(view==='audit') loadAudit();
-  if(view==='logs') loadLogs();
+  if(view==='logs') loadLogs(); else _logsStopAutoRefresh();
   if(view==='clustergraphs') loadClusterGraphs();
   if(view==='isolib')   loadISOLibrary();
   if(view==='webhooks') loadWebhooks();
