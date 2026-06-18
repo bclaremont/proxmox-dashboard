@@ -413,6 +413,25 @@
     .task-row-err>td:first-child{box-shadow:inset 3px 0 0 var(--red);}
     .task-row-run>td{background:rgba(210,153,34,.05)!important;}
     .task-row-run>td:first-child{box-shadow:inset 3px 0 0 var(--yellow);}
+    /* Log viewer */
+    .log-sev{display:inline-block;padding:1px 7px;border-radius:4px;font-size:11px;font-weight:600;white-space:nowrap;}
+    .log-sev.err{background:rgba(248,81,73,.15);color:var(--red);}
+    .log-sev.warn{background:rgba(210,153,34,.15);color:var(--yellow);}
+    .log-sev.info{background:rgba(56,139,253,.1);color:var(--blue);}
+    .log-sev.ok{background:rgba(56,211,159,.1);color:var(--green);}
+    .log-time{color:var(--muted);font-size:11px;white-space:nowrap;font-family:monospace;}
+    .log-msg{font-size:12px;font-family:monospace;word-break:break-all;}
+    .log-detail{background:var(--bg3);border-left:3px solid var(--accent);border-radius:0 6px 6px 0;padding:14px 16px;font-size:13px;}
+    .log-detail h4{font-size:14px;font-weight:600;margin-bottom:6px;}
+    .log-explain{color:var(--muted);line-height:1.6;margin-bottom:10px;}
+    .log-fix{background:rgba(56,139,253,.08);border:1px solid rgba(56,139,253,.2);border-radius:6px;padding:10px 14px;font-size:12px;line-height:1.6;margin-bottom:10px;}
+    .log-fix code{font-family:monospace;background:var(--bg);padding:1px 5px;border-radius:3px;font-size:11px;}
+    .log-links{display:flex;gap:12px;flex-wrap:wrap;}
+    .log-links a{color:var(--accent);font-size:12px;text-decoration:none;}
+    .log-links a:hover{text-decoration:underline;}
+    .log-expand{background:none;border:none;color:var(--muted);cursor:pointer;font-size:13px;padding:2px 5px;border-radius:3px;transition:all .15s;}
+    .log-expand:hover{color:var(--text);background:var(--bg3);}
+    .log-monospace{font-family:monospace;font-size:11px;white-space:pre-wrap;max-height:280px;overflow-y:auto;background:var(--bg);padding:10px 12px;border-radius:6px;margin-top:10px;line-height:1.5;}
     /* Copyable IP cells */
     .vm-ip-cell[data-ipkey]{cursor:pointer;border-radius:3px;padding:1px 3px;transition:background .15s;}
     .vm-ip-cell[data-ipkey]:hover{background:rgba(88,166,255,.12);}
@@ -812,6 +831,10 @@
       <div class="nav-item" data-view="audit" onclick="switchView('audit')">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
         Audit Log
+      </div>
+      <div class="nav-item" data-view="logs" onclick="switchView('logs')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
+        Log Viewer
       </div>
       <div class="nav-item" data-view="reports" onclick="switchView('reports')">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
@@ -1619,6 +1642,55 @@
       </div>
       <div id="cg-node-tabs" style="display:flex;gap:6px;margin-bottom:16px;flex-wrap:wrap"></div>
       <div id="cg-content"><div class="empty">Select a timeframe above to load graphs.</div></div>
+    </div>
+
+    <!-- LOGS -->
+    <div id="view-logs" style="display:none">
+      <div class="section-header">
+        <span class="section-title">Log Viewer</span>
+        <div style="display:flex;gap:6px;align-items:center">
+          <select class="conn-sel" id="logs-conn" style="width:140px;padding:5px 8px;font-size:13px" onchange="loadLogs()"><option value="">Primary</option></select>
+          <button class="btn small" onclick="loadLogs()">&#x21BB; Refresh</button>
+        </div>
+      </div>
+      <div class="dtabs">
+        <div class="dtab active" id="logs-tab-system" onclick="_logsTab('system')">System Logs</div>
+        <div class="dtab" id="logs-tab-cluster" onclick="_logsTab('cluster')">Cluster Events</div>
+        <div class="dtab" id="logs-tab-vmops" onclick="_logsTab('vmops')">VM / CT Operations</div>
+      </div>
+
+      <!-- System Logs -->
+      <div id="logs-pane-system" class="dtab-content active">
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px;align-items:center">
+          <select id="logs-node" class="conn-sel" style="width:130px;padding:5px 8px;font-size:13px" onchange="_loadSystemLogs()">
+            <option value="">All Nodes</option>
+          </select>
+          <select id="logs-sev" class="conn-sel" style="width:120px;padding:5px 8px;font-size:13px" onchange="_renderSyslogTable()">
+            <option value="">All Severity</option>
+            <option value="err">Errors only</option>
+            <option value="warn">Warnings only</option>
+            <option value="info">Info only</option>
+          </select>
+          <input id="logs-search" type="text" placeholder="Filter messages…" style="flex:1;min-width:180px;padding:5px 10px;background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);color:var(--text);font-size:13px" oninput="_renderSyslogTable()">
+          <span id="logs-count" style="font-size:12px;color:var(--muted);white-space:nowrap"></span>
+        </div>
+        <div id="logs-syslog-body"><div class="empty">Loading&#x2026;</div></div>
+      </div>
+
+      <!-- Cluster Events -->
+      <div id="logs-pane-cluster" class="dtab-content">
+        <div id="logs-cluster-body"><div class="empty">Loading&#x2026;</div></div>
+      </div>
+
+      <!-- VM / CT Operations -->
+      <div id="logs-pane-vmops" class="dtab-content">
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px;align-items:center">
+          <input id="logs-vmid" type="text" placeholder="VM / CT ID or name&#x2026;" style="width:220px;padding:5px 10px;background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);color:var(--text);font-size:13px" onkeydown="if(event.key==='Enter')_loadVmOps()">
+          <button class="btn small primary" onclick="_loadVmOps()">Search</button>
+          <span style="font-size:12px;color:var(--muted)">Shows every operation (start, stop, backup, migrate&#x2026;) performed on a specific VM or CT</span>
+        </div>
+        <div id="logs-vmops-body"><div class="empty">Enter a VM/CT ID or name and click Search.</div></div>
+      </div>
     </div>
 
   </main>
@@ -3925,6 +3997,373 @@ async function _fixQEMUMemory() {
   }
 }
 
+
+// ── LOG VIEWER ──────────────────────────────────────────────────────────────
+
+const LOG_PATTERNS = [
+  { re: /no space left on device/i,
+    title: 'Disk Full',
+    explain: 'A storage volume has run out of space. Proxmox cannot write data (backups, disk images, logs) to the affected storage.',
+    fix: 'Free up space: remove old backups or unused disk images, or expand the storage. Check usage with <code>df -h</code> on the affected node.' },
+  { re: /lock.*timeout|unable to lock|qlock/i,
+    title: 'VM/CT Lock Timeout',
+    explain: 'A VM or container is locked (from a backup, migration, or snapshot) and a new lock could not be acquired — a previous operation likely did not finish cleanly.',
+    fix: 'Find the locked VM with <code>qm list</code> or <code>pct list</code>, then force-unlock with <code>qm unlock &lt;vmid&gt;</code> or <code>pct unlock &lt;vmid&gt;</code>.' },
+  { re: /out of memory|oom.kill|oom-kill|killed process/i,
+    title: 'Out of Memory (OOM Kill)',
+    explain: 'The Linux kernel killed a process because the host ran out of RAM. This can affect running VMs, containers, or host services.',
+    fix: 'Check host memory with <code>free -h</code>. Consider adding RAM, enabling KSM, or migrating VMs to reduce load on this node.' },
+  { re: /storage '?[w-]+'? is not (online|available)|storage.*offline|unable to open storage/i,
+    title: 'Storage Offline',
+    explain: 'A storage backend (NFS, Ceph, LVM, etc.) is unreachable. VMs using this storage cannot start, or may pause if already running.',
+    fix: 'Check Datacenter → Storage for the affected storage. Verify network connectivity and that the storage service is running on the server.' },
+  { re: /nfs.*timed out|nfs.*connection refused|mount.nfs|nfs4.*error/i,
+    title: 'NFS Mount Failure',
+    explain: 'The NFS server is unreachable or not responding, which will cause storage to go offline and VMs to pause.',
+    fix: 'Verify the NFS server is running and reachable. Check exports with <code>showmount -e &lt;server&gt;</code>. Review firewall rules on the NFS host.' },
+  { re: /ceph.*health_warn|ceph.*health_err|ceph.*degraded|osd.*down|pg.*degraded/i,
+    title: 'Ceph Health Warning',
+    explain: 'The Ceph storage cluster is in a degraded or warning state. Data is still accessible but redundancy is reduced — further failures could cause data loss.',
+    fix: 'Run <code>ceph status</code> on any Proxmox node. Check for failed OSDs with <code>ceph osd tree</code>. Review OSD service logs on the affected host.' },
+  { re: /zfs.*checksum error|zfs.*read error|zpool.*degraded|zpool.*faulted|zpool.*UNAVAIL/i,
+    title: 'ZFS Pool Error',
+    explain: 'ZFS detected checksum or read errors — usually indicating a failing disk. A degraded or faulted pool has reduced or no redundancy.',
+    fix: 'Run <code>zpool status</code> to identify the problem disk. Replace the failed disk then run <code>zpool replace &lt;pool&gt; &lt;old&gt; &lt;new&gt;</code>. Back up data immediately.' },
+  { re: /smartd.*warning|SMART.*error|reallocated.*sector|uncorrectable.*error|pending.*sector/i,
+    title: 'SMART Disk Warning',
+    explain: 'A physical disk is reporting SMART health warnings. Reallocated or pending sectors are early signs of impending disk failure.',
+    fix: 'Run <code>smartctl -a /dev/&lt;disk&gt;</code> on the affected node for full SMART data. Plan to replace the disk before it fails completely.' },
+  { re: /migration.*abort|migration.*fail|live migration.*error/i,
+    title: 'VM Migration Failed',
+    explain: 'A live or offline migration was aborted. The VM should still be running on the source node.',
+    fix: 'Check network connectivity between nodes and that shared storage is accessible from both. Verify the destination node has enough free RAM. Review the full task log.' },
+  { re: /backup.*failed|vzdump.*error|archive.*failed|backup job.*error/i,
+    title: 'Backup Failed',
+    explain: 'A vzdump backup job did not complete. The backup file may be incomplete or missing.',
+    fix: 'Check storage space on the backup target. Verify the VM is not in a permanently locked state. Review the full task log for the specific error.' },
+  { re: /ha.*fence|node.*fence|fencing/i,
+    title: 'HA Node Fencing',
+    explain: 'Proxmox HA fenced (forcibly powered off) a node to prevent split-brain. HA-protected VMs will be restarted on surviving nodes.',
+    fix: 'Check the fenced node hardware status and power it back on once the root cause is resolved. Review HA and watchdog configuration.' },
+  { re: /quorum.*lost|no quorum|corosync.*error|corosync.*link|cluster partition/i,
+    title: 'Cluster Quorum Lost',
+    explain: 'The cluster has lost quorum — not enough nodes are reachable to make safe cluster-wide decisions. VM start and migrate operations are blocked.',
+    fix: 'Restore connectivity to the missing node(s). If a node has truly failed and cannot return, temporarily lower the expected vote count with <code>pvecm expected &lt;n&gt;</code>.' },
+  { re: /authentication failure|auth.*failed|invalid ticket|invalid credentials|pam.*auth.*fail/i,
+    title: 'Authentication Failure',
+    explain: 'A login attempt failed — wrong credentials, expired API token, or a revoked session ticket.',
+    fix: 'Check API token permissions and expiry in Datacenter → Permissions → API Tokens. Verify user account status in Datacenter → Users.' },
+  { re: /permission denied|acl.*denied|insufficient privileges|not allowed to/i,
+    title: 'Permission Denied',
+    explain: 'A user or API token attempted an action they do not have a role for.',
+    fix: 'Review role assignments in Datacenter → Permissions. Ensure the correct role is assigned at the right path level (e.g. /vms/&lt;vmid&gt; or /storage/&lt;name&gt;).' },
+  { re: /certificate.*expired|ssl.*error|tls.*handshake|ssl handshake|certificate.*invalid/i,
+    title: 'SSL/TLS Certificate Issue',
+    explain: 'An SSL certificate has expired or a TLS handshake failed. This can affect API access, cluster node communication, and ACME certificate renewals.',
+    fix: 'Check certificate expiry in Node → Certificates. Renew via ACME/Let\'s Encrypt or upload a new certificate. Verify system time is correct with <code>timedatectl</code>.' },
+  { re: /i\/o error|blk_update_request|end_request.*error/i,
+    title: 'Disk I/O Error',
+    explain: 'A low-level disk I/O error occurred. This indicates a failing disk, bad sectors, or a storage connectivity problem.',
+    fix: 'Run <code>dmesg | grep -i error</code> on the affected node. Run SMART checks on all disks. Check cable and controller connections.' },
+  { re: /kernel.*panic|BUG:.*kernel|OOPS:/i,
+    title: 'Kernel Error',
+    explain: 'The host kernel encountered a serious error (panic, bug, or oops). This may indicate hardware problems, driver issues, or a kernel bug.',
+    fix: 'Check kernel logs with <code>journalctl -k -b -1</code>. Test RAM with memtest. Consider updating the Proxmox kernel via <code>apt upgrade pve-kernel-*</code>.' },
+  { re: /network.*unreachable|connection refused|connection timed out|no route to host/i,
+    title: 'Network Connectivity Issue',
+    explain: 'A network connection attempt failed. This can affect VM migration, storage access, cluster communication, or backup jobs.',
+    fix: 'Check interfaces with <code>ip a</code> and routes with <code>ip route</code>. Test connectivity with <code>ping</code> or <code>traceroute</code>. Review firewall rules.' },
+  { re: /lxc.*failed to start|pct.*start.*fail|container.*start.*fail/i,
+    title: 'Container Start Failed',
+    explain: 'An LXC container could not start — usually due to config errors, missing rootfs, or resource conflicts.',
+    fix: 'Check container config with <code>pct config &lt;vmid&gt;</code>. Verify rootfs storage is online. Run <code>pct start &lt;vmid&gt;</code> directly for detailed error output.' },
+  { re: /pbs.*error|proxmox-backup.*fail|datastore.*not accessible|chunk.*missing/i,
+    title: 'Proxmox Backup Server Error',
+    explain: 'Communication with a Proxmox Backup Server (PBS) failed or a backup/restore operation encountered an error.',
+    fix: 'Check PBS status with <code>systemctl status proxmox-backup</code>. Verify datastore path and available disk space. Review PBS logs with <code>journalctl -u proxmox-backup</code>.' },
+  { re: /snapshot.*fail|snapshot.*error|snapshot.*locked|unable to take snapshot/i,
+    title: 'Snapshot Failed',
+    explain: 'A VM or container snapshot operation failed. This can prevent vzdump backups that use snapshot mode from completing.',
+    fix: 'Ensure the QEMU guest agent is running inside the VM (needed for consistent snapshots). Verify storage space and that the VM is not already locked.' },
+  { re: /TASK ERROR/,
+    title: 'Task Failed',
+    explain: 'A Proxmox task (backup, migration, start/stop, snapshot, etc.) terminated with an error.',
+    fix: 'Expand the task row to view the full task log and find the specific error message.' },
+];
+
+function _logSev(text) {
+  if (/\b(error|failed|failure|fatal|critical|crit|emerg|alert|panic|TASK ERROR|segfault)\b/i.test(text)) return 'err';
+  if (/\b(warning|warn|deprecated)\b/i.test(text)) return 'warn';
+  return 'info';
+}
+
+function _logsSearchTerms(msg) {
+  return msg
+    .replace(/\d{4}-\d{2}-\d{2}T[\d:.]+Z?/g,'')
+    .replace(/0x[0-9a-f]+/gi,'')
+    .replace(/\[\d+\]/g,'')
+    .replace(/\/[\w/.-]+/g,' ')
+    .replace(/[^\w\s-]/g,' ')
+    .split(/\s+/).filter(w=>w.length>3).slice(0,6).join(' ').trim();
+}
+
+function _analyzeLog(msg) {
+  for (const p of LOG_PATTERNS) { if (p.re.test(msg)) return p; }
+  return null;
+}
+
+function _logDetailHtml(msg, rowId) {
+  const match = _analyzeLog(msg);
+  const terms = _logsSearchTerms(msg);
+  const encoded = encodeURIComponent(terms || msg.slice(0,80));
+  const forumUrl = `https://forum.proxmox.com/search?q=${encoded}`;
+  const wikiUrl  = `https://pve.proxmox.com/wiki/Special:Search?search=${encoded}`;
+  if (match) {
+    return `<div class="log-detail">
+      <h4>&#x26A0; ${escHtml(match.title)}</h4>
+      <p class="log-explain">${escHtml(match.explain)}</p>
+      <div class="log-fix"><strong>Suggested fix:</strong><br>${match.fix}</div>
+      <div class="log-links">
+        <a href="${forumUrl}" target="_blank" rel="noopener">&#x1F50D; Search Proxmox Forum</a>
+        <a href="${wikiUrl}" target="_blank" rel="noopener">&#x1F4D6; Search Proxmox Wiki</a>
+      </div>
+    </div>`;
+  }
+  return `<div class="log-detail">
+    <p class="log-explain" style="font-family:monospace;font-size:12px">${escHtml(msg)}</p>
+    <div class="log-links">
+      <a href="${forumUrl}" target="_blank" rel="noopener">&#x1F50D; Search Proxmox Forum</a>
+      <a href="${wikiUrl}" target="_blank" rel="noopener">&#x1F4D6; Search Proxmox Wiki</a>
+    </div>
+  </div>`;
+}
+
+function _logsExpandRow(id) {
+  const dr = document.getElementById('logd-'+id);
+  const btn = document.getElementById('logx-'+id);
+  if (!dr) return;
+  const open = dr.style.display !== 'none';
+  dr.style.display = open ? 'none' : '';
+  if (btn) btn.textContent = open ? '\u25B6' : '\u25BC';
+}
+
+function _logsTab(tab) {
+  ['system','cluster','vmops'].forEach(t => {
+    document.getElementById('logs-tab-'+t)?.classList.toggle('active', t===tab);
+    document.getElementById('logs-pane-'+t)?.classList.toggle('active', t===tab);
+  });
+  if (tab==='cluster' && !window._logsClusterLoaded) _loadClusterEvents();
+}
+
+function _logsGetConn() {
+  const id = document.getElementById('logs-conn')?.value;
+  return id ? (PVE.extraConnections||[]).find(c=>c.id===id) : null;
+}
+
+async function loadLogs() {
+  window._logsClusterLoaded = false;
+  const connSel = document.getElementById('logs-conn');
+  if (connSel) {
+    connSel.innerHTML = '<option value="">Primary</option>';
+    (PVE.extraConnections||[]).forEach(c => {
+      connSel.innerHTML += `<option value="${escHtml(c.id)}">${escHtml(c.name||c.host)}</option>`;
+    });
+  }
+  const nodeSel = document.getElementById('logs-node');
+  if (nodeSel) {
+    const conn = _logsGetConn();
+    const nodes = conn ? (conn.nodes||[]) : PVE.nodes;
+    nodeSel.innerHTML = '<option value="">All Nodes</option>';
+    nodes.forEach(n => { nodeSel.innerHTML += `<option value="${escHtml(n.node)}">${escHtml(n.node)}</option>`; });
+  }
+  const activeTab = document.querySelector('#view-logs .dtab.active')?.id?.replace('logs-tab-','') || 'system';
+  if (activeTab==='system') await _loadSystemLogs();
+  else if (activeTab==='cluster') await _loadClusterEvents();
+}
+
+let _syslogEntries = [];
+
+async function _loadSystemLogs() {
+  document.getElementById('logs-syslog-body').innerHTML = '<div class="empty">Loading&#x2026;</div>';
+  const conn = _logsGetConn();
+  const get = conn ? (p=>connGet(conn,p)) : pveGet;
+  const selectedNode = document.getElementById('logs-node')?.value || '';
+  const allNodes = conn ? (conn.nodes||[]) : PVE.nodes;
+  const targetNodes = selectedNode ? allNodes.filter(n=>n.node===selectedNode) : allNodes;
+  const all = [];
+  await Promise.all(targetNodes.map(async n => {
+    try {
+      const d = await get(`/api2/json/nodes/${n.node}/syslog?limit=300`);
+      (d.data||[]).forEach(e => {
+        const raw = e.t || '';
+        const m = raw.match(/^(\w+\s+\d+\s+[\d:]+)\s+(\S+)\s+(.+)$/);
+        all.push({ ts: raw.slice(0,15), node: m?m[2]:n.node, msg: m?m[3]:raw, sev: _logSev(raw), id: `sl-${n.node}-${e.n}` });
+      });
+    } catch {}
+  }));
+  _syslogEntries = all.reverse();
+  _renderSyslogTable();
+}
+
+function _renderSyslogTable() {
+  const sev    = document.getElementById('logs-sev')?.value || '';
+  const search = (document.getElementById('logs-search')?.value||'').toLowerCase();
+  let rows = _syslogEntries;
+  if (sev)    rows = rows.filter(e=>e.sev===sev);
+  if (search) rows = rows.filter(e=>e.msg.toLowerCase().includes(search)||e.node.toLowerCase().includes(search));
+  const countEl = document.getElementById('logs-count');
+  if (countEl) countEl.textContent = rows.length + ' entries';
+  if (!rows.length) {
+    document.getElementById('logs-syslog-body').innerHTML = '<div class="empty">No log entries match the current filter.</div>';
+    return;
+  }
+  let html = `<div class="table-wrap"><table class="data-table" style="table-layout:fixed">
+    <colgroup><col style="width:130px"><col style="width:90px"><col style="width:72px"><col><col style="width:32px"></colgroup>
+    <thead><tr><th>Time</th><th>Node</th><th>Severity</th><th>Message</th><th></th></tr></thead><tbody>`;
+  rows.slice(0,500).forEach(e => {
+    const hasDetail = e.sev==='err'||e.sev==='warn';
+    html += `<tr class="${e.sev==='err'?'task-row-err':e.sev==='warn'?'task-row-run':''}">
+      <td class="log-time">${escHtml(e.ts)}</td>
+      <td style="color:var(--muted);font-size:12px">${escHtml(e.node)}</td>
+      <td><span class="log-sev ${e.sev}">${e.sev==='err'?'ERROR':e.sev==='warn'?'WARN':'INFO'}</span></td>
+      <td class="log-msg ${e.sev}" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escHtml(e.msg)}</td>
+      <td style="text-align:center">${hasDetail?`<button class="log-expand" id="logx-${escHtml(e.id)}" onclick="_logsExpandRow('${escHtml(e.id)}')">&#x25B6;</button>`:''}</td>
+    </tr>`;
+    if (hasDetail) html += `<tr id="logd-${escHtml(e.id)}" style="display:none"><td colspan="5" style="padding:0 0 8px 20px">${_logDetailHtml(e.msg,e.id)}</td></tr>`;
+  });
+  html += '</tbody></table></div>';
+  if (rows.length>500) html += `<p style="color:var(--muted);font-size:12px;text-align:center;padding:8px">Showing first 500 of ${rows.length} entries — use filters to narrow results.</p>`;
+  document.getElementById('logs-syslog-body').innerHTML = html;
+}
+
+async function _loadClusterEvents() {
+  window._logsClusterLoaded = true;
+  document.getElementById('logs-cluster-body').innerHTML = '<div class="empty">Loading&#x2026;</div>';
+  const conn = _logsGetConn();
+  const get = conn ? (p=>connGet(conn,p)) : pveGet;
+  try {
+    const d = await get('/api2/json/cluster/log?max=500');
+    const entries = d.data || [];
+    if (!entries.length) { document.getElementById('logs-cluster-body').innerHTML='<div class="empty">No cluster events found.</div>'; return; }
+    const PRI = {0:'err',1:'err',2:'err',3:'err',4:'warn',5:'info',6:'info',7:'info'};
+    let html = `<div class="table-wrap"><table class="data-table" style="table-layout:fixed">
+      <colgroup><col style="width:145px"><col style="width:90px"><col style="width:100px"><col style="width:72px"><col><col style="width:32px"></colgroup>
+      <thead><tr><th>Time</th><th>Node</th><th>Service</th><th>Severity</th><th>Message</th><th></th></tr></thead><tbody>`;
+    entries.forEach((e,i) => {
+      const sev = PRI[e.pri]||'info';
+      const ts = e.time ? new Date(e.time*1000).toLocaleString() : '';
+      const rowId = `cl-${i}`;
+      const hasDetail = sev==='err'||sev==='warn';
+      html += `<tr class="${sev==='err'?'task-row-err':sev==='warn'?'task-row-run':''}">
+        <td class="log-time" style="font-size:11px">${escHtml(ts)}</td>
+        <td style="color:var(--muted);font-size:12px">${escHtml(e.node||'')}</td>
+        <td style="color:var(--muted);font-size:11px">${escHtml(e.tag||'')}</td>
+        <td><span class="log-sev ${sev}">${sev==='err'?'ERROR':sev==='warn'?'WARN':'INFO'}</span></td>
+        <td class="log-msg ${sev}" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escHtml(e.msg||'')}</td>
+        <td style="text-align:center">${hasDetail?`<button class="log-expand" id="logx-${escHtml(rowId)}" onclick="_logsExpandRow('${escHtml(rowId)}')">&#x25B6;</button>`:''}</td>
+      </tr>`;
+      if (hasDetail) html += `<tr id="logd-${escHtml(rowId)}" style="display:none"><td colspan="6" style="padding:0 0 8px 20px">${_logDetailHtml(e.msg||'',rowId)}</td></tr>`;
+    });
+    html += '</tbody></table></div>';
+    document.getElementById('logs-cluster-body').innerHTML = html;
+  } catch (err) {
+    document.getElementById('logs-cluster-body').innerHTML = `<div class="empty">Failed to load cluster events: ${escHtml(err.message)}</div>`;
+  }
+}
+
+async function _loadVmOps() {
+  const input = (document.getElementById('logs-vmid')?.value||'').trim();
+  if (!input) return;
+  document.getElementById('logs-vmops-body').innerHTML = '<div class="empty">Searching&#x2026;</div>';
+  const conn = _logsGetConn();
+  const get = conn ? (p=>connGet(conn,p)) : pveGet;
+  const nodes = conn ? (conn.nodes||[]) : PVE.nodes;
+  let vmid = /^\d+$/.test(input) ? input : null;
+  if (!vmid) {
+    const all = typeof allVMs==='function' ? allVMs() : [];
+    const m = all.find(v=>(v.name||'').toLowerCase()===input.toLowerCase());
+    if (m) vmid = String(m.vmid);
+  }
+  const tasks = [];
+  await Promise.all(nodes.map(async n => {
+    try {
+      const url = `/api2/json/nodes/${n.node}/tasks?limit=200${vmid?`&vmid=${vmid}`:''}`;
+      const d = await get(url);
+      (d.data||[]).forEach(t => tasks.push({...t, _node:n.node}));
+    } catch {}
+  }));
+  const filtered = vmid ? tasks : tasks.filter(t=>(t.id||'').toLowerCase().includes(input.toLowerCase()));
+  filtered.sort((a,b)=>(b.starttime||0)-(a.starttime||0));
+  if (!filtered.length) {
+    document.getElementById('logs-vmops-body').innerHTML = `<div class="empty">No tasks found for "${escHtml(input)}".</div>`;
+    return;
+  }
+  let html = `<div class="table-wrap"><table class="data-table" style="table-layout:fixed">
+    <colgroup><col style="width:145px"><col style="width:90px"><col style="width:110px"><col style="width:80px"><col style="width:72px"><col style="width:32px"></colgroup>
+    <thead><tr><th>Started</th><th>Node</th><th>Operation</th><th>VM/CT ID</th><th>Status</th><th></th></tr></thead><tbody>`;
+  filtered.forEach((t,i) => {
+    const ts = t.starttime ? new Date(t.starttime*1000).toLocaleString() : '';
+    const running = !t.endtime;
+    const ok = running || t.status==='OK' || t.status==='';
+    const sevCls = running?'warn':ok?'ok':'err';
+    const statusText = running?'Running':(t.status==='OK'?'OK':(t.status||'Failed'));
+    const rowId = `vo-${i}`;
+    html += `<tr class="${!ok&&!running?'task-row-err':running?'task-row-run':''}">
+      <td class="log-time" style="font-size:11px">${escHtml(ts)}</td>
+      <td style="color:var(--muted);font-size:12px">${escHtml(t._node||'')}</td>
+      <td style="font-size:12px">${escHtml(t.type||'')}</td>
+      <td style="color:var(--muted);font-size:12px">${escHtml(String(t.id||t.vmid||''))}</td>
+      <td><span class="log-sev ${sevCls}">${escHtml(statusText)}</span></td>
+      <td style="text-align:center"><button class="log-expand" id="logx-${escHtml(rowId)}" onclick="_logsLoadTaskLog('${escHtml(t._node)}','${escHtml(t.upid||'')}','${escHtml(rowId)}')">&#x25B6;</button></td>
+    </tr>
+    <tr id="logd-${escHtml(rowId)}" style="display:none"><td colspan="6" style="padding:0 0 8px 20px">
+      <div id="logdc-${escHtml(rowId)}" class="log-detail"><div class="empty" style="padding:8px">Loading log&#x2026;</div></div>
+    </td></tr>`;
+  });
+  html += '</tbody></table></div>';
+  document.getElementById('logs-vmops-body').innerHTML = html;
+}
+
+async function _logsLoadTaskLog(node, upid, rowId) {
+  const dr  = document.getElementById('logd-'+rowId);
+  const btn = document.getElementById('logx-'+rowId);
+  const dc  = document.getElementById('logdc-'+rowId);
+  if (!dr) return;
+  const open = dr.style.display !== 'none';
+  dr.style.display = open ? 'none' : '';
+  if (btn) btn.textContent = open ? '\u25B6' : '\u25BC';
+  if (open || !upid) return;
+  const conn = _logsGetConn();
+  const get = conn ? (p=>connGet(conn,p)) : pveGet;
+  try {
+    const d = await get(`/api2/json/nodes/${node}/tasks/${encodeURIComponent(upid)}/log?limit=500`);
+    const lines = (d.data||[]).map(l=>l.t||l).join('\n');
+    const match = _analyzeLog(lines);
+    const encoded = encodeURIComponent(_logsSearchTerms(lines)||(match?match.title:'proxmox error'));
+    let html = `<div class="log-monospace">${escHtml(lines)}</div>`;
+    if (match) {
+      html += `<div style="margin-top:12px">
+        <strong>${escHtml(match.title)}</strong>
+        <p class="log-explain" style="margin:4px 0 8px">${escHtml(match.explain)}</p>
+        <div class="log-fix"><strong>Suggested fix:</strong><br>${match.fix}</div>
+        <div class="log-links" style="margin-top:8px">
+          <a href="https://forum.proxmox.com/search?q=${encoded}" target="_blank" rel="noopener">&#x1F50D; Proxmox Forum</a>
+          <a href="https://pve.proxmox.com/wiki/Special:Search?search=${encoded}" target="_blank" rel="noopener">&#x1F4D6; Proxmox Wiki</a>
+        </div>
+      </div>`;
+    } else {
+      html += `<div class="log-links" style="margin-top:8px">
+        <a href="https://forum.proxmox.com/search?q=${encoded}" target="_blank" rel="noopener">&#x1F50D; Search Proxmox Forum</a>
+        <a href="https://pve.proxmox.com/wiki/Special:Search?search=${encoded}" target="_blank" rel="noopener">&#x1F4D6; Search Proxmox Wiki</a>
+      </div>`;
+    }
+    if (dc) dc.innerHTML = html;
+  } catch (err) {
+    if (dc) dc.innerHTML = `<p style="color:var(--red);padding:8px">${escHtml(err.message)}</p>`;
+  }
+}
+
+
 async function loadTasks() {
   const conn = getViewConn('tasks-conn');
   const get = conn ? (p=>connGet(conn,p)) : pveGet;
@@ -4679,9 +5118,9 @@ function switchView(view) {
     const hostEl = document.getElementById('in-host');
     if (hostEl) hostEl.value = window.location.origin;
   }
-  const _viewTitles={connect:'Connect',connections:'Connections',worldmap:'World Map',savedview:'Saved View',overview:'Overview',vms:'Virtual Machines',containers:'Containers',nodes:'Nodes',tasks:'Tasks',syslog:'System Log',storage:'Storage',network:'Network',heatmap:'Heatmap',isolib:'ISO Library',contentlib:'Content Library',sdn:'SDN',capacity:'Capacity Planning',affinity:'Affinity Rules',drs:'DRS',hostprofiles:'Host Profiles',customspecs:'Custom Specs',schedules:'Schedules','pcc-admin':'Admin',datacenter:'Datacenter',pools:'Resource Pools',ceph:'Ceph',ha:'High Availability',firewall:'Firewall',backups:'Backups',users:'Users',webhooks:'Webhooks',certs:'Certificates',audit:'Audit Log',reports:'Reports',clustergraphs:'Cluster Graphs',tags:'Tags',tfa:'2FA',subscriptions:'Subscriptions',updates:'Updates',pbs:'Backup Server',disks:'Disk Health',uptime:'Uptime Report'};
+  const _viewTitles={connect:'Connect',connections:'Connections',worldmap:'World Map',savedview:'Saved View',overview:'Overview',vms:'Virtual Machines',containers:'Containers',nodes:'Nodes',tasks:'Tasks',syslog:'System Log',storage:'Storage',network:'Network',heatmap:'Heatmap',isolib:'ISO Library',contentlib:'Content Library',sdn:'SDN',capacity:'Capacity Planning',affinity:'Affinity Rules',drs:'DRS',hostprofiles:'Host Profiles',customspecs:'Custom Specs',schedules:'Schedules','pcc-admin':'Admin',datacenter:'Datacenter',pools:'Resource Pools',ceph:'Ceph',ha:'High Availability',firewall:'Firewall',backups:'Backups',users:'Users',webhooks:'Webhooks',certs:'Certificates',audit:'Audit Log',logs:'Log Viewer',reports:'Reports',clustergraphs:'Cluster Graphs',tags:'Tags',tfa:'2FA',subscriptions:'Subscriptions',updates:'Updates',pbs:'Backup Server',disks:'Disk Health',uptime:'Uptime Report'};
   document.title = 'CCC — ' + (_viewTitles[view] || view);
-  const views=['connect','connections','worldmap','savedview','overview','vms','containers','nodes','tasks','syslog','storage','network','heatmap','isolib','contentlib','sdn','capacity','affinity','drs','hostprofiles','customspecs','schedules','pcc-admin','datacenter','pools','ceph','ha','firewall','backups','users','webhooks','certs','audit','reports','clustergraphs','tags','tfa','subscriptions','updates','pbs','disks','uptime'];
+  const views=['connect','connections','worldmap','savedview','overview','vms','containers','nodes','tasks','syslog','storage','network','heatmap','isolib','contentlib','sdn','capacity','affinity','drs','hostprofiles','customspecs','schedules','pcc-admin','datacenter','pools','ceph','ha','firewall','backups','users','webhooks','certs','audit','logs','reports','clustergraphs','tags','tfa','subscriptions','updates','pbs','disks','uptime'];
   views.forEach(v=>{
     const el=document.getElementById('view-'+v);
     if(!el) return;
@@ -4726,6 +5165,7 @@ function switchView(view) {
   if(view==='users') loadUsers();
   if(view==='certs') loadCerts();
   if(view==='audit') loadAudit();
+  if(view==='logs') loadLogs();
   if(view==='clustergraphs') loadClusterGraphs();
   if(view==='isolib')   loadISOLibrary();
   if(view==='webhooks') loadWebhooks();
