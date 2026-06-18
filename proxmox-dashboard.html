@@ -1649,7 +1649,7 @@
       <div class="section-header">
         <span class="section-title">Log Viewer</span>
         <div style="display:flex;gap:6px;align-items:center">
-          <select class="conn-sel" id="logs-conn" style="width:140px;padding:5px 8px;font-size:13px" onchange="loadLogs()"><option value="">Primary</option></select>
+          <select class="conn-sel" id="logs-conn" style="width:140px;padding:5px 8px;font-size:13px" onchange="_logsConnChanged()"><option value="">Primary</option></select>
           <button class="btn small" onclick="loadLogs()">&#x21BB; Refresh</button>
         </div>
       </div>
@@ -4159,15 +4159,23 @@ function _logsGetConn() {
   return getViewConn('logs-conn');
 }
 
+function _logsPopulateNodeSel() {
+  const nodeSel = document.getElementById('logs-node');
+  if (!nodeSel) return;
+  const conn = _logsGetConn();
+  const nodes = conn ? (conn.nodes||[]) : PVE.nodes;
+  nodeSel.innerHTML = '<option value="">All Nodes</option>';
+  nodes.forEach(n => { nodeSel.innerHTML += `<option value="${escHtml(n.node)}">${escHtml(n.node)}</option>`; });
+}
+
+function _logsConnChanged() {
+  _logsPopulateNodeSel();
+  loadLogs();
+}
+
 async function loadLogs() {
   window._logsClusterLoaded = false;
-  const nodeSel = document.getElementById('logs-node');
-  if (nodeSel) {
-    const conn = _logsGetConn();
-    const nodes = conn ? (conn.nodes||[]) : PVE.nodes;
-    nodeSel.innerHTML = '<option value="">All Nodes</option>';
-    nodes.forEach(n => { nodeSel.innerHTML += `<option value="${escHtml(n.node)}">${escHtml(n.node)}</option>`; });
-  }
+  _logsPopulateNodeSel();
   const activeTab = document.querySelector('#view-logs .dtab.active')?.id?.replace('logs-tab-','') || 'system';
   if (activeTab==='system') await _loadSystemLogs();
   else if (activeTab==='cluster') await _loadClusterEvents();
