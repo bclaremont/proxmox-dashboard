@@ -4357,6 +4357,71 @@ function _renderSyslogTable() {
   document.getElementById('logs-syslog-body').innerHTML = html;
 }
 
+const _TASK_TYPES = {
+  aptupdate:'Package update check', vzdump:'Backup',
+  qmstart:'VM start', qmstop:'VM stop', qmreboot:'VM reboot',
+  qmsuspend:'VM suspend', qmresume:'VM resume',
+  qmmigrate:'VM migrate', qmclone:'VM clone',
+  qmcreate:'VM create', qmdestroy:'VM delete',
+  qmbackup:'VM backup', qmrestore:'VM restore',
+  qmsnapshot:'VM snapshot', qmdelsnapshot:'Delete snapshot',
+  qmrollback:'Rollback snapshot', qmresizedisk:'VM resize disk',
+  qmtemplate:'Convert to template',
+  vzcreate:'CT create', vzstart:'CT start', vzstop:'CT stop',
+  vzreboot:'CT reboot', vzdestroy:'CT delete', vzclone:'CT clone',
+  vzmigrate:'CT migrate', vzrestore:'CT restore', vzbackup:'CT backup',
+  vzresizectl:'CT resize disk', vztemplate:'Convert to template',
+  startall:'Start all VMs/CTs', stopall:'Stop all VMs/CTs',
+  migrateall:'Migrate all VMs/CTs',
+  'acme-renew':'SSL cert renewal', certupdate:'Certificate update',
+  'download-url':'ISO/template download',
+  imgcopy:'Storage copy', diskinit:'Disk initialise',
+  srvreload:'Service reload', srvrestart:'Service restart',
+  pvecm:'Cluster management', pull:'Config sync',
+  'move_volume':'Disk move', 'disk-move':'Disk move'
+};
+
+const _CLUSTER_TAGS = {
+  pveupdate:'Package Updates', pvedaemon:'PVE Daemon', pveproxy:'PVE Proxy',
+  pvestatd:'PVE Status', pvescheduler:'Scheduler',
+  corosync:'Cluster Sync', 'pve-ha-lrm':'HA Manager', 'pve-ha-crm':'HA Cluster',
+  qemu:'VM', lxc:'Container', storage:'Storage', vzdump:'Backup', acme:'SSL Certs'
+};
+
+function _parseUpid(upid) {
+  // UPID:<node>:<pid>:<pstart>:<starttime>:<type>:<vmid>:<user>:
+  const m = upid.match(/^UPID:([^:]+):[^:]+:[^:]+:[^:]+:([^:]+):([^:]*):([^:@]+@[^:]+):?$/);
+  if (!m) return null;
+  return { node:m[1], type:m[2], vmid:m[3], user:m[4] };
+}
+
+function _humanizeClusterMsg(msg) {
+  // "starting task UPID:..."
+  const startM = msg.match(/^starting task (UPID:\S+)$/);
+  if (startM) {
+    const p = _parseUpid(startM[1]);
+    if (p) {
+      const label = _TASK_TYPES[p.type] || p.type;
+      const vmPart = p.vmid ? ` — VM/CT ${p.vmid}` : '';
+      return { text:`Started: ${label}${vmPart}`, sub:p.user, raw:msg };
+    }
+  }
+  // "end task UPID:... OK" or "end task UPID:... ERROR ..."
+  const endM = msg.match(/^end task (UPID:\S+)\s+(OK|ERROR.*)?$/);
+  if (endM) {
+    const p = _parseUpid(endM[1]);
+    const status = (endM[2]||'').trim();
+    if (p) {
+      const label = _TASK_TYPES[p.type] || p.type;
+      const vmPart = p.vmid ? ` — VM/CT ${p.vmid}` : '';
+      if (!status || status === 'OK')
+        return { text:`Completed: ${label}${vmPart}`, sub:p.user, raw:msg };
+      return { text:`Failed: ${label}${vmPart}`, sub:`${status.replace(/^ERROR\s*/,'')} · ${p.user}`, raw:msg };
+    }
+  }
+  return null;
+}
+
 async function _loadClusterEvents() {
   window._logsClusterLoaded = true;
   document.getElementById('logs-cluster-body').innerHTML = '<div class="empty">Loading&#x2026;</div>';
@@ -4375,15 +4440,21 @@ async function _loadClusterEvents() {
       const ts = e.time ? new Date(e.time*1000).toLocaleString() : '';
       const rowId = `cl-${i}`;
       const hasDetail = sev==='err'||sev==='warn';
+      const raw = e.msg || '';
+      const human = _humanizeClusterMsg(raw);
+      const dispTag = _CLUSTER_TAGS[e.tag||''] || e.tag || '';
+      const msgCell = human
+        ? `<span title="${escHtml(human.raw)}">${escHtml(human.text)}</span>${human.sub?`<span style="color:var(--muted);font-size:11px;margin-left:6px">${escHtml(human.sub)}</span>`:''}`
+        : escHtml(raw);
       html += `<tr class="${sev==='err'?'task-row-err':sev==='warn'?'task-row-run':''}">
         <td class="log-time" style="font-size:11px">${escHtml(ts)}</td>
         <td style="color:var(--muted);font-size:12px">${escHtml(e.node||'')}</td>
-        <td style="color:var(--muted);font-size:11px">${escHtml(e.tag||'')}</td>
+        <td style="color:var(--muted);font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${escHtml(e.tag||'')}">${escHtml(dispTag)}</td>
         <td><span class="log-sev ${sev}">${sev==='err'?'ERROR':sev==='warn'?'WARN':'INFO'}</span></td>
-        <td class="log-msg ${sev}" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escHtml(e.msg||'')}</td>
+        <td class="log-msg ${sev}" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${msgCell}</td>
         <td style="text-align:center">${hasDetail?`<button class="log-expand" id="logx-${escHtml(rowId)}" onclick="_logsExpandRow('${escHtml(rowId)}')">&#x25B6;</button>`:''}</td>
       </tr>`;
-      if (hasDetail) html += `<tr id="logd-${escHtml(rowId)}" style="display:none"><td colspan="6" style="padding:0 0 8px 20px">${_logDetailHtml(e.msg||'',rowId)}</td></tr>`;
+      if (hasDetail) html += `<tr id="logd-${escHtml(rowId)}" style="display:none"><td colspan="6" style="padding:0 0 8px 20px">${_logDetailHtml(raw,rowId)}</td></tr>`;
     });
     html += '</tbody></table></div>';
     document.getElementById('logs-cluster-body').innerHTML = html;
