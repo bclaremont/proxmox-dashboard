@@ -1673,6 +1673,9 @@
           </select>
           <input id="logs-search" type="text" placeholder="Filter messages…" style="flex:1;min-width:180px;padding:5px 10px;background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);color:var(--text);font-size:13px" oninput="_renderSyslogTable()">
           <label style="display:flex;align-items:center;gap:5px;font-size:12px;color:var(--muted);cursor:pointer;white-space:nowrap"><input type="checkbox" id="logs-hide-kernel" onchange="_renderSyslogTable()" style="accent-color:var(--accent)"> Hide kernel detail</label>
+          <input type="datetime-local" id="logs-from" title="From date/time" style="padding:4px 7px;background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);color:var(--text);font-size:12px" onchange="_renderSyslogTable()">
+          <input type="datetime-local" id="logs-to" title="To date/time" style="padding:4px 7px;background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);color:var(--text);font-size:12px" onchange="_renderSyslogTable()">
+          <button class="btn small" onclick="_exportSyslogs()" title="Export filtered logs as CSV" style="white-space:nowrap">&#x2B07; CSV</button>
           <span id="logs-count" style="font-size:12px;color:var(--muted);white-space:nowrap"></span>
         </div>
         <div id="logs-syslog-body"><div class="empty">Loading&#x2026;</div></div>
@@ -1680,6 +1683,12 @@
 
       <!-- Cluster Events -->
       <div id="logs-pane-cluster" class="dtab-content">
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px;align-items:center">
+          <input type="datetime-local" id="logs-cl-from" title="From date/time" style="padding:4px 7px;background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);color:var(--text);font-size:12px" onchange="_renderClusterTable()">
+          <input type="datetime-local" id="logs-cl-to" title="To date/time" style="padding:4px 7px;background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);color:var(--text);font-size:12px" onchange="_renderClusterTable()">
+          <button class="btn small" onclick="_exportClusterLogs()" style="white-space:nowrap">&#x2B07; CSV</button>
+          <span id="logs-cl-count" style="font-size:12px;color:var(--muted);white-space:nowrap"></span>
+        </div>
         <div id="logs-cluster-body"><div class="empty">Loading&#x2026;</div></div>
       </div>
 
@@ -4319,14 +4328,47 @@ async function _loadSystemLogs() {
   _renderSyslogTable();
 }
 
-function _renderSyslogTable() {
+function _logsDateMs(id) {
+  const v = document.getElementById(id)?.value;
+  return v ? new Date(v).getTime() : 0;
+}
+
+function _exportCsv(headers, rows, filename) {
+  const esc = v => '"' + String(v==null?'':v).replace(/"/g,'""') + '"';
+  const csv = [headers.map(esc).join(','), ...rows.map(r=>r.map(esc).join(','))].join('\n');
+  const a = Object.assign(document.createElement('a'), {
+    href: URL.createObjectURL(new Blob([csv],{type:'text/csv'})),
+    download: filename
+  });
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  URL.revokeObjectURL(a.href);
+}
+
+function _syslogFilteredRows() {
   const sev        = document.getElementById('logs-sev')?.value || '';
   const search     = (document.getElementById('logs-search')?.value||'').toLowerCase();
   const hideKernel = document.getElementById('logs-hide-kernel')?.checked;
+  const fromMs     = _logsDateMs('logs-from');
+  const toMs       = _logsDateMs('logs-to');
   let rows = _syslogEntries;
   if (sev)        rows = rows.filter(e=>e.sev===sev);
   if (hideKernel) rows = rows.filter(e=>!(e.service==='kernel'&&e.sev==='info'));
+  if (fromMs)     rows = rows.filter(e=>e.tsMs >= fromMs);
+  if (toMs)       rows = rows.filter(e=>e.tsMs <= toMs + 59999);
   if (search)     rows = rows.filter(e=>e.msg.toLowerCase().includes(search)||e.node.toLowerCase().includes(search)||(e.service||'').toLowerCase().includes(search)||(_humanizeMsg(e.service,e.msg)||'').toLowerCase().includes(search));
+  return rows;
+}
+
+function _exportSyslogs() {
+  const rows = _syslogFilteredRows();
+  if (!rows.length) return;
+  _exportCsv(['Time','Node','Service','Severity','Message (raw)'],
+    rows.map(e=>[_formatSyslogTs(e.ts), e.node, e.service, e.sev, e.msg]),
+    'syslog-' + new Date().toISOString().slice(0,10) + '.csv');
+}
+
+function _renderSyslogTable() {
+  const rows = _syslogFilteredRows();
   const countEl = document.getElementById('logs-count');
   if (countEl) countEl.textContent = rows.length + ' entries';
   if (!rows.length) {
@@ -4422,6 +4464,65 @@ function _humanizeClusterMsg(msg) {
   return null;
 }
 
+let _clusterEntries = [];
+const _CL_PRI = {0:'err',1:'err',2:'err',3:'err',4:'warn',5:'info',6:'info',7:'info'};
+
+function _clusterFilteredRows() {
+  const fromMs = _logsDateMs('logs-cl-from');
+  const toMs   = _logsDateMs('logs-cl-to');
+  let rows = _clusterEntries;
+  if (fromMs) rows = rows.filter(e=>(e.time||0)*1000 >= fromMs);
+  if (toMs)   rows = rows.filter(e=>(e.time||0)*1000 <= toMs + 59999);
+  return rows;
+}
+
+function _exportClusterLogs() {
+  const rows = _clusterFilteredRows();
+  if (!rows.length) return;
+  _exportCsv(['Time','Node','Service','Severity','Message (raw)'],
+    rows.map(e=>[
+      e.time ? new Date(e.time*1000).toLocaleString() : '',
+      e.node||'', e.tag||'', _CL_PRI[e.pri]||'info', e.msg||''
+    ]),
+    'cluster-events-' + new Date().toISOString().slice(0,10) + '.csv');
+}
+
+function _renderClusterTable() {
+  const rows = _clusterFilteredRows();
+  const countEl = document.getElementById('logs-cl-count');
+  if (countEl) countEl.textContent = rows.length + ' entries';
+  if (!rows.length) {
+    document.getElementById('logs-cluster-body').innerHTML = '<div class="empty">No cluster events match the current filter.</div>';
+    return;
+  }
+  let html = `<div class="table-wrap"><table class="data-table" style="table-layout:fixed">
+    <colgroup><col style="width:145px"><col style="width:90px"><col style="width:110px"><col style="width:72px"><col><col style="width:32px"></colgroup>
+    <thead><tr><th>Time</th><th>Node</th><th>Service</th><th>Severity</th><th>Message</th><th></th></tr></thead><tbody>`;
+  rows.forEach((e,i) => {
+    const sev = _CL_PRI[e.pri]||'info';
+    const ts = e.time ? new Date(e.time*1000).toLocaleString() : '';
+    const rowId = `cl-${i}`;
+    const hasDetail = sev==='err'||sev==='warn';
+    const raw = e.msg || '';
+    const human = _humanizeClusterMsg(raw);
+    const dispTag = _CLUSTER_TAGS[e.tag||''] || e.tag || '';
+    const msgCell = human
+      ? `<span title="${escHtml(human.raw)}">${escHtml(human.text)}</span>${human.sub?`<span style="color:var(--muted);font-size:11px;margin-left:6px">${escHtml(human.sub)}</span>`:''}`
+      : escHtml(raw);
+    html += `<tr class="${sev==='err'?'task-row-err':sev==='warn'?'task-row-run':''}">
+      <td class="log-time" style="font-size:11px">${escHtml(ts)}</td>
+      <td style="color:var(--muted);font-size:12px">${escHtml(e.node||'')}</td>
+      <td style="color:var(--muted);font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${escHtml(e.tag||'')}">${escHtml(dispTag)}</td>
+      <td><span class="log-sev ${sev}">${sev==='err'?'ERROR':sev==='warn'?'WARN':'INFO'}</span></td>
+      <td class="log-msg ${sev}" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${msgCell}</td>
+      <td style="text-align:center">${hasDetail?`<button class="log-expand" id="logx-${escHtml(rowId)}" onclick="_logsExpandRow('${escHtml(rowId)}')">&#x25B6;</button>`:''}</td>
+    </tr>`;
+    if (hasDetail) html += `<tr id="logd-${escHtml(rowId)}" style="display:none"><td colspan="6" style="padding:0 0 8px 20px">${_logDetailHtml(raw,rowId)}</td></tr>`;
+  });
+  html += '</tbody></table></div>';
+  document.getElementById('logs-cluster-body').innerHTML = html;
+}
+
 async function _loadClusterEvents() {
   window._logsClusterLoaded = true;
   document.getElementById('logs-cluster-body').innerHTML = '<div class="empty">Loading&#x2026;</div>';
@@ -4429,35 +4530,8 @@ async function _loadClusterEvents() {
   const get = conn ? (p=>connGet(conn,p)) : pveGet;
   try {
     const d = await get('/api2/json/cluster/log?max=500');
-    const entries = d.data || [];
-    if (!entries.length) { document.getElementById('logs-cluster-body').innerHTML='<div class="empty">No cluster events found.</div>'; return; }
-    const PRI = {0:'err',1:'err',2:'err',3:'err',4:'warn',5:'info',6:'info',7:'info'};
-    let html = `<div class="table-wrap"><table class="data-table" style="table-layout:fixed">
-      <colgroup><col style="width:145px"><col style="width:90px"><col style="width:100px"><col style="width:72px"><col><col style="width:32px"></colgroup>
-      <thead><tr><th>Time</th><th>Node</th><th>Service</th><th>Severity</th><th>Message</th><th></th></tr></thead><tbody>`;
-    entries.forEach((e,i) => {
-      const sev = PRI[e.pri]||'info';
-      const ts = e.time ? new Date(e.time*1000).toLocaleString() : '';
-      const rowId = `cl-${i}`;
-      const hasDetail = sev==='err'||sev==='warn';
-      const raw = e.msg || '';
-      const human = _humanizeClusterMsg(raw);
-      const dispTag = _CLUSTER_TAGS[e.tag||''] || e.tag || '';
-      const msgCell = human
-        ? `<span title="${escHtml(human.raw)}">${escHtml(human.text)}</span>${human.sub?`<span style="color:var(--muted);font-size:11px;margin-left:6px">${escHtml(human.sub)}</span>`:''}`
-        : escHtml(raw);
-      html += `<tr class="${sev==='err'?'task-row-err':sev==='warn'?'task-row-run':''}">
-        <td class="log-time" style="font-size:11px">${escHtml(ts)}</td>
-        <td style="color:var(--muted);font-size:12px">${escHtml(e.node||'')}</td>
-        <td style="color:var(--muted);font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${escHtml(e.tag||'')}">${escHtml(dispTag)}</td>
-        <td><span class="log-sev ${sev}">${sev==='err'?'ERROR':sev==='warn'?'WARN':'INFO'}</span></td>
-        <td class="log-msg ${sev}" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${msgCell}</td>
-        <td style="text-align:center">${hasDetail?`<button class="log-expand" id="logx-${escHtml(rowId)}" onclick="_logsExpandRow('${escHtml(rowId)}')">&#x25B6;</button>`:''}</td>
-      </tr>`;
-      if (hasDetail) html += `<tr id="logd-${escHtml(rowId)}" style="display:none"><td colspan="6" style="padding:0 0 8px 20px">${_logDetailHtml(raw,rowId)}</td></tr>`;
-    });
-    html += '</tbody></table></div>';
-    document.getElementById('logs-cluster-body').innerHTML = html;
+    _clusterEntries = d.data || [];
+    _renderClusterTable();
   } catch (err) {
     document.getElementById('logs-cluster-body').innerHTML = `<div class="empty">Failed to load cluster events: ${escHtml(err.message)}</div>`;
   }
