@@ -1672,6 +1672,7 @@
             <option value="info">Info only</option>
           </select>
           <input id="logs-search" type="text" placeholder="Filter messages…" style="flex:1;min-width:180px;padding:5px 10px;background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);color:var(--text);font-size:13px" oninput="_renderSyslogTable()">
+          <label style="display:flex;align-items:center;gap:5px;font-size:12px;color:var(--muted);cursor:pointer;white-space:nowrap"><input type="checkbox" id="logs-hide-kernel" onchange="_renderSyslogTable()" style="accent-color:var(--accent)"> Hide kernel detail</label>
           <span id="logs-count" style="font-size:12px;color:var(--muted);white-space:nowrap"></span>
         </div>
         <div id="logs-syslog-body"><div class="empty">Loading&#x2026;</div></div>
@@ -4183,6 +4184,57 @@ async function loadLogs() {
 
 let _syslogEntries = [];
 
+const _SYSLOG_MON = {Jan:0,Feb:1,Mar:2,Apr:3,May:4,Jun:5,Jul:6,Aug:7,Sep:8,Oct:9,Nov:10,Dec:11};
+const _SVC_LABELS = {
+  kernel:'System Kernel',sshd:'SSH Server',systemd:'Service Manager',
+  'systemd-logind':'Login Manager','systemd-networkd':'Network Manager',
+  'systemd-resolved':'DNS Resolver','systemd-journald':'Journal',
+  cron:'Scheduled Tasks',crond:'Scheduled Tasks',CRON:'Scheduled Task',
+  pvedaemon:'PVE Daemon',pveproxy:'PVE Proxy',pvestatd:'PVE Status',
+  pvescheduler:'PVE Scheduler',corosync:'Cluster Sync',
+  'pve-ha-lrm':'HA Manager','pve-ha-crm':'HA Cluster',
+  'qemu-server':'VM Manager',lxc:'Container Manager',
+  postfix:'Mail Server',rsyslogd:'Syslog',sudo:'Privilege Escalation',
+  ntpd:'Time Sync',chronyd:'Time Sync',NetworkManager:'Network Manager',
+  dhclient:'DHCP Client',smartd:'Drive Monitor',
+  fail2ban:'Intrusion Prevention',sshguard:'SSH Guard',su:'User Switch'
+};
+
+function _syslogTsMs(ts) {
+  const m = ts.match(/^(\w{3})\s+(\d+)\s+(\d+):(\d+):(\d+)/);
+  if (!m) return 0;
+  const mon = _SYSLOG_MON[m[1]];
+  if (mon === undefined) return 0;
+  const now = new Date();
+  let d = new Date(now.getFullYear(), mon, +m[2], +m[3], +m[4], +m[5]);
+  if (d > now) d = new Date(now.getFullYear()-1, mon, +m[2], +m[3], +m[4], +m[5]);
+  return d.getTime();
+}
+
+function _formatSyslogTs(ts) {
+  const ms = _syslogTsMs(ts);
+  if (!ms) return ts;
+  const d = new Date(ms);
+  const MONS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  return `${d.getDate()} ${MONS[d.getMonth()]}, ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}:${String(d.getSeconds()).padStart(2,'0')}`;
+}
+
+function _friendlyService(svc) {
+  if (!svc) return 'System';
+  const base = svc.replace(/\[\d+\]$/, '').replace(/:$/, '');
+  return _SVC_LABELS[base] || base;
+}
+
+function _parseSyslogEntry(raw, defaultNode) {
+  // "May 22 15:52:30 hostname service[pid]: message"
+  const m = raw.match(/^(\w{3}\s+\d+\s+[\d:]+)\s+(\S+)\s+(\S+?)(?:\[(\d+)\])?:\s*(.+)$/);
+  if (m) return { ts:m[1], tsMs:_syslogTsMs(m[1]), node:m[2], service:m[3], pid:m[4]||'', msg:m[5] };
+  // fallback: no colon separator
+  const m2 = raw.match(/^(\w{3}\s+\d+\s+[\d:]+)\s+(\S+)\s+(.+)$/);
+  if (m2) return { ts:m2[1], tsMs:_syslogTsMs(m2[1]), node:m2[2], service:'', pid:'', msg:m2[3] };
+  return { ts:raw.slice(0,15), tsMs:0, node:defaultNode, service:'', pid:'', msg:raw };
+}
+
 async function _loadSystemLogs() {
   document.getElementById('logs-syslog-body').innerHTML = '<div class="empty">Loading&#x2026;</div>';
   const conn = _logsGetConn();
@@ -4196,21 +4248,25 @@ async function _loadSystemLogs() {
       const d = await get(`/api2/json/nodes/${n.node}/syslog?limit=300`);
       (d.data||[]).forEach(e => {
         const raw = e.t || '';
-        const m = raw.match(/^(\w+\s+\d+\s+[\d:]+)\s+(\S+)\s+(.+)$/);
-        all.push({ ts: raw.slice(0,15), node: m?m[2]:n.node, msg: m?m[3]:raw, sev: _logSev(raw), id: `sl-${n.node}-${e.n}` });
+        const parsed = _parseSyslogEntry(raw, n.node);
+        parsed.sev = _logSev(raw);
+        parsed.id = `sl-${n.node}-${e.n}`;
+        all.push(parsed);
       });
     } catch {}
   }));
-  _syslogEntries = all.reverse();
+  _syslogEntries = all.sort((a,b) => b.tsMs - a.tsMs);
   _renderSyslogTable();
 }
 
 function _renderSyslogTable() {
-  const sev    = document.getElementById('logs-sev')?.value || '';
-  const search = (document.getElementById('logs-search')?.value||'').toLowerCase();
+  const sev        = document.getElementById('logs-sev')?.value || '';
+  const search     = (document.getElementById('logs-search')?.value||'').toLowerCase();
+  const hideKernel = document.getElementById('logs-hide-kernel')?.checked;
   let rows = _syslogEntries;
-  if (sev)    rows = rows.filter(e=>e.sev===sev);
-  if (search) rows = rows.filter(e=>e.msg.toLowerCase().includes(search)||e.node.toLowerCase().includes(search));
+  if (sev)        rows = rows.filter(e=>e.sev===sev);
+  if (hideKernel) rows = rows.filter(e=>!(e.service==='kernel'&&e.sev==='info'));
+  if (search)     rows = rows.filter(e=>e.msg.toLowerCase().includes(search)||e.node.toLowerCase().includes(search)||(e.service||'').toLowerCase().includes(search));
   const countEl = document.getElementById('logs-count');
   if (countEl) countEl.textContent = rows.length + ' entries';
   if (!rows.length) {
@@ -4218,18 +4274,20 @@ function _renderSyslogTable() {
     return;
   }
   let html = `<div class="table-wrap"><table class="data-table" style="table-layout:fixed">
-    <colgroup><col style="width:130px"><col style="width:90px"><col style="width:72px"><col><col style="width:32px"></colgroup>
-    <thead><tr><th>Time</th><th>Node</th><th>Severity</th><th>Message</th><th></th></tr></thead><tbody>`;
+    <colgroup><col style="width:130px"><col style="width:75px"><col style="width:120px"><col style="width:72px"><col><col style="width:32px"></colgroup>
+    <thead><tr><th>Time</th><th>Node</th><th>Service</th><th>Severity</th><th>Message</th><th></th></tr></thead><tbody>`;
   rows.slice(0,500).forEach(e => {
     const hasDetail = e.sev==='err'||e.sev==='warn';
+    const dispSvc = _friendlyService(e.service);
     html += `<tr class="${e.sev==='err'?'task-row-err':e.sev==='warn'?'task-row-run':''}">
-      <td class="log-time">${escHtml(e.ts)}</td>
+      <td class="log-time">${escHtml(_formatSyslogTs(e.ts))}</td>
       <td style="color:var(--muted);font-size:12px">${escHtml(e.node)}</td>
+      <td style="color:var(--muted);font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${escHtml(e.service)}">${escHtml(dispSvc)}</td>
       <td><span class="log-sev ${e.sev}">${e.sev==='err'?'ERROR':e.sev==='warn'?'WARN':'INFO'}</span></td>
       <td class="log-msg ${e.sev}" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escHtml(e.msg)}</td>
       <td style="text-align:center">${hasDetail?`<button class="log-expand" id="logx-${escHtml(e.id)}" onclick="_logsExpandRow('${escHtml(e.id)}')">&#x25B6;</button>`:''}</td>
     </tr>`;
-    if (hasDetail) html += `<tr id="logd-${escHtml(e.id)}" style="display:none"><td colspan="5" style="padding:0 0 8px 20px">${_logDetailHtml(e.msg,e.id)}</td></tr>`;
+    if (hasDetail) html += `<tr id="logd-${escHtml(e.id)}" style="display:none"><td colspan="6" style="padding:0 0 8px 20px">${_logDetailHtml(e.msg,e.id)}</td></tr>`;
   });
   html += '</tbody></table></div>';
   if (rows.length>500) html += `<p style="color:var(--muted);font-size:12px;text-align:center;padding:8px">Showing first 500 of ${rows.length} entries — use filters to narrow results.</p>`;
