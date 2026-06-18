@@ -4156,19 +4156,11 @@ function _logsTab(tab) {
 }
 
 function _logsGetConn() {
-  const id = document.getElementById('logs-conn')?.value;
-  return id ? (PVE.extraConnections||[]).find(c=>c.id===id) : null;
+  return getViewConn('logs-conn');
 }
 
 async function loadLogs() {
   window._logsClusterLoaded = false;
-  const connSel = document.getElementById('logs-conn');
-  if (connSel) {
-    connSel.innerHTML = '<option value="">Primary</option>';
-    (PVE.extraConnections||[]).forEach(c => {
-      connSel.innerHTML += `<option value="${escHtml(c.id)}">${escHtml(c.name||c.host)}</option>`;
-    });
-  }
   const nodeSel = document.getElementById('logs-node');
   if (nodeSel) {
     const conn = _logsGetConn();
