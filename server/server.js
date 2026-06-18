@@ -282,10 +282,12 @@ app.use((req, res, next) => {
   res.set('X-Content-Type-Options', 'nosniff');
   res.set('X-Frame-Options', 'DENY');
   res.set('Referrer-Policy', 'no-referrer');
-  // Strict CSP for API responses — the SPA HTML file is served as a static file
-  // and its inline scripts pre-date a nonce-based CSP; API routes never return HTML
-  // so this header is safe to apply globally.
-  res.set('Content-Security-Policy', "default-src 'none'; frame-ancestors 'none'");
+  // Strict CSP only on API/proxy routes (JSON responses).
+  // The SPA HTML uses inline <script> and <style> tags, so default-src 'none'
+  // must not be set on the document response — it would block the entire UI.
+  if (req.path.startsWith('/api/') || req.path.startsWith('/proxy/') || req.path.startsWith('/vnc-ws/')) {
+    res.set('Content-Security-Policy', "default-src 'none'; frame-ancestors 'none'");
+  }
   next();
 });
 
