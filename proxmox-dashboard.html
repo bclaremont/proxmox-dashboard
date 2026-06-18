@@ -4184,6 +4184,66 @@ async function loadLogs() {
 
 let _syslogEntries = [];
 
+function _humanizeMsg(service, msg) {
+  if (service !== 'kernel') return null;
+  // Memory map
+  if (/^BIOS-e820:.*\] usable/.test(msg))   return 'Boot: memory region available to OS';
+  if (/^BIOS-e820:.*\] reserved/.test(msg)) return 'Boot: memory region reserved by firmware';
+  if (/^BIOS-e820:.*\] ACPI/.test(msg))     return 'Boot: memory region used by ACPI firmware';
+  if (/^BIOS-e820:/.test(msg))              return 'Boot: BIOS memory region entry';
+  if (/^e820:/.test(msg))                   return 'Boot: memory map entry';
+  // RAM summary
+  const memM = msg.match(/^Memory:\s*(.+available)/);
+  if (memM) return 'Memory: ' + memM[1];
+  // Clock / timekeeping
+  if (/^clocksource:/.test(msg))    return 'Timekeeping: clock source configured';
+  if (/^TSC /.test(msg))            return 'Timekeeping: CPU timestamp counter calibrated';
+  if (/^Calibrating/.test(msg))     return 'Timekeeping: hardware timer calibration';
+  if (/^hrtimer:/.test(msg))        return 'Timekeeping: high-resolution timer ready';
+  // Hash tables (futex, posix timers, etc.)
+  const htM = msg.match(/^(\S+) hash table entries:/);
+  if (htM) return `System: ${htM[1]} lookup table initialised`;
+  // RTC
+  const rtcM = msg.match(/^PM: RTC time:\s*(\d+:\d+:\d+), date:\s*(\S+)/);
+  if (rtcM) return `Hardware clock reading: ${rtcM[2]} ${rtcM[1]}`;
+  // Network protocol families
+  const netM = msg.match(/^NET: Registered (\S+) protocol family/);
+  if (netM) return `Network: registered ${netM[1].replace('PF_','').toLowerCase()} protocol family`;
+  // CPU / SMP
+  if (/^smpboot:/.test(msg))               return 'CPU: multi-processor startup';
+  if (/^CPU\d+/.test(msg))                return 'CPU: processor core status';
+  if (/^microcode:/.test(msg))            return 'CPU: firmware microcode version checked';
+  if (/^mce:/.test(msg))                  return 'CPU: machine-check exception config';
+  // ACPI
+  if (/^ACPI:.*[Tt]able/.test(msg))       return 'Firmware: ACPI table loaded';
+  if (/^ACPI:.*IRQ/.test(msg))            return 'Firmware: interrupt routing configured';
+  if (/^ACPI:/.test(msg))                 return 'Firmware: ACPI subsystem message';
+  // PCI / hardware bus
+  if (/^pci \d/.test(msg))               return 'Hardware: PCI device configuration';
+  if (/^PCI:/.test(msg))                 return 'Hardware: PCI bus configuration';
+  if (/^DMAR:/.test(msg))                return 'Security: Intel VT-d (IOMMU) message';
+  // DMI / system info
+  const dmiM = msg.match(/^DMI:\s*(.{0,80})/);
+  if (dmiM) return 'System hardware: ' + dmiM[1].trim();
+  // Pin controller
+  if (/^pinctrl/.test(msg))              return 'Hardware: pin controller initialised';
+  // Interrupts
+  if (/^genirq:/.test(msg))              return 'System: interrupt handler registered';
+  // virtio / device drivers
+  if (/^virtio/.test(msg))              return 'Virtualisation: virtio device initialised';
+  if (/^SCSI subsystem/.test(msg))      return 'Storage: SCSI subsystem initialised';
+  if (/^libata/.test(msg))             return 'Storage: ATA driver message';
+  if (/^ata\d/.test(msg))              return 'Storage: ATA device message';
+  if (/^sd \d/.test(msg))             return 'Storage: disk device message';
+  // Kernel init / boot misc
+  if (/^Booting paravirtualized kernel/.test(msg)) return 'Boot: running as virtualised guest';
+  if (/^Linux version/.test(msg))     return 'Boot: ' + (msg.match(/Linux version (\S+)/)?.[1]||'kernel') + ' starting';
+  if (/^Command line:/.test(msg))     return 'Boot: kernel command line recorded';
+  if (/^BIOS provided physical RAM/.test(msg)) return 'Boot: BIOS RAM size reported';
+  if (/^Hypervisor detected:/.test(msg)) { const hv=msg.match(/Hypervisor detected:\s*(.+)/); return 'Boot: running under '+( hv?hv[1]:'hypervisor'); }
+  return null;
+}
+
 const _SYSLOG_MON = {Jan:0,Feb:1,Mar:2,Apr:3,May:4,Jun:5,Jul:6,Aug:7,Sep:8,Oct:9,Nov:10,Dec:11};
 const _SVC_LABELS = {
   kernel:'System Kernel',sshd:'SSH Server',systemd:'Service Manager',
@@ -4266,7 +4326,7 @@ function _renderSyslogTable() {
   let rows = _syslogEntries;
   if (sev)        rows = rows.filter(e=>e.sev===sev);
   if (hideKernel) rows = rows.filter(e=>!(e.service==='kernel'&&e.sev==='info'));
-  if (search)     rows = rows.filter(e=>e.msg.toLowerCase().includes(search)||e.node.toLowerCase().includes(search)||(e.service||'').toLowerCase().includes(search));
+  if (search)     rows = rows.filter(e=>e.msg.toLowerCase().includes(search)||e.node.toLowerCase().includes(search)||(e.service||'').toLowerCase().includes(search)||(_humanizeMsg(e.service,e.msg)||'').toLowerCase().includes(search));
   const countEl = document.getElementById('logs-count');
   if (countEl) countEl.textContent = rows.length + ' entries';
   if (!rows.length) {
@@ -4279,12 +4339,15 @@ function _renderSyslogTable() {
   rows.slice(0,500).forEach(e => {
     const hasDetail = e.sev==='err'||e.sev==='warn';
     const dispSvc = _friendlyService(e.service);
+    const humanMsg = _humanizeMsg(e.service, e.msg);
+    const dispMsg  = humanMsg || e.msg;
+    const msgTitle = humanMsg ? e.msg : '';
     html += `<tr class="${e.sev==='err'?'task-row-err':e.sev==='warn'?'task-row-run':''}">
       <td class="log-time">${escHtml(_formatSyslogTs(e.ts))}</td>
       <td style="color:var(--muted);font-size:12px">${escHtml(e.node)}</td>
       <td style="color:var(--muted);font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${escHtml(e.service)}">${escHtml(dispSvc)}</td>
       <td><span class="log-sev ${e.sev}">${e.sev==='err'?'ERROR':e.sev==='warn'?'WARN':'INFO'}</span></td>
-      <td class="log-msg ${e.sev}" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escHtml(e.msg)}</td>
+      <td class="log-msg ${e.sev}" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis${humanMsg?';font-style:italic;color:var(--muted)':''}" title="${escHtml(msgTitle)}">${escHtml(dispMsg)}</td>
       <td style="text-align:center">${hasDetail?`<button class="log-expand" id="logx-${escHtml(e.id)}" onclick="_logsExpandRow('${escHtml(e.id)}')">&#x25B6;</button>`:''}</td>
     </tr>`;
     if (hasDetail) html += `<tr id="logd-${escHtml(e.id)}" style="display:none"><td colspan="6" style="padding:0 0 8px 20px">${_logDetailHtml(e.msg,e.id)}</td></tr>`;
