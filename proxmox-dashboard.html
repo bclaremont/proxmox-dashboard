@@ -2718,31 +2718,35 @@ function updateTopbarStats() {
 }
 
 // ── FAVICON BADGE ─────────────────────────────────────
+// Capture the Certus logo once before any badge call overwrites the link href
+const _certusLogoHref = document.querySelector('link[rel~="icon"]')?.href || null;
 function updateFaviconBadge(count) {
   try {
     const c = document.createElement('canvas');
     c.width = 32; c.height = 32;
     const ctx = c.getContext('2d');
-    ctx.fillStyle = '#f97316';
-    if (ctx.roundRect) ctx.roundRect(2,2,28,28,6); else ctx.rect(2,2,28,28);
-    ctx.fill();
-    ctx.fillStyle = '#fff';
-    ctx.font = 'bold 20px Arial';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText('P', 16, 17);
-    if (count > 0) {
-      ctx.fillStyle = '#f85149';
-      ctx.beginPath(); ctx.arc(26,7,7,0,Math.PI*2); ctx.fill();
-      ctx.fillStyle = '#fff';
-      ctx.font = 'bold 8px Arial';
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillText(count>9?'9+':String(count), 26, 7);
+    const drawBadge = () => {
+      if (count > 0) {
+        ctx.fillStyle = '#f85149';
+        ctx.beginPath(); ctx.arc(26, 7, 7, 0, Math.PI*2); ctx.fill();
+        ctx.fillStyle = '#fff';
+        ctx.font = 'bold 8px Arial';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(count > 9 ? '9+' : String(count), 26, 7);
+      }
+      let link = document.querySelector('link[rel~="icon"]');
+      if (!link) { link = document.createElement('link'); link.rel = 'icon'; document.head.appendChild(link); }
+      link.href = c.toDataURL();
+    };
+    if (_certusLogoHref) {
+      const img = new Image();
+      img.onload = () => { ctx.drawImage(img, 0, 0, 32, 32); drawBadge(); };
+      img.onerror = () => drawBadge();
+      img.src = _certusLogoHref;
+    } else {
+      drawBadge();
     }
-    let link = document.querySelector('link[rel~="icon"]');
-    if (!link) { link = document.createElement('link'); link.rel='icon'; document.head.appendChild(link); }
-    link.href = c.toDataURL();
   } catch(e) {}
 }
 
