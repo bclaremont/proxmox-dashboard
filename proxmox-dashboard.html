@@ -1156,7 +1156,7 @@
       <div class="stats-grid" id="storage-summary"></div>
       <div class="table-wrap">
         <table>
-          <thead><tr><th>Storage</th><th>Node</th><th>Type</th><th>Content</th><th>Status</th><th>Used</th><th>Available</th><th>Total</th><th>Usage</th><th>Actions</th></tr></thead>
+          <thead><tr><th>Storage</th><th>Node</th><th>Type</th><th>Status</th><th>Used</th><th>Available</th><th>Total</th><th>Usage</th><th>Actions</th></tr></thead>
           <tbody id="storage-body"></tbody>
         </table>
       </div>
@@ -6725,6 +6725,46 @@ function toast(msg, type='info') {
 }
 
 
+// ── Storage view helpers ───────────────────────────────────────────────────
+const _STOR_TYPES = {
+  lvmthin:    { label:'LVM Thin',       thin:true,  tip:'Thin-provisioned local block storage — VMs can be over-committed beyond physical capacity.' },
+  lvm:        { label:'LVM Block',      thin:false, tip:'Thick-provisioned block storage — disk space is reserved in full when a VM disk is created, like VMware Eager Zeroed Thick.' },
+  zfspool:    { label:'ZFS Pool',       thin:true,  tip:'ZFS storage pool — thin-provisioned with native snapshots, checksums, and optional compression.' },
+  dir:        { label:'Directory',      thin:true,  tip:'File-based directory storage — qcow2 disk images are thin-provisioned; raw images are thick.' },
+  nfs:        { label:'NFS Share',      thin:true,  tip:'Network File System share — thin-provisioned, images only consume space as data is written.' },
+  cifs:       { label:'Windows Share',  thin:true,  tip:'CIFS/SMB Windows network share — thin-provisioned file-based storage.' },
+  rbd:        { label:'Ceph RBD',       thin:true,  tip:'Ceph distributed block storage — thin-provisioned across the Ceph cluster, similar to VMware vSAN.' },
+  cephfs:     { label:'CephFS',         thin:true,  tip:'Ceph distributed file system — shared storage accessible from all cluster nodes.' },
+  pbs:        { label:'Proxmox Backup', thin:true,  tip:'Proxmox Backup Server — uses deduplication and compression; reported size is post-dedup.' },
+  iscsi:      { label:'iSCSI',          thin:false, tip:'iSCSI block storage over network — typically thick-provisioned, like a SAN LUN.' },
+  iscsidirect:{ label:'iSCSI Direct',   thin:false, tip:'Direct iSCSI LUN access — space fully reserved on the SAN.' },
+  btrfs:      { label:'Btrfs',          thin:true,  tip:'Btrfs file system — thin-provisioned with native snapshot support.' },
+  glusterfs:  { label:'GlusterFS',      thin:true,  tip:'GlusterFS distributed file system.' },
+  drbd:       { label:'DRBD',           thin:false, tip:'Distributed Replicated Block Device — synchronous replication between two nodes.' },
+};
+
+const _STOR_CONTENT_META = {
+  images:  { label:'VM Disks',  color:'#3b82f6' },
+  rootdir: { label:'CT Disks',  color:'#14b8a6' },
+  backup:  { label:'Backups',   color:'#f59e0b' },
+  iso:     { label:'ISOs',      color:'#8b5cf6' },
+  vztmpl:  { label:'Templates', color:'#10b981' },
+  snippets:{ label:'Snippets',  color:'#6b7280' },
+};
+
+function _storEstimateCommitted() {
+  return [...(PVE.vms||[]),...(PVE.containers||[])].reduce((s,v)=>s+(v.maxdisk||0),0);
+}
+
+function _storContentChips(content) {
+  const types = Array.isArray(content) ? content : (content||'').split(',').map(s=>s.trim()).filter(Boolean);
+  return types.map(t => {
+    const m = _STOR_CONTENT_META[t];
+    if (!m) return '';
+    return `<span style="display:inline-block;padding:1px 5px;border-radius:3px;font-size:10px;background:${m.color}22;color:${m.color};border:1px solid ${m.color}44;margin:1px 2px 0 0">${m.label}</span>`;
+  }).join('');
+}
+
 async function loadStorageBackground() {
   try {
     const all = [];
@@ -6787,45 +6827,64 @@ async function loadStorage() {
 function renderStorage(overrideData) {
   const conn = getViewConn('storage-conn');
   const source = overrideData || (conn ? (conn.storage||[]) : PVE.storage);
-  const nodeFilter = document.getElementById('storage-node-filter').value;
+  const nodeFilter = document.getElementById('storage-node-filter')?.value || '';
   const stores = nodeFilter ? source.filter(s=>s.node===nodeFilter) : source;
 
-  // Summary cards
-  const totalBytes = stores.reduce((a,s)=>a+(s.total||0),0);
-  const usedBytes  = stores.reduce((a,s)=>a+(s.used||0),0);
-  const availBytes = stores.reduce((a,s)=>a+(s.avail||0),0);
-  const pct = totalBytes>0?((usedBytes/totalBytes)*100).toFixed(0):0;
+  const totalBytes  = stores.reduce((a,s)=>a+(s.total||0),0);
+  const usedBytes   = stores.reduce((a,s)=>a+(s.used||0),0);
   const activeCount = stores.filter(s=>s.active||s.enabled).length;
+  const usedPct     = totalBytes>0 ? Math.round(usedBytes/totalBytes*100) : 0;
+  const committed   = !conn ? _storEstimateCommitted() : 0;
+  const commitPct   = totalBytes>0 ? Math.round(committed/totalBytes*100) : 0;
+  const overProv    = committed>0 && committed>totalBytes && totalBytes>0;
+
+  // ── Summary cards ─────────────────────────────────────────────
+  const commitCard = conn
+    ? `<div class="stat-card accent-green"><div class="label">Committed to VMs/CTs</div><div class="value" style="font-size:20px">—</div><div class="sub">primary cluster only</div></div>`
+    : overProv
+    ? `<div class="stat-card" style="border-color:var(--yellow)"><div class="label" style="color:var(--yellow)">⚠ Over-Provisioned</div><div class="value" style="font-size:20px;color:var(--yellow)">${fmtBytes(committed)}</div><div class="sub" style="color:var(--yellow)">${commitPct}% of physical — fine if using thin storage</div></div>`
+    : `<div class="stat-card accent-green"><div class="label">Committed to VMs/CTs</div><div class="value" style="font-size:20px">${fmtBytes(committed)}</div><div class="sub">${commitPct}% of physical capacity</div></div>`;
 
   document.getElementById('storage-summary').innerHTML = `
     <div class="stat-card accent-blue"><div class="label">Storage Pools</div><div class="value">${stores.length}</div><div class="sub">${activeCount} active</div></div>
-    <div class="stat-card accent-orange"><div class="label">Total Capacity</div><div class="value" style="font-size:20px">${fmtBytes(totalBytes)}</div><div class="sub">across all pools</div></div>
-    <div class="stat-card accent-purple"><div class="label">Used Space</div><div class="value" style="font-size:20px">${fmtBytes(usedBytes)}</div><div class="sub">${pct}% of total</div></div>
-    <div class="stat-card accent-green"><div class="label">Available</div><div class="value" style="font-size:20px">${fmtBytes(availBytes)}</div><div class="sub">free space</div></div>`;
+    <div class="stat-card accent-orange"><div class="label">Physical Capacity</div><div class="value" style="font-size:20px">${fmtBytes(totalBytes)}</div><div class="sub">total across all pools</div></div>
+    <div class="stat-card ${usedPct>85?'accent-orange':usedPct>70?'accent-orange':'accent-purple'}"><div class="label">Used Space</div><div class="value" style="font-size:20px">${fmtBytes(usedBytes)}</div><div class="sub">${usedPct}% of physical</div></div>
+    ${commitCard}`;
 
   if (!stores.length) {
-    document.getElementById('storage-body').innerHTML='<tr><td colspan="10" class="empty">No storage found</td></tr>';
+    document.getElementById('storage-body').innerHTML='<tr><td colspan="9" class="empty">No storage found</td></tr>';
     return;
   }
 
   const connId = conn ? (extraConns.find(c=>c===conn)||{}).id||'' : '';
 
   document.getElementById('storage-body').innerHTML = stores.map(s => {
-    const used   = s.used||0, total = s.total||0, avail = s.avail||0;
-    const pct    = total>0?((used/total)*100).toFixed(0):0;
-    const active = s.active!==undefined ? s.active : (s.enabled!==undefined?s.enabled:true);
+    const used    = s.used||0, total = s.total||0, avail = s.avail||0;
+    const pct     = total>0 ? ((used/total)*100).toFixed(0) : 0;
+    const active  = s.active!==undefined ? s.active : (s.enabled!==undefined?s.enabled:true);
     const disabled = s.disable || !active;
-    const content = Array.isArray(s.content) ? s.content.join(', ') : (s.content||'—');
+    const ti      = _STOR_TYPES[s.type] || { label:s.type||'—', thin:null, tip:'' };
+    const thinBadge = ti.thin===true
+      ? `<span style="font-size:10px;padding:1px 5px;border-radius:3px;background:#3b82f622;color:#3b82f6;border:1px solid #3b82f644;margin-left:5px" title="Thin-provisioned — VMs can be allocated more than physical capacity">THIN</span>`
+      : ti.thin===false
+      ? `<span style="font-size:10px;padding:1px 5px;border-radius:3px;background:#f59e0b22;color:#f59e0b;border:1px solid #f59e0b44;margin-left:5px" title="Thick-provisioned — space is fully reserved when a disk is created">THICK</span>`
+      : '';
+    const chips   = _storContentChips(s.content);
+    const rowId   = `${escHtml(s.node)}-${escHtml(s.storage)}`;
     return `<tr>
-      <td><strong>${escHtml(s.storage)}</strong></td>
-      <td style="color:var(--muted)">${escHtml(s.node)}</td>
-      <td><span class="type-chip vm">${escHtml(s.type||'—')}</span></td>
-      <td style="font-size:12px;color:var(--muted);max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escHtml(content)}">${escHtml(content)}</td>
+      <td>
+        <div style="display:flex;align-items:flex-start;gap:6px">
+          <button class="log-expand" id="storbtn-${rowId}" onclick="_storExpand('${escHtml(s.node)}','${escHtml(s.storage)}',this)" title="Show content breakdown" style="margin-top:2px;flex-shrink:0">&#x25B6;</button>
+          <div><strong>${escHtml(s.storage)}</strong><div style="margin-top:3px">${chips}</div></div>
+        </div>
+      </td>
+      <td style="color:var(--muted);font-size:12px">${escHtml(s.node)}</td>
+      <td><span class="type-chip vm" title="${escHtml(ti.tip)}">${escHtml(ti.label)}</span>${thinBadge}</td>
       <td>${disabled?'<span class="badge stopped"><span class="badge-dot"></span>disabled</span>':'<span class="badge online"><span class="badge-dot"></span>active</span>'}</td>
       <td>${fmtBytes(used)}</td>
       <td>${fmtBytes(avail)}</td>
       <td>${total>0?fmtBytes(total):'—'}</td>
-      <td style="min-width:100px">
+      <td style="min-width:110px">
         <div class="gauge-wrap">
           <span style="min-width:34px;text-align:right;font-size:12px">${pct}%</span>
           <div class="gauge-bar"><div class="gauge-fill ${gaugeClass(parseFloat(pct))}" style="width:${Math.min(pct,100)}%"></div></div>
@@ -6833,13 +6892,66 @@ function renderStorage(overrideData) {
       </td>
       <td onclick="event.stopPropagation()" style="white-space:nowrap">
         <div class="actions-row">
-          <button class="btn small" onclick="openEditStorageModal('${escHtml(s.storage)}','${connId}')" title="Edit">✎</button>
+          <button class="btn small" onclick="openEditStorageModal('${escHtml(s.storage)}','${connId}')" title="Edit">&#x270E;</button>
           <button class="btn small ${disabled?'success':'warning'}" onclick="toggleStorageDisable('${escHtml(s.storage)}','${connId}',${!!disabled})" title="${disabled?'Enable':'Disable'}">${disabled?'Enable':'Disable'}</button>
           <button class="btn small danger" onclick="confirmDeleteStorage('${escHtml(s.storage)}','${connId}')" title="Delete">Delete</button>
         </div>
       </td>
+    </tr>
+    <tr id="stordetail-${rowId}" style="display:none">
+      <td colspan="9" style="padding:0 0 0 32px">
+        <div style="padding:10px 16px 14px;border-top:1px solid var(--border)"></div>
+      </td>
     </tr>`;
   }).join('');
+}
+
+async function _storExpand(node, storage, btn) {
+  const rowId    = `${node}-${storage}`;
+  const detailEl = document.getElementById('stordetail-' + rowId);
+  if (!detailEl) return;
+  const open = detailEl.style.display !== 'none';
+  detailEl.style.display = open ? 'none' : '';
+  if (btn) btn.textContent = open ? '▶' : '▼';
+  if (open || detailEl.dataset.loaded) return;
+
+  const innerDiv = detailEl.querySelector('div');
+  if (innerDiv) innerDiv.innerHTML = '<div class="empty" style="font-size:12px">Loading breakdown…</div>';
+
+  const conn = getViewConn('storage-conn');
+  const get  = conn ? (p=>connGet(conn,p)) : pveGet;
+  try {
+    const d = await get(`/api2/json/nodes/${node}/storage/${storage}/content`);
+    const items = d.data || [];
+    const groups = {};
+    items.forEach(i => {
+      const ct = i.content||'other';
+      if (!groups[ct]) groups[ct] = { count:0, size:0 };
+      groups[ct].count++; groups[ct].size += i.size||0;
+    });
+    const storObj = (PVE.storage||[]).find(s=>s.node===node&&s.storage===storage) || {};
+    const total = storObj.total||0, usedOnDisk = storObj.used||0;
+    const free  = Math.max(0, total - usedOnDisk);
+    const ORDER = ['images','rootdir','backup','iso','vztmpl','snippets'];
+    let barHtml = '', legendHtml = '';
+    ORDER.forEach(ct => {
+      if (!groups[ct]) return;
+      const m   = _STOR_CONTENT_META[ct] || { label:ct, color:'#888' };
+      const pct = total>0 ? Math.min(groups[ct].size/total*100, 100) : 0;
+      barHtml += `<div style="background:${m.color};width:${pct.toFixed(1)}%;${pct>0.5?'min-width:4px':''}"></div>`;
+      legendHtml += `<span style="font-size:12px;white-space:nowrap;margin-right:16px"><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:${m.color};margin-right:4px;vertical-align:middle"></span>${m.label}: <strong>${fmtBytes(groups[ct].size)}</strong> <span style="color:var(--muted)">(${groups[ct].count} item${groups[ct].count!==1?'s':''})</span></span>`;
+    });
+    if (total>0) {
+      barHtml  += `<div style="flex:1;background:var(--bg3)"></div>`;
+      legendHtml += `<span style="font-size:12px;white-space:nowrap;margin-right:16px"><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:var(--bg3);border:1px solid var(--border);margin-right:4px;vertical-align:middle"></span>Free: <strong>${fmtBytes(free)}</strong></span>`;
+    }
+    if (innerDiv) innerDiv.innerHTML = `
+      <div style="height:20px;border-radius:4px;overflow:hidden;display:flex;background:var(--bg3);margin-bottom:8px">${barHtml||'<div style="flex:1"></div>'}</div>
+      <div style="display:flex;flex-wrap:wrap;row-gap:4px">${legendHtml||'<span style="color:var(--muted);font-size:12px">No content found</span>'}</div>`;
+    detailEl.dataset.loaded = '1';
+  } catch(e) {
+    if (innerDiv) innerDiv.innerHTML = `<span style="color:var(--muted);font-size:12px">Could not load breakdown: ${escHtml(e.message)}</span>`;
+  }
 }
 
 // ── STORAGE MANAGEMENT ───────────────────────────────────
