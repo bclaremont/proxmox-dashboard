@@ -6057,7 +6057,8 @@ function vmRow(x,showType=false){
              <button class="btn small" onclick="confirmAction('${x.node}','${x.vmid}','${x.type}','reboot','${cid}')" title="Reboot">↺</button>`
           :`<button class="btn small success" onclick="vmAction('${x.node}','${x.vmid}','${x.type}','start','${cid}')" title="Start">▶</button>`
         }
-        <button class="btn small" onclick="openMigrateModal('${x.node}','${x.vmid}','${x.type}','${cid}')" title="Migrate">⇢</button>
+        <button class="btn small" onclick="openMigrateModal('${x.node}','${x.vmid}','${x.type}','${cid}')" title="Migrate to node">⇢</button>
+        <button class="btn small" onclick="openMoveDiskModal('${x.node}','${x.vmid}','${x.type}','${cid}')" title="Move Disk (Storage vMotion)">⇄</button>
         <button class="btn small" onclick="openCloneModal('${x.node}','${x.vmid}','${x.type}','${(x.name||'').replace(/['"]/g,'')}','${cid}')" title="Clone">⎘</button>
         ${extraConns.length?`<button class="btn small" onclick="openXCopyModal('${x.node}','${x.vmid}','${x.type}','${cid}','${escHtml(x.name||String(x.vmid))}')" title="Copy to another cluster">⎘→</button>`:''}
         <button class="btn small" onclick="openPerfModal('${x.node}','${x.vmid}','${x.type}','${cid}')" title="Performance graphs">📊</button>
@@ -6496,6 +6497,183 @@ async function openMigrateModal(node, vmid, type, connId='', _pickerDone=false) 
     migrateVM(src, mid, mt, tgt, online, local, storage, connId);
   };
   document.getElementById('modal-bg').classList.add('open');
+}
+
+// ── Move Disk (Storage vMotion) ───────────────────────────────
+// Moves a VM/CT disk from one storage to another on the same node.
+// POST /nodes/{node}/qemu/{vmid}/move_disk
+// POST /nodes/{node}/lxc/{vmid}/move_volume
+
+function _cfgSizeBytes(s) {
+  if (!s) return 0;
+  const m = String(s).match(/^(\d+(?:\.\d+)?)([TGMK]?)$/i);
+  if (!m) return 0;
+  const n = parseFloat(m[1]);
+  switch (m[2].toUpperCase()) {
+    case 'T': return Math.round(n * 1099511627776);
+    case 'G': return Math.round(n * 1073741824);
+    case 'M': return Math.round(n * 1048576);
+    case 'K': return Math.round(n * 1024);
+    default:  return Math.round(n);
+  }
+}
+
+let _moveDiskCtx = null;
+
+async function openMoveDiskModal(node, vmid, type, connId='') {
+  const conn  = resolveConn(connId);
+  const get   = conn ? p => connGet(conn, p) : pveGet;
+  const ep    = (type==='lxc'||type==='ct') ? 'lxc' : 'qemu';
+  const label = type.toUpperCase();
+
+  document.getElementById('modal-title').textContent = `Move Disk — ${label} ${vmid}`;
+  document.getElementById('modal-body').innerHTML = '<div class="empty"><span class="loading"></span> Loading disk configuration…</div>';
+  const confirmBtn = document.getElementById('modal-confirm-btn');
+  confirmBtn.style.display = 'none';
+  document.getElementById('modal-bg').classList.add('open');
+
+  try {
+    const cfgRes = await get(`/api2/json/nodes/${node}/${ep}/${vmid}/config`);
+    const cfg    = cfgRes.data || {};
+    const vmName = cfg.name || cfg.hostname || '';
+
+    const diskRe = ep === 'lxc'
+      ? /^(rootfs|mp\d+)$/
+      : /^(virtio|scsi|ide|sata|efidisk)\d+$/;
+    const disks = [];
+    for (const [k, v] of Object.entries(cfg)) {
+      if (!diskRe.test(k) || typeof v !== 'string') continue;
+      if (v.includes('media=cdrom') || v.startsWith('none')) continue;
+      const parts = v.split(',');
+      const volid = parts[0];
+      if (!volid.includes(':')) continue;
+      const srcStorage = volid.split(':')[0];
+      const sizePart   = parts.find(p => p.startsWith('size='));
+      const sizeBytes  = sizePart ? _cfgSizeBytes(sizePart.slice(5)) : 0;
+      disks.push({ key: k, volid, storage: srcStorage, size: sizeBytes });
+    }
+    disks.sort((a, b) => a.key.localeCompare(b.key, undefined, { numeric: true }));
+
+    if (!disks.length) {
+      document.getElementById('modal-body').innerHTML = '<div class="empty">No movable disks found.</div>';
+      return;
+    }
+
+    const allStor    = conn ? (conn.storage || []) : (PVE.storage || []);
+    const contentNeed = ep === 'lxc' ? 'rootdir' : 'images';
+    const targetStor  = allStor.filter(s =>
+      s.node === node &&
+      (s.content || '').split(',').some(c => c.trim() === contentNeed) &&
+      s.status !== 'unavailable'
+    );
+
+    _moveDiskCtx = { disks, targetStor, node, vmid, type, connId, ep };
+
+    const diskOpts = disks.map((d, i) =>
+      `<option value="${i}">${escHtml(d.key)} — ${escHtml(d.storage)} (${fmtBytes(d.size)})</option>`
+    ).join('');
+
+    document.getElementById('modal-title').textContent =
+      `Move Disk — ${label} ${vmid}${vmName ? ' — ' + escHtml(vmName) : ''}`;
+    document.getElementById('modal-body').innerHTML = `
+      <div class="form-group">
+        <label>DISK</label>
+        <select id="md-disk" onchange="_moveDiskRefreshTargets()">${diskOpts}</select>
+      </div>
+      <div class="form-group">
+        <label>TARGET STORAGE</label>
+        <select id="md-target" onchange="_moveDiskUpdateWarn()"></select>
+        <div id="md-target-warn" style="display:none;font-size:11px;color:var(--yellow);margin-top:4px"></div>
+      </div>
+      <div class="form-group" style="margin-top:4px">
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-weight:400">
+          <input type="checkbox" id="md-delete" checked style="width:auto;margin:0">
+          Delete source volume after move
+        </label>
+        <div style="font-size:11px;color:var(--muted);margin-top:3px">Recommended — keeps storage clean. Uncheck only if you need a manual rollback copy.</div>
+      </div>
+      <div style="background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius);padding:8px 12px;font-size:11px;color:var(--muted);margin-top:8px">
+        ${ep==='lxc'
+          ? '&#9888; Container must be <strong style="color:var(--text)">stopped</strong> before its disk can be moved.'
+          : 'Running VMs will briefly pause (&lt;1&thinsp;s) during the final disk cutover — equivalent to VMware Storage vMotion.'}
+      </div>`;
+
+    _moveDiskRefreshTargets();
+    confirmBtn.textContent = 'Move Disk';
+    confirmBtn.style.display = '';
+    modalCallback = _executeMoveDisk;
+  } catch(e) {
+    document.getElementById('modal-body').innerHTML =
+      `<div class="empty" style="color:var(--danger)">Failed to load config: ${escHtml(e.message)}</div>`;
+  }
+}
+
+function _moveDiskRefreshTargets() {
+  if (!_moveDiskCtx) return;
+  const { disks, targetStor } = _moveDiskCtx;
+  const idx  = parseInt(document.getElementById('md-disk')?.value ?? '0', 10);
+  const disk = disks[idx];
+  const sel  = document.getElementById('md-target');
+  if (!disk || !sel) return;
+  const opts = targetStor.filter(s => s.storage !== disk.storage);
+  if (!opts.length) {
+    sel.innerHTML = '<option value="">No other compatible storages on this node</option>';
+    document.getElementById('md-target-warn').style.display = 'none';
+    return;
+  }
+  sel.innerHTML = opts.map(s => {
+    const pct  = s.total > 0 ? Math.round(s.used / s.total * 100) : 0;
+    const free = fmtBytes(s.avail || Math.max(0, s.total - s.used));
+    return `<option value="${escHtml(s.storage)}">${escHtml(s.storage)} — ${free} free (${pct}% used)${pct>=85?' ⚠':''}</option>`;
+  }).join('');
+  _moveDiskUpdateWarn();
+}
+
+function _moveDiskUpdateWarn() {
+  if (!_moveDiskCtx) return;
+  const { disks, targetStor } = _moveDiskCtx;
+  const idx  = parseInt(document.getElementById('md-disk')?.value ?? '0', 10);
+  const disk = disks[idx];
+  const tgtId = document.getElementById('md-target')?.value;
+  const warn  = document.getElementById('md-target-warn');
+  if (!warn) return;
+  const tgt = targetStor.find(s => s.storage === tgtId);
+  if (tgt && tgt.total > 0 && disk) {
+    const afterPct = Math.round((tgt.used + disk.size) / tgt.total * 100);
+    warn.style.display = afterPct >= 85 ? '' : 'none';
+    warn.textContent   = afterPct >= 85 ? `⚠ Target will be ~${afterPct}% full after this move.` : '';
+  } else {
+    warn.style.display = 'none';
+  }
+}
+
+async function _executeMoveDisk() {
+  if (!_moveDiskCtx) return;
+  const { node, vmid, type, connId, ep } = _moveDiskCtx;
+  const idx      = parseInt(document.getElementById('md-disk')?.value ?? '0', 10);
+  const target   = document.getElementById('md-target')?.value;
+  const doDelete = document.getElementById('md-delete')?.checked ? 1 : 0;
+  const disk     = _moveDiskCtx.disks[idx];
+  if (!disk || !target) return toast('Select a disk and target storage', 'error');
+
+  const conn = resolveConn(connId);
+  const post = conn ? (p, d) => connPost(conn, p, d) : pvePost;
+  const endpoint = ep === 'lxc'
+    ? `/api2/json/nodes/${node}/lxc/${vmid}/move_volume`
+    : `/api2/json/nodes/${node}/qemu/${vmid}/move_disk`;
+  const param = ep === 'lxc' ? 'volume' : 'disk';
+
+  try {
+    const res  = await post(endpoint, { [param]: disk.key, storage: target, delete: doDelete });
+    const upid = res && res.data;
+    if (upid && typeof upid === 'string') {
+      tmRegister(upid, node, `Disk move: ${type.toUpperCase()} ${vmid} ${disk.key} → ${target}`);
+    }
+    toast(`Disk move started: ${disk.key} → ${target}`, 'success');
+    closeModal();
+  } catch(e) {
+    toast(`Move failed: ${escHtml(e.message)}`, 'error');
+  }
 }
 
 // Build storage <option> list for a given target node
