@@ -6058,7 +6058,7 @@ function vmRow(x,showType=false){
           :`<button class="btn small success" onclick="vmAction('${x.node}','${x.vmid}','${x.type}','start','${cid}')" title="Start">▶</button>`
         }
         <button class="btn small" onclick="openMigrateModal('${x.node}','${x.vmid}','${x.type}','${cid}')" title="Migrate to node">⇢</button>
-        <button class="btn small" onclick="openMoveDiskModal('${x.node}','${x.vmid}','${x.type}','${cid}')" title="Move Disk (Storage vMotion)">⇄</button>
+        <button class="btn small" onclick="openMoveDiskModal('${x.node}','${x.vmid}','${x.type}','${cid}')" title="Move Disk">⇄</button>
         <button class="btn small" onclick="openCloneModal('${x.node}','${x.vmid}','${x.type}','${(x.name||'').replace(/['"]/g,'')}','${cid}')" title="Clone">⎘</button>
         ${extraConns.length?`<button class="btn small" onclick="openXCopyModal('${x.node}','${x.vmid}','${x.type}','${cid}','${escHtml(x.name||String(x.vmid))}')" title="Copy to another cluster">⎘→</button>`:''}
         <button class="btn small" onclick="openPerfModal('${x.node}','${x.vmid}','${x.type}','${cid}')" title="Performance graphs">📊</button>
@@ -6499,7 +6499,7 @@ async function openMigrateModal(node, vmid, type, connId='', _pickerDone=false) 
   document.getElementById('modal-bg').classList.add('open');
 }
 
-// ── Move Disk (Storage vMotion) ───────────────────────────────
+// ── Move Disk ─────────────────────────────────────────────────
 // Moves a VM/CT disk from one storage to another on the same node.
 // POST /nodes/{node}/qemu/{vmid}/move_disk
 // POST /nodes/{node}/lxc/{vmid}/move_volume
@@ -6599,7 +6599,7 @@ async function openMoveDiskModal(node, vmid, type, connId='') {
       <div style="background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius);padding:8px 12px;font-size:11px;color:var(--muted);margin-top:8px">
         ${ep==='lxc'
           ? '&#9888; Container must be <strong style="color:var(--text)">stopped</strong> before its disk can be moved.'
-          : 'Running VMs will briefly pause (&lt;1&thinsp;s) per disk during cutover — equivalent to VMware Storage vMotion.'}
+          : 'Running VMs will briefly pause (&lt;1&thinsp;s) per disk during the final cutover.'}
       </div>`;
 
     _moveDiskRefreshTargets();
@@ -6932,12 +6932,12 @@ function toast(msg, type='info') {
 // ── Storage view helpers ───────────────────────────────────────────────────
 const _STOR_TYPES = {
   lvmthin:    { label:'LVM Thin',       thin:true,  tip:'Thin-provisioned local block storage — VMs can be over-committed beyond physical capacity.' },
-  lvm:        { label:'LVM Block',      thin:false, tip:'Thick-provisioned block storage — disk space is reserved in full when a VM disk is created, like VMware Eager Zeroed Thick.' },
+  lvm:        { label:'LVM Block',      thin:false, tip:'Thick-provisioned block storage — disk space is fully reserved at creation time.' },
   zfspool:    { label:'ZFS Pool',       thin:true,  tip:'ZFS storage pool — thin-provisioned with native snapshots, checksums, and optional compression.' },
   dir:        { label:'Directory',      thin:true,  tip:'File-based directory storage — qcow2 disk images are thin-provisioned; raw images are thick.' },
   nfs:        { label:'NFS Share',      thin:true,  tip:'Network File System share — thin-provisioned, images only consume space as data is written.' },
   cifs:       { label:'Windows Share',  thin:true,  tip:'CIFS/SMB Windows network share — thin-provisioned file-based storage.' },
-  rbd:        { label:'Ceph RBD',       thin:true,  tip:'Ceph distributed block storage — thin-provisioned across the Ceph cluster, similar to VMware vSAN.' },
+  rbd:        { label:'Ceph RBD',       thin:true,  tip:'Ceph distributed block storage — thin-provisioned across the Ceph cluster.' },
   cephfs:     { label:'CephFS',         thin:true,  tip:'Ceph distributed file system — shared storage accessible from all cluster nodes.' },
   pbs:        { label:'Proxmox Backup', thin:true,  tip:'Proxmox Backup Server — uses deduplication and compression; reported size is post-dedup.' },
   iscsi:      { label:'iSCSI',          thin:false, tip:'iSCSI block storage over network — typically thick-provisioned, like a SAN LUN.' },
@@ -10512,7 +10512,7 @@ async function wizRender() {
           <select id="wiz-netmodel">
             <option value="virtio"${d.netmodel==='virtio'?' selected':''}>VirtIO — best performance</option>
             <option value="e1000"${d.netmodel==='e1000'?' selected':''}>Intel E1000 — broad compatibility</option>
-            <option value="vmxnet3"${d.netmodel==='vmxnet3'?' selected':''}>VMware vmxnet3</option>
+            <option value="vmxnet3"${d.netmodel==='vmxnet3'?' selected':''}>vmxnet3</option>
             <option value="rtl8139"${d.netmodel==='rtl8139'?' selected':''}>Realtek 8139 — legacy</option>
           </select>
         </div>
@@ -11686,7 +11686,7 @@ function openAddNICModal() {
         <select id="an-model">
           <option value="virtio">VirtIO (recommended)</option>
           <option value="e1000">Intel E1000</option>
-          <option value="vmxnet3">VMware vmxnet3</option>
+          <option value="vmxnet3">vmxnet3</option>
           <option value="rtl8139">Realtek 8139</option>
         </select>
       </div>
@@ -11803,7 +11803,7 @@ async function loadDetailOptions(item) {
     const bootOrder = bootStr.replace('order=','').split(';').filter(Boolean);
 
     const keyOpts=VM_KEYBOARD_LAYOUTS.map(k=>`<option value="${k}"${(cfg.keyboard||'en-us')===k?' selected':''}>${k}</option>`).join('');
-    const vgaOpts=VM_VGA_TYPES.map(v=>`<option value="${v}"${(cfg.vga||'std')===v?' selected':''}>${v}</option>`).join('');
+    const vgaOpts=VM_VGA_TYPES.map(v=>`<option value="${v}"${(cfg.vga||'std')===v?' selected':''}>${v==='vmware'?'svga':v}</option>`).join('');
 
     el.innerHTML=`
       <form id="vm-options-form" onsubmit="event.preventDefault();saveVMOptions()">
