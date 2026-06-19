@@ -6597,12 +6597,23 @@ async function openMoveDiskModal(node, vmid, type, connId='') {
         <div style="font-size:11px;color:var(--muted);margin-top:3px">Recommended — keeps storage clean. Uncheck only if you need a manual rollback copy.</div>
       </div>
       <div style="background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius);padding:8px 12px;font-size:11px;color:var(--muted);margin-top:8px">
-        ${ep==='lxc'
-          ? '&#9888; Container must be <strong style="color:var(--text)">stopped</strong> before its disk can be moved.'
-          : 'Running VMs will briefly pause (&lt;1&thinsp;s) per disk during the final cutover.'}
+        Running VMs will briefly pause (&lt;1&thinsp;s) per disk during the final cutover.
       </div>`;
 
     _moveDiskRefreshTargets();
+
+    if (ep === 'lxc') {
+      const ct = [...allCTs(), ...(allVMs())].find(x => String(x.vmid)===String(vmid) && x.node===node);
+      if (ct && ct.status === 'running') {
+        document.getElementById('modal-body').innerHTML += `
+          <div style="margin-top:10px;background:var(--bg3);border:1px solid var(--danger);border-radius:var(--radius);padding:10px 12px;font-size:12px;color:var(--danger)">
+            &#9888; This container is currently <strong>running</strong>. Stop it before moving its disk.
+          </div>`;
+        confirmBtn.style.display = 'none';
+        return;
+      }
+    }
+
     confirmBtn.textContent = 'Move Selected';
     confirmBtn.style.display = '';
     modalCallback = _executeMoveDisk;
