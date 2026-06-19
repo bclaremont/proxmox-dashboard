@@ -6569,37 +6569,41 @@ async function openMoveDiskModal(node, vmid, type, connId='') {
 
     _moveDiskCtx = { disks, targetStor, node, vmid, type, connId, ep };
 
-    const diskOpts = disks.map((d, i) =>
-      `<option value="${i}">${escHtml(d.key)} — ${escHtml(d.storage)} (${fmtBytes(d.size)})</option>`
-    ).join('');
+    const diskRows = disks.map((d, i) => `
+      <label style="display:flex;align-items:center;gap:10px;padding:7px 0;border-bottom:1px solid var(--border);cursor:pointer;user-select:none">
+        <input type="checkbox" class="md-disk-chk" data-idx="${i}" onchange="_moveDiskRefreshTargets()" checked style="width:auto;margin:0;flex-shrink:0">
+        <span style="font-family:monospace;font-size:13px;min-width:76px">${escHtml(d.key)}</span>
+        <span style="color:var(--muted);font-size:12px;flex:1">${escHtml(d.storage)}</span>
+        <span style="color:var(--muted);font-size:12px;text-align:right">${fmtBytes(d.size)}</span>
+      </label>`).join('');
 
     document.getElementById('modal-title').textContent =
       `Move Disk — ${label} ${vmid}${vmName ? ' — ' + escHtml(vmName) : ''}`;
     document.getElementById('modal-body').innerHTML = `
-      <div class="form-group">
-        <label>DISK</label>
-        <select id="md-disk" onchange="_moveDiskRefreshTargets()">${diskOpts}</select>
+      <div style="margin-bottom:14px">
+        <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;margin-bottom:6px">Select disks to move</div>
+        ${diskRows}
       </div>
       <div class="form-group">
-        <label>TARGET STORAGE</label>
+        <label>TARGET STORAGE <span id="md-sel-info" style="color:var(--muted);font-weight:400;text-transform:none;letter-spacing:0"></span></label>
         <select id="md-target" onchange="_moveDiskUpdateWarn()"></select>
         <div id="md-target-warn" style="display:none;font-size:11px;color:var(--yellow);margin-top:4px"></div>
       </div>
       <div class="form-group" style="margin-top:4px">
         <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-weight:400">
           <input type="checkbox" id="md-delete" checked style="width:auto;margin:0">
-          Delete source volume after move
+          Delete source volumes after move
         </label>
         <div style="font-size:11px;color:var(--muted);margin-top:3px">Recommended — keeps storage clean. Uncheck only if you need a manual rollback copy.</div>
       </div>
       <div style="background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius);padding:8px 12px;font-size:11px;color:var(--muted);margin-top:8px">
         ${ep==='lxc'
           ? '&#9888; Container must be <strong style="color:var(--text)">stopped</strong> before its disk can be moved.'
-          : 'Running VMs will briefly pause (&lt;1&thinsp;s) during the final disk cutover — equivalent to VMware Storage vMotion.'}
+          : 'Running VMs will briefly pause (&lt;1&thinsp;s) per disk during cutover — equivalent to VMware Storage vMotion.'}
       </div>`;
 
     _moveDiskRefreshTargets();
-    confirmBtn.textContent = 'Move Disk';
+    confirmBtn.textContent = 'Move Selected';
     confirmBtn.style.display = '';
     modalCallback = _executeMoveDisk;
   } catch(e) {
@@ -6608,14 +6612,32 @@ async function openMoveDiskModal(node, vmid, type, connId='') {
   }
 }
 
+function _moveDiskGetSelected() {
+  return [...document.querySelectorAll('.md-disk-chk')]
+    .filter(c => c.checked)
+    .map(c => _moveDiskCtx.disks[parseInt(c.dataset.idx, 10)]);
+}
+
 function _moveDiskRefreshTargets() {
   if (!_moveDiskCtx) return;
-  const { disks, targetStor } = _moveDiskCtx;
-  const idx  = parseInt(document.getElementById('md-disk')?.value ?? '0', 10);
-  const disk = disks[idx];
-  const sel  = document.getElementById('md-target');
-  if (!disk || !sel) return;
-  const opts = targetStor.filter(s => s.storage !== disk.storage);
+  const { targetStor } = _moveDiskCtx;
+  const selected = _moveDiskGetSelected();
+  const totalSize = selected.reduce((s, d) => s + d.size, 0);
+  const info = document.getElementById('md-sel-info');
+  if (info) info.textContent = selected.length
+    ? `— ${selected.length} disk${selected.length>1?'s':''}, ${fmtBytes(totalSize)} total`
+    : '— none selected';
+
+  const sel = document.getElementById('md-target');
+  if (!sel) return;
+  if (!selected.length) { sel.innerHTML = '<option value="">Select at least one disk</option>'; return; }
+
+  // Exclude storages where ALL selected disks already live (pointless move)
+  const srcStorages = new Set(selected.map(d => d.storage));
+  const opts = srcStorages.size === 1
+    ? targetStor.filter(s => s.storage !== [...srcStorages][0])
+    : targetStor;
+
   if (!opts.length) {
     sel.innerHTML = '<option value="">No other compatible storages on this node</option>';
     document.getElementById('md-target-warn').style.display = 'none';
@@ -6624,22 +6646,22 @@ function _moveDiskRefreshTargets() {
   sel.innerHTML = opts.map(s => {
     const pct  = s.total > 0 ? Math.round(s.used / s.total * 100) : 0;
     const free = fmtBytes(s.avail || Math.max(0, s.total - s.used));
-    return `<option value="${escHtml(s.storage)}">${escHtml(s.storage)} — ${free} free (${pct}% used)${pct>=85?' ⚠':''}</option>`;
+    return `<option value="${escHtml(s.storage)}">${escHtml(s.storage)} — ${free} free (${pct}%)${pct>=85?' ⚠':''}</option>`;
   }).join('');
   _moveDiskUpdateWarn();
 }
 
 function _moveDiskUpdateWarn() {
   if (!_moveDiskCtx) return;
-  const { disks, targetStor } = _moveDiskCtx;
-  const idx  = parseInt(document.getElementById('md-disk')?.value ?? '0', 10);
-  const disk = disks[idx];
+  const { targetStor } = _moveDiskCtx;
+  const selected = _moveDiskGetSelected();
+  const totalSize = selected.reduce((s, d) => s + d.size, 0);
   const tgtId = document.getElementById('md-target')?.value;
   const warn  = document.getElementById('md-target-warn');
   if (!warn) return;
   const tgt = targetStor.find(s => s.storage === tgtId);
-  if (tgt && tgt.total > 0 && disk) {
-    const afterPct = Math.round((tgt.used + disk.size) / tgt.total * 100);
+  if (tgt && tgt.total > 0 && totalSize > 0) {
+    const afterPct = Math.round((tgt.used + totalSize) / tgt.total * 100);
     warn.style.display = afterPct >= 85 ? '' : 'none';
     warn.textContent   = afterPct >= 85 ? `⚠ Target will be ~${afterPct}% full after this move.` : '';
   } else {
@@ -6650,11 +6672,11 @@ function _moveDiskUpdateWarn() {
 async function _executeMoveDisk() {
   if (!_moveDiskCtx) return;
   const { node, vmid, type, connId, ep } = _moveDiskCtx;
-  const idx      = parseInt(document.getElementById('md-disk')?.value ?? '0', 10);
   const target   = document.getElementById('md-target')?.value;
   const doDelete = document.getElementById('md-delete')?.checked ? 1 : 0;
-  const disk     = _moveDiskCtx.disks[idx];
-  if (!disk || !target) return toast('Select a disk and target storage', 'error');
+  const selected = _moveDiskGetSelected().filter(d => d.storage !== target);
+  if (!selected.length) return toast('No disks to move — all selected disks are already on that storage', 'info');
+  if (!target) return toast('Select a target storage', 'error');
 
   const conn = resolveConn(connId);
   const post = conn ? (p, d) => connPost(conn, p, d) : pvePost;
@@ -6663,17 +6685,21 @@ async function _executeMoveDisk() {
     : `/api2/json/nodes/${node}/qemu/${vmid}/move_disk`;
   const param = ep === 'lxc' ? 'volume' : 'disk';
 
-  try {
-    const res  = await post(endpoint, { [param]: disk.key, storage: target, delete: doDelete });
-    const upid = res && res.data;
-    if (upid && typeof upid === 'string') {
-      tmRegister(upid, node, `Disk move: ${type.toUpperCase()} ${vmid} ${disk.key} → ${target}`);
+  closeModal();
+  let started = 0;
+  for (const disk of selected) {
+    try {
+      const res  = await post(endpoint, { [param]: disk.key, storage: target, delete: doDelete });
+      const upid = res && res.data;
+      if (upid && typeof upid === 'string') {
+        tmRegister(upid, node, `Disk move: ${type.toUpperCase()} ${vmid} ${disk.key} → ${target}`);
+      }
+      started++;
+    } catch(e) {
+      toast(`Failed to move ${disk.key}: ${escHtml(e.message)}`, 'error');
     }
-    toast(`Disk move started: ${disk.key} → ${target}`, 'success');
-    closeModal();
-  } catch(e) {
-    toast(`Move failed: ${escHtml(e.message)}`, 'error');
   }
+  if (started) toast(`${started} disk move${started>1?'s':''} started → ${target}`, 'success');
 }
 
 // Build storage <option> list for a given target node
