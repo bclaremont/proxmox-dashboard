@@ -9900,11 +9900,14 @@ function ctWizConnChanged() {
 }
 
 function openCreateCTWizard() {
-  wiz.type = 'ct'; wiz.step = 1; wiz.tmplLoaded = false; wiz.tmpl = []; wiz._selTmpl = '';
+  wiz.type = 'ct'; wiz.step = 1; wiz.tmplLoaded = false; wiz.tmplLoadedNode = ''; wiz.tmpl = []; wiz._selTmpl = '';
   const usedIDs = new Set([...PVE.vms,...PVE.containers].map(x=>x.vmid));
   let nextID = 100; while(usedIDs.has(nextID)) nextID++;
-  const defStor = (PVE.storage.find(s => (s.content||'').includes('rootdir')||(s.content||'').includes('images')) || {}).storage || 'local-lvm';
-  wiz.cd = { connId:'', node:PVE.nodes[0]&&PVE.nodes[0].node||'', vmid:String(nextID), hostname:'', password:'', password2:'',
+  const defNode = PVE.nodes[0]&&PVE.nodes[0].node||'';
+  // Pick default storage from the default node specifically, not cluster-wide
+  const defStor = (PVE.storage.find(s => s.node===defNode && ((s.content||'').includes('rootdir')||(s.content||'').includes('images'))) ||
+                   PVE.storage.find(s => (s.content||'').includes('rootdir')||(s.content||'').includes('images')) || {}).storage || 'local-lvm';
+  wiz.cd = { connId:'', node:defNode, vmid:String(nextID), hostname:'', password:'', password2:'',
     unprivileged:true, pool:'', tmpl:'',
     disk:'8', storage:defStor, memory:'512', swap:'512', cores:'1',
     bridge:'vmbr0', ipmode:'dhcp', ip:'', gw:'', firewall:true, start:false,
@@ -10409,12 +10412,20 @@ function ctIPModeChange() {
 async function ctLoadTemplates() {
   const panel = document.getElementById('wiz-tmpl-panel');
   if (!panel) return;
+  const targetNode = wiz.cd.node;
+  // Invalidate cache if the selected node has changed since last load
+  if (wiz.tmplLoaded && wiz.tmplLoadedNode !== targetNode) {
+    wiz.tmplLoaded = false; wiz.tmpl = []; wiz._selTmpl = ''; wiz.cd.tmpl = '';
+  }
   if (!wiz.tmplLoaded) {
+    panel.innerHTML = '<div class="empty">Loading templates…</div>';
     try {
       const all = [];
       const tmplConn = resolveConn(wiz.cd.connId);
       const tmplGet = tmplConn ? (p=>connGet(tmplConn,p)) : pveGet;
-      const tmplNodes = tmplConn ? (tmplConn.nodes||[]) : PVE.nodes;
+      const allNodes = tmplConn ? (tmplConn.nodes||[]) : PVE.nodes;
+      // Only query the target node — templates must be accessible on the CT's host
+      const tmplNodes = targetNode ? allNodes.filter(n=>n.node===targetNode) : allNodes;
       await Promise.all(tmplNodes.map(async n => {
         const storRes = await tmplGet(`/api2/json/nodes/${n.node}/storage`).catch(()=>({data:[]}));
         const stores = storRes.data || [];
@@ -10425,6 +10436,7 @@ async function ctLoadTemplates() {
       }));
       wiz.tmpl = all.sort((a,b)=>a.name.localeCompare(b.name));
       wiz.tmplLoaded = true;
+      wiz.tmplLoadedNode = targetNode;
     } catch(e) {
       if (panel) panel.innerHTML = `<div class="empty">Failed to load templates: ${escHtml(e.message)}</div>`;
       return;
