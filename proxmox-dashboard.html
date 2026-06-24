@@ -15117,7 +15117,7 @@ function initWorldMap() {
     .then(r => r.json())
     .then(data => {
       L.geoJSON(data, {
-        style: { fillColor: '#1e3d5c', fillOpacity: 1, color: '#4a7a9e', weight: 0.7, opacity: 1 }
+        style: { fillColor: '#1a3a2a', fillOpacity: 1, color: '#2d6a4f', weight: 0.7, opacity: 1 }
       }).addTo(worldMap);
     })
     .catch(e => console.error('World GeoJSON failed to load:', e));
