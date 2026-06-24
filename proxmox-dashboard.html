@@ -15122,12 +15122,15 @@ function initWorldMap() {
   fetch('/vendor/world.geojson')
     .then(r => r.json())
     .then(data => {
-      L.geoJSON(data, {
-        pane: 'baseLayer',
+      console.log('[map] GeoJSON parsed, features:', data && data.features && data.features.length);
+      const layer = L.geoJSON(data, {
         style: () => ({ fillColor: '#2d6a4f', fillOpacity: 1, fill: true, color: '#3d8a65', weight: 0.7, stroke: true })
-      }).addTo(worldMap);
+      });
+      console.log('[map] geoJSON layer created, sublayers:', layer.getLayers().length);
+      layer.addTo(worldMap);
+      console.log('[map] layer added to map');
     })
-    .catch(e => console.error('World GeoJSON failed to load:', e));
+    .catch(e => console.error('[map] World GeoJSON failed to load:', e));
 }
 
 function renderWorldMap() {
