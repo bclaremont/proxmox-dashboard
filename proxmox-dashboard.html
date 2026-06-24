@@ -500,14 +500,18 @@
     .tm-err{background:var(--red)!important;animation:none!important;}
     @media(max-width:900px){#app{grid-template-columns:1fr;}#sidebar{display:none;}#detail-panel{width:100%;right:-100% !important;}#detail-panel.open{right:0 !important;}}
     /* WORLD MAP */
-    #world-map{height:480px;border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;z-index:1;background:var(--bg2);}
+    #world-map{height:520px;border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;z-index:1;background:#0d1829;}
+    #world-map.map-picking{cursor:crosshair!important;}
+    #world-map.map-picking .leaflet-interactive{cursor:crosshair!important;}
     .leaflet-popup-content-wrapper{background:var(--bg2);border:1px solid var(--border);color:var(--text);box-shadow:0 4px 16px rgba(0,0,0,.4);border-radius:var(--radius);}
     .leaflet-popup-tip{background:var(--bg2);}
     .leaflet-popup-close-button{color:var(--muted)!important;}
     .leaflet-control-zoom a{background:var(--bg2)!important;color:var(--text)!important;border-color:var(--border)!important;}
     .leaflet-bar{border-color:var(--border)!important;}
-    .map-pin{width:22px;height:22px;border-radius:50%;border:3px solid rgba(255,255,255,.9);box-shadow:0 2px 6px rgba(0,0,0,.5);cursor:pointer;transition:transform .15s;}
-    .map-pin:hover{transform:scale(1.25);}
+    .map-pin{width:28px;height:28px;border-radius:50%;border:3px solid rgba(255,255,255,.85);box-shadow:0 2px 8px rgba(0,0,0,.6);cursor:pointer;transition:transform .15s;display:flex;align-items:center;justify-content:center;}
+    .map-pin:hover{transform:scale(1.2);}
+    .map-pin-count{font-size:10px;font-weight:700;color:#fff;line-height:1;pointer-events:none;}
+    .map-pick-hint{font-size:12px;color:var(--blue);margin-top:4px;}
     /* NOTIFICATION PANEL */
     #notif-panel{position:fixed;top:62px;right:10px;width:390px;max-height:540px;background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);z-index:350;box-shadow:0 8px 30px rgba(0,0,0,.4);display:flex;flex-direction:column;overflow:hidden;}
     .notif-hdr{padding:10px 14px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px;background:var(--bg3);}
@@ -6893,6 +6897,7 @@ function closeModal(e){
   const btn = document.getElementById('modal-confirm-btn');
   if(btn){btn.onclick=confirmModal;btn.textContent='Confirm';btn.disabled=false;btn.style.display='';}
   modalCallback=null;
+  _clearMapPickHandler();
 }
 
 // ── UTILITIES ─────────────────────────────────────────────
@@ -15069,8 +15074,16 @@ function deleteSDNVNet(vnet) {
 // Uses Leaflet.js + OpenStreetMap (no API key required).
 // Cluster locations stored in localStorage as { connId: {lat,lng,label} }.
 
-let worldMap    = null;
-let worldPins   = {};   // connId → Leaflet marker
+let worldMap         = null;
+let worldPins        = {};   // connId → Leaflet marker
+let _mapPickHandler  = null;
+
+function _clearMapPickHandler() {
+  if (_mapPickHandler && worldMap) { worldMap.off('click', _mapPickHandler); }
+  _mapPickHandler = null;
+  const el = document.getElementById('world-map');
+  if (el) el.classList.remove('map-picking');
+}
 
 function getConnLocations() {
   try { return JSON.parse(localStorage.getItem('pve-locations')||'{}'); } catch(e) { return {}; }
@@ -15093,7 +15106,21 @@ function _mapConns() {
 function initWorldMap() {
   if (worldMap) return;
   if (typeof L === 'undefined') return;
-  worldMap = L.map('world-map', { zoomControl:true }).setView([30, 10], 2);
+  worldMap = L.map('world-map', {
+    zoomControl: true,
+    attributionControl: false,
+    minZoom: 1.5,
+    maxZoom: 10,
+    worldCopyJump: true
+  }).setView([25, 15], 2);
+  fetch('/vendor/world.geojson')
+    .then(r => r.json())
+    .then(data => {
+      L.geoJSON(data, {
+        style: { fillColor: '#1a2236', fillOpacity: 1, color: '#2d3748', weight: 0.6, opacity: 1 }
+      }).addTo(worldMap);
+    })
+    .catch(() => {});
 }
 
 function renderWorldMap() {
@@ -15116,9 +15143,10 @@ function renderWorldMap() {
     const runVMs = (conn.vms||[]).filter(x=>x.status==='running').length;
     const runCTs = (conn.containers||[]).filter(x=>x.status==='running').length;
 
+    const total = runVMs + runCTs;
     const icon = L.divIcon({
-      html: `<div class="map-pin" style="background:${color}" title="${escHtml(conn.name)}"></div>`,
-      iconSize:[22,22], iconAnchor:[11,11], className:''
+      html: `<div class="map-pin" style="background:${color};">${total > 0 ? `<span class="map-pin-count">${total > 99 ? '99+' : total}</span>` : ''}</div>`,
+      iconSize:[28,28], iconAnchor:[14,14], className:''
     });
 
     const popupHtml = `
@@ -15201,12 +15229,23 @@ function openSetLocationModal(preselectedId) {
       <input id="loc-label" value="${escHtml(existing.label||'')}" placeholder="e.g. London DC, AWS us-east-1"/>
     </div>
     <div style="background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius);padding:9px 12px;font-size:12px;color:var(--muted)">
-      Find coordinates:
+      ${worldMap ? '<span style="color:var(--blue);font-weight:600;">Click on the map to set coordinates</span>, or find them at ' : 'Find coordinates at '}
       <a href="https://www.openstreetmap.org" target="_blank" style="color:var(--blue)">openstreetmap.org</a>
-      — right-click any location → "Show address" or use the URL bar (lat,lon shown in URL).
+      — right-click any location → "Show address".
     </div>`;
 
+  _clearMapPickHandler();
+  if (worldMap) {
+    document.getElementById('world-map').classList.add('map-picking');
+    _mapPickHandler = (e) => {
+      document.getElementById('loc-lat').value = e.latlng.lat.toFixed(4);
+      document.getElementById('loc-lng').value = e.latlng.lng.toFixed(4);
+    };
+    worldMap.on('click', _mapPickHandler);
+  }
+
   modalCallback = () => {
+    _clearMapPickHandler();
     const connId = document.getElementById('loc-conn').value;
     const lat    = parseFloat(document.getElementById('loc-lat').value);
     const lng    = parseFloat(document.getElementById('loc-lng').value);
