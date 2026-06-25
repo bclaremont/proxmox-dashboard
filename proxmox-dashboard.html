@@ -15181,15 +15181,7 @@ function renderWorldMap() {
   const legendEl = document.getElementById('world-map-legend');
   if (!legendEl) return;
 
-  const withLoc = conns.filter(c => locs[c.id]);
-  const noLoc   = conns.filter(c => !locs[c.id]);
-
   legendEl.innerHTML = `
-    <div class="stats-grid" style="margin-bottom:14px">
-      <div class="stat-card accent-blue"><div class="label">Clusters / Hosts</div><div class="value">${conns.length}</div></div>
-      <div class="stat-card accent-green"><div class="label">Mapped</div><div class="value">${withLoc.length}</div></div>
-      <div class="stat-card accent-${noLoc.length?'yellow':'green'}"><div class="label">No Location</div><div class="value" style="color:${noLoc.length?'var(--yellow)':'var(--green)'}">${noLoc.length}</div></div>
-    </div>
     <div class="table-wrap"><table>
       <thead><tr><th>Cluster / Host</th><th>Location Label</th><th>Coordinates</th><th></th></tr></thead>
       <tbody>${conns.map(conn => {
