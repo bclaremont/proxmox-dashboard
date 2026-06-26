@@ -17670,6 +17670,8 @@ async function connectPBS() {
   loadPBS();
 }
 
+let _pbsData = null; // cached after load, cleared on disconnect
+
 async function loadPBS() {
   const el = document.getElementById('pbs-content');
   const connPanel = document.getElementById('pbs-connect');
@@ -17680,91 +17682,296 @@ async function loadPBS() {
     return;
   }
   if (connPanel) connPanel.style.display = 'none';
-  el.innerHTML = '<div class="empty"><span class="loading"></span> Loading PBS datastores…</div>';
+  el.innerHTML = '<div class="empty"><span class="loading"></span> Loading backup server data…</div>';
 
   try {
-    const [dsRes] = await Promise.all([
+    // Fetch datastores, jobs, and recent tasks in parallel
+    const [dsRes, jobsRes, tasksRes] = await Promise.all([
       pbsGet('/api2/json/datastore').catch(()=>({data:[]})),
+      pbsGet('/api2/json/jobs/backup').catch(()=>({data:[]})),
+      pbsGet('/api2/json/nodes/localhost/tasks?limit=200').catch(()=>({data:[]})),
     ]);
-    const datastores = dsRes.data || [];
+    const datastores = dsRes.data  || [];
+    const jobs       = jobsRes.data  || [];
+    const tasks      = (tasksRes.data || []).sort((a,b)=>(b.starttime||0)-(a.starttime||0));
 
-    // Fetch status + snapshots for each datastore in parallel
+    // Enrich each datastore with usage + snapshots
     const enriched = await Promise.all(datastores.map(async ds => {
       const [statusRes, snapRes] = await Promise.all([
-        pbsGet(`/api2/json/datastore/${ds.store}/status`).catch(()=>({data:{}})),
-        pbsGet(`/api2/json/datastore/${ds.store}/snapshots`).catch(()=>({data:[]})),
+        pbsGet(`/api2/json/datastore/${encodeURIComponent(ds.store)}/status`).catch(()=>({data:{}})),
+        pbsGet(`/api2/json/datastore/${encodeURIComponent(ds.store)}/snapshots`).catch(()=>({data:[]})),
       ]);
       return { ...ds, status: statusRes.data||{}, snaps: snapRes.data||[] };
     }));
 
-    const totalSnaps = enriched.reduce((a,d)=>a+d.snaps.length, 0);
-    const totalUsed  = enriched.reduce((a,d)=>a+(d.status.used||0), 0);
-    const totalAvail = enriched.reduce((a,d)=>a+(d.status.avail||0), 0);
+    // Build VM metadata map from all PVE connections for name resolution
+    const allVMsSrc = [...(PVE.vms||[]), ...(PVE.containers||[]),
+                       ...Object.values(PVE.connVMs||{}).flat(),
+                       ...Object.values(PVE.connContainers||{}).flat()];
+    const vmMeta = new Map();
+    allVMsSrc.forEach(v => { if (!vmMeta.has(String(v.vmid))) vmMeta.set(String(v.vmid), v); });
 
-    let html = `
-      <div class="stats-grid" style="margin-bottom:16px">
-        <div class="stat-card accent-blue"><div class="label">Datastores</div><div class="value">${enriched.length}</div></div>
-        <div class="stat-card accent-orange"><div class="label">Used Space</div><div class="value" style="font-size:20px">${fmtBytes(totalUsed)}</div></div>
-        <div class="stat-card accent-green"><div class="label">Available</div><div class="value" style="font-size:20px">${fmtBytes(totalAvail)}</div></div>
-        <div class="stat-card accent-purple"><div class="label">Backup Snapshots</div><div class="value">${totalSnaps}</div></div>
-      </div>`;
+    _pbsData = { enriched, jobs, tasks, vmMeta };
 
-    enriched.forEach(ds => {
-      const s = ds.status;
-      const used = s.used||0, total = s.total||0;
-      const pct = total > 0 ? ((used/total)*100).toFixed(0) : 0;
-      const snaps = ds.snaps.slice().sort((a,b)=>(b['backup-time']||0)-(a['backup-time']||0));
+    // Build shell with tabs — content rendered by _pbsRender*
+    el.innerHTML = `
+      <div style="display:flex;gap:0;border-bottom:1px solid var(--border);margin-bottom:16px">
+        <div class="dtab active" id="pbs-tab-overview" onclick="_pbsSwitchTab('overview')">Overview</div>
+        <div class="dtab"        id="pbs-tab-backups"  onclick="_pbsSwitchTab('backups')">Backups</div>
+        <div class="dtab"        id="pbs-tab-jobs"     onclick="_pbsSwitchTab('jobs')">Jobs</div>
+        <div class="dtab"        id="pbs-tab-tasks"    onclick="_pbsSwitchTab('tasks')">Tasks</div>
+        <div style="flex:1"></div>
+        <button class="btn small danger" onclick="disconnectPBS()" style="margin:2px 0">Disconnect</button>
+      </div>
+      <div id="pbs-pane-overview" class="dtab-content active"></div>
+      <div id="pbs-pane-backups"  class="dtab-content"></div>
+      <div id="pbs-pane-jobs"     class="dtab-content"></div>
+      <div id="pbs-pane-tasks"    class="dtab-content"></div>`;
 
-      html += `
-        <div class="section-header" style="margin-top:8px">
-          <span class="section-title">📁 ${escHtml(ds.store)}</span>
-          <span style="font-size:12px;color:var(--muted)">${fmtBytes(used)} / ${fmtBytes(total)} used</span>
-        </div>
-        <div style="background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius);padding:10px 14px;margin-bottom:14px">
-          <div class="gauge-wrap" style="margin-bottom:6px">
-            <span style="min-width:36px;font-size:12px">${pct}%</span>
-            <div class="gauge-bar"><div class="gauge-fill ${gaugeClass(+pct)}" style="width:${Math.min(+pct,100)}%"></div></div>
-          </div>
-          <div style="font-size:11px;color:var(--muted)">${snaps.length} snapshots · ${fmtBytes(s.avail||0)} free</div>
-        </div>
-        ${snaps.length ? `
-        <div class="table-wrap" style="margin-bottom:20px">
-          <table>
-            <thead><tr><th>Guest ID</th><th>Type</th><th>Backup Time</th><th>Size</th><th>Verified</th></tr></thead>
-            <tbody>${snaps.slice(0, 50).map(sn => {
-              const bt = sn['backup-time'] ? new Date(sn['backup-time']*1000).toLocaleString() : '—';
-              const vt = sn['verification'] && sn['verification'].state;
-              const verBadge = vt==='ok'
-                ? '<span class="badge ok" style="font-size:10px"><span class="badge-dot"></span>verified</span>'
-                : vt==='failed'
-                ? '<span class="badge error" style="font-size:10px"><span class="badge-dot"></span>failed</span>'
-                : '<span style="font-size:11px;color:var(--muted)">—</span>';
-              return `<tr>
-                <td><strong>${escHtml(String(sn['backup-id']||'—'))}</strong></td>
-                <td><span class="type-chip ${sn['backup-type']==='vm'?'vm':'ct'}">${escHtml(sn['backup-type']||'—')}</span></td>
-                <td style="font-size:12px;color:var(--muted)">${bt}</td>
-                <td style="font-size:12px;color:var(--muted)">${fmtBytes(sn.size||0)}</td>
-                <td>${verBadge}</td>
-              </tr>`;
-            }).join('')}
-            ${snaps.length > 50 ? `<tr><td colspan="5" class="empty" style="font-size:11px">… and ${snaps.length-50} more</td></tr>` : ''}
-            </tbody>
-          </table>
-        </div>` : '<div class="empty" style="margin-bottom:18px">No snapshots in this datastore</div>'}`;
-    });
+    _pbsRenderOverview();
+    _pbsRenderBackups();
+    _pbsRenderJobs();
+    _pbsRenderTasks();
 
-    if (!enriched.length) html += '<div class="empty">No datastores found on this PBS instance.</div>';
-    html += `<div style="display:flex;justify-content:flex-end;margin-top:4px">
-      <button class="btn small danger" onclick="disconnectPBS()">Disconnect PBS</button>
-    </div>`;
-    el.innerHTML = html;
   } catch(e) {
-    el.innerHTML = `<div class="empty">Failed to load PBS data: ${escHtml(e.message)}</div>`;
+    el.innerHTML = `<div class="empty">Failed to load backup server data: ${escHtml(e.message)}</div>`;
   }
+}
+
+function _pbsSwitchTab(name) {
+  ['overview','backups','jobs','tasks'].forEach(t => {
+    document.getElementById(`pbs-tab-${t}`)?.classList.toggle('active', t===name);
+    document.getElementById(`pbs-pane-${t}`)?.classList.toggle('active', t===name);
+  });
+}
+
+function _pbsRelTime(epochSec) {
+  if (!epochSec) return '—';
+  const diff = Math.floor(Date.now()/1000) - epochSec;
+  if (diff < 60)         return 'just now';
+  if (diff < 3600)       return `${Math.floor(diff/60)}m ago`;
+  if (diff < 86400)      return `${Math.floor(diff/3600)}h ago`;
+  if (diff < 86400*7)    return `${Math.floor(diff/86400)}d ago`;
+  return new Date(epochSec*1000).toLocaleDateString();
+}
+
+function _pbsAgeColor(epochSec) {
+  if (!epochSec) return 'var(--danger)';
+  const h = (Date.now()/1000 - epochSec) / 3600;
+  if (h < 25)  return 'var(--green)';
+  if (h < 73)  return 'var(--yellow)';
+  return 'var(--danger)';
+}
+
+function _pbsVerBadge(sn) {
+  const vt = sn['verification'] && sn['verification'].state;
+  if (vt==='ok')     return '<span class="badge ok"    style="font-size:10px"><span class="badge-dot"></span>verified</span>';
+  if (vt==='failed') return '<span class="badge error" style="font-size:10px"><span class="badge-dot"></span>failed</span>';
+  return '<span style="font-size:11px;color:var(--muted)">—</span>';
+}
+
+function _pbsRenderOverview() {
+  const { enriched } = _pbsData;
+  const totalSnaps = enriched.reduce((a,d)=>a+d.snaps.length, 0);
+  const totalUsed  = enriched.reduce((a,d)=>a+(d.status.used||0), 0);
+  const totalAvail = enriched.reduce((a,d)=>a+(d.status.avail||0), 0);
+  const totalSize  = enriched.reduce((a,d)=>a+(d.status.total||0), 0);
+  const overallPct = totalSize > 0 ? Math.round(totalUsed/totalSize*100) : 0;
+
+  let html = `
+    <div class="stats-grid" style="margin-bottom:16px">
+      <div class="stat-card accent-blue">  <div class="label">Datastores</div>        <div class="value">${enriched.length}</div></div>
+      <div class="stat-card accent-purple"><div class="label">Backup Snapshots</div>  <div class="value">${totalSnaps}</div></div>
+      <div class="stat-card accent-orange"><div class="label">Used Space</div>        <div class="value" style="font-size:20px">${fmtBytes(totalUsed)}</div></div>
+      <div class="stat-card accent-green"> <div class="label">Available</div>         <div class="value" style="font-size:20px">${fmtBytes(totalAvail)}</div></div>
+    </div>`;
+
+  enriched.forEach(ds => {
+    const s = ds.status;
+    const used = s.used||0, total = s.total||0, avail = s.avail||0;
+    const pct = total > 0 ? Math.round(used/total*100) : 0;
+    const snaps = ds.snaps.slice().sort((a,b)=>(b['backup-time']||0)-(a['backup-time']||0));
+    const latestTs = snaps[0]?.['backup-time'];
+    const gcStatus = s.gc_status || {};
+
+    html += `
+      <div style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);padding:14px 16px;margin-bottom:12px">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+          <div>
+            <span style="font-weight:700;font-size:14px">${escHtml(ds.store)}</span>
+            <span style="font-size:11px;color:var(--muted);margin-left:8px">${fmtBytes(used)} / ${fmtBytes(total)}</span>
+          </div>
+          <span style="font-size:11px;color:var(--muted)">${snaps.length} snapshot${snaps.length!==1?'s':''} · last: <span style="color:${_pbsAgeColor(latestTs)}">${_pbsRelTime(latestTs)}</span></span>
+        </div>
+        <div class="gauge-wrap" style="margin-bottom:6px">
+          <span style="min-width:36px;font-size:12px">${pct}%</span>
+          <div class="gauge-bar"><div class="gauge-fill ${gaugeClass(pct)}" style="width:${Math.min(pct,100)}%"></div></div>
+          <span style="font-size:11px;color:var(--muted);margin-left:8px">${fmtBytes(avail)} free</span>
+        </div>
+        ${gcStatus.upid ? `<div style="font-size:11px;color:var(--muted);margin-top:4px">GC last run: ${_pbsRelTime(gcStatus.startTime||0)}</div>` : ''}
+      </div>`;
+  });
+
+  if (!enriched.length) html += '<div class="empty">No datastores found.</div>';
+  document.getElementById('pbs-pane-overview').innerHTML = html;
+}
+
+function _pbsRenderBackups() {
+  const { enriched, vmMeta } = _pbsData;
+
+  // Group all snapshots across all datastores by backup-id
+  const vmMap = new Map();
+  enriched.forEach(ds => {
+    ds.snaps.forEach(sn => {
+      const id = String(sn['backup-id'] ?? '');
+      if (!vmMap.has(id)) {
+        const meta = vmMeta.get(id);
+        vmMap.set(id, { id, meta, type: sn['backup-type']||'', snaps: [], totalSize: 0 });
+      }
+      const entry = vmMap.get(id);
+      entry.snaps.push({ ...sn, _store: ds.store });
+      entry.totalSize += sn.size || 0;
+    });
+  });
+
+  // Sort VMs: most recently backed up first
+  const vms = [...vmMap.values()].sort((a, b) => {
+    const la = Math.max(...a.snaps.map(s=>s['backup-time']||0));
+    const lb = Math.max(...b.snaps.map(s=>s['backup-time']||0));
+    return lb - la;
+  });
+
+  if (!vms.length) {
+    document.getElementById('pbs-pane-backups').innerHTML = '<div class="empty">No backups found.</div>';
+    return;
+  }
+
+  // Search bar + table
+  let rows = vms.map(v => {
+    const latestSnap = v.snaps.slice().sort((a,b)=>(b['backup-time']||0)-(a['backup-time']||0))[0];
+    const latestTs   = latestSnap?.['backup-time'];
+    const latestVer  = _pbsVerBadge(latestSnap||{});
+    const name       = v.meta?.name || v.meta?.hostname || '';
+    const isCT       = v.type==='ct' || v.meta?.type==='lxc';
+    const stores     = [...new Set(v.snaps.map(s=>s._store))].join(', ');
+    const ageColor   = _pbsAgeColor(latestTs);
+    const running    = v.meta?.status === 'running';
+    const dot        = running ? 'color:var(--green)' : 'color:var(--muted)';
+    return `<tr>
+      <td>
+        <span style="${dot};font-size:9px;margin-right:4px">●</span>
+        <strong>${escHtml(v.id)}</strong>
+        ${name ? `<span style="color:var(--muted);font-size:12px;margin-left:6px">${escHtml(name)}</span>` : ''}
+      </td>
+      <td><span class="type-chip ${isCT?'ct':'vm'}">${isCT?'CT':'VM'}</span></td>
+      <td style="color:${ageColor};font-size:12px">${_pbsRelTime(latestTs)}</td>
+      <td style="font-size:12px;color:var(--muted)">${new Date((latestTs||0)*1000).toLocaleString()}</td>
+      <td style="font-size:12px;color:var(--muted)">${v.snaps.length}</td>
+      <td style="font-size:12px;color:var(--muted)">${fmtBytes(v.totalSize)}</td>
+      <td style="font-size:12px;color:var(--muted)">${escHtml(stores)}</td>
+      <td>${latestVer}</td>
+    </tr>`;
+  }).join('');
+
+  document.getElementById('pbs-pane-backups').innerHTML = `
+    <div style="margin-bottom:10px">
+      <input id="pbs-backup-search" type="text" placeholder="Filter by ID or name…"
+        style="width:240px;padding:5px 10px;font-size:12px;background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius);color:var(--text)"
+        oninput="_pbsFilterBackups()">
+    </div>
+    <div class="table-wrap">
+      <table id="pbs-backup-table">
+        <thead><tr>
+          <th>Guest</th><th>Type</th><th>Last Backup</th><th>Date / Time</th>
+          <th>Count</th><th>Total Size</th><th>Datastore</th><th>Verified</th>
+        </tr></thead>
+        <tbody id="pbs-backup-tbody">${rows}</tbody>
+      </table>
+    </div>`;
+}
+
+function _pbsFilterBackups() {
+  const q = (document.getElementById('pbs-backup-search')?.value || '').toLowerCase();
+  document.querySelectorAll('#pbs-backup-tbody tr').forEach(tr => {
+    tr.style.display = !q || tr.textContent.toLowerCase().includes(q) ? '' : 'none';
+  });
+}
+
+function _pbsRenderJobs() {
+  const { jobs } = _pbsData;
+  const pane = document.getElementById('pbs-pane-jobs');
+  if (!jobs.length) { pane.innerHTML = '<div class="empty">No backup jobs configured.</div>'; return; }
+
+  const rows = jobs.map(j => {
+    const lastRun  = j['last-run-upid'] ? _pbsRelTime(j['last-run-state']?.starttime) : '—';
+    const lastOk   = j['last-run-state']?.state;
+    const badge    = lastOk==='OK'
+      ? '<span class="badge ok"    style="font-size:10px"><span class="badge-dot"></span>OK</span>'
+      : lastOk
+      ? '<span class="badge error" style="font-size:10px"><span class="badge-dot"></span>'+escHtml(lastOk)+'</span>'
+      : '<span style="font-size:11px;color:var(--muted)">—</span>';
+    const enabled  = j.disable ? '<span style="color:var(--muted);font-size:11px">disabled</span>'
+                                : '<span style="color:var(--green);font-size:11px">enabled</span>';
+    return `<tr>
+      <td style="font-family:monospace;font-size:12px">${escHtml(j.id||'')}</td>
+      <td style="font-size:12px">${escHtml(j.store||'')}</td>
+      <td style="font-size:12px;color:var(--muted)">${escHtml(j.schedule||'—')}</td>
+      <td style="font-size:12px;color:var(--muted)">${escHtml(j.ns||'root')}</td>
+      <td style="font-size:12px;color:var(--muted)">${escHtml(String(j['max-depth']??'—'))}</td>
+      <td>${badge}</td>
+      <td>${enabled}</td>
+    </tr>`;
+  }).join('');
+
+  pane.innerHTML = `
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Job ID</th><th>Datastore</th><th>Schedule</th><th>Namespace</th><th>Max Depth</th><th>Last Result</th><th>Status</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>`;
+}
+
+function _pbsRenderTasks() {
+  const { tasks } = _pbsData;
+  const pane = document.getElementById('pbs-pane-tasks');
+  if (!tasks.length) { pane.innerHTML = '<div class="empty">No recent tasks.</div>'; return; }
+
+  const rows = tasks.slice(0, 150).map(t => {
+    const start    = t.starttime ? new Date(t.starttime*1000).toLocaleString() : '—';
+    const dur      = (t.endtime && t.starttime) ? `${t.endtime - t.starttime}s` : '—';
+    const st       = t.status || '';
+    const isOk     = st==='OK' || st==='';
+    const badge    = st==='OK' || st===''
+      ? '<span class="badge ok"    style="font-size:10px"><span class="badge-dot"></span>OK</span>'
+      : st.startsWith('WARNINGS')
+      ? '<span class="badge warning" style="font-size:10px"><span class="badge-dot"></span>warnings</span>'
+      : '<span class="badge error"  style="font-size:10px"><span class="badge-dot"></span>'+escHtml(st.substring(0,40))+'</span>';
+    const running  = !t.endtime;
+    const runBadge = running ? '<span class="badge ok" style="font-size:10px"><span class="badge-dot" style="background:var(--accent)"></span>running</span>' : '';
+    return `<tr>
+      <td style="font-size:12px;color:var(--muted)">${start}</td>
+      <td style="font-family:monospace;font-size:12px">${escHtml(t.type||'—')}</td>
+      <td style="font-size:12px;color:var(--muted)">${escHtml(t.id||'—')}</td>
+      <td style="font-size:12px;color:var(--muted)">${escHtml(t.user||'—')}</td>
+      <td style="font-size:12px;color:var(--muted)">${dur}</td>
+      <td>${running ? runBadge : badge}</td>
+    </tr>`;
+  }).join('');
+
+  pane.innerHTML = `
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Started</th><th>Type</th><th>Guest / ID</th><th>User</th><th>Duration</th><th>Result</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>
+    ${tasks.length > 150 ? `<div style="font-size:11px;color:var(--muted);margin-top:8px">Showing 150 of ${tasks.length} tasks</div>` : ''}`;
 }
 
 function disconnectPBS() {
   PBS = { host:'', ticket:'', csrfToken:'', tokenAuth:'', useToken:false, connected:false };
+  _pbsData = null;
   document.getElementById('pbs-connect').style.display = '';
   document.getElementById('pbs-content').innerHTML = '<div class="empty">Disconnected.</div>';
   toast('Disconnected from Backup Server', 'info');
