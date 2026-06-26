@@ -39,6 +39,45 @@ The live deployment works like this:
 - `_certusLogoHref` — const that captures the logo data URI at startup; `updateFaviconBadge()` uses it as the canvas base so alert-count badges don't overwrite the logo
 - Background colour is `#1a1a2e` (matches dark theme); if the logo is updated, ensure the PNG palette has no near-white entries or it will glow on dark browser chrome
 
+## No third-party product references
+- Do not use VMware, vSphere, vSAN, vMotion, or similar trademarked terms in any user-facing text, tooltips, comments, or variable names
+- QEMU internal values (`vmware` VGA type, `vmxnet3` NIC) must keep their API values but display neutrally (e.g. `vmware` → `svga` in labels)
+
+## Storage view (`view-storage`)
+Key helpers:
+- `_STOR_TYPES` — map of storage type → `{ label, thin, tip }` — defines THIN/THICK badge and tooltip per type
+- `_STOR_CONTENT_META` — map of content type → `{ label, color }` — drives the breakdown bar colours
+- `_storEstimateCommitted(node, storage)` — sums `maxdisk` from PVE.vms/PVE.containers as a committed-disk estimate
+- `_storMountPoint(s)` — returns human-readable path/VG/pool/server string for a storage object
+- `_storContentChips(s)` — returns content-type chip HTML for the storage row
+- `_storExpand(node, storage, btn)` — lazy-loads `/storage/{s}/content`, renders usage bar + VM/CT disk/backup chip lists; chips show VM name + total allocated size; `dataset.loaded` prevents re-fetch
+
+## Move Disk (`openMoveDiskModal`)
+Moves one or more VM/CT disks to a different storage on the same node.
+- `openMoveDiskModal(node, vmid, type, connId)` — fetches VM/CT config, parses disks, shows checkbox list + target storage dropdown
+- `_moveDiskCtx` — module-level state holding parsed disks, available storages, and connection info
+- `_cfgSizeBytes(s)` — parses config size strings like `80G`, `4M` → bytes
+- `_moveDiskGetSelected()` — returns checked disk entries from the modal
+- `_moveDiskRefreshTargets()` — updates target storage dropdown when disk selection changes; excludes source storage when all selected disks share one source
+- `_moveDiskUpdateWarn()` — shows yellow warning if target will be >85% full after move
+- `_executeMoveDisk()` — iterates selected disks, POSTs `move_disk` (VM) or `move_volume` (LXC), registers each UPID with task monitor; skips disks already on target; blocks if CT is running
+- APIs: `POST /nodes/{node}/qemu/{vmid}/move_disk`, `POST /nodes/{node}/lxc/{vmid}/move_volume`
+
+## PBS view (`view-pbs`)
+Connects directly to PBS REST API (port 8007), separate from PVE.
+- `PBS` — module-level object `{ host, ticket, csrfToken, tokenAuth, useToken, connected }`
+- `_pbsData` — cached after load `{ enriched, jobs, tasks, vmMeta }`; cleared on disconnect
+- `connectPBS()` — handles password auth (POST `/access/ticket`) or API token auth
+- `loadPBS()` — fetches datastores + status + snapshots + jobs + tasks in parallel; builds 4-tab layout
+- `_pbsSwitchTab(name)` — switches between Overview / Backups / Jobs / Tasks tabs
+- `_pbsRenderOverview()` — stat cards + per-datastore usage bars with last-backup age indicator
+- `_pbsRenderBackups()` — groups all snapshots by VM/CT ID across datastores; resolves names from `PVE.vms`/`PVE.containers`; colour-codes last backup age (green <25h, amber <73h, red older)
+- `_pbsRenderJobs()` — lists scheduled backup jobs from `GET /api2/json/jobs/backup`
+- `_pbsRenderTasks()` — lists recent task history from `GET /api2/json/nodes/localhost/tasks`
+- `_pbsRelTime(epochSec)` — "2h ago" / "3d ago" relative timestamp
+- `_pbsAgeColor(epochSec)` — returns CSS colour variable based on backup age
+- PBS API docs: https://pbs.proxmox.com/docs/api-viewer/
+
 ## Log Viewer (`view-logs`)
 Three tabs: **System Logs** (`/nodes/{node}/syslog`), **Cluster Events** (`/cluster/log`), **VM/CT Operations** (`/nodes/{node}/tasks`).
 
