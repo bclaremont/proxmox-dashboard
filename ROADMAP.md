@@ -7,7 +7,7 @@ Ideas and planned improvements, compiled from all previous sessions. Items are r
 ## Finish partially-built features
 
 - [x] **Worldmap** — `div` exists but has no rendering logic; visually show multi-cluster geographic distribution of nodes
-- [ ] **PBS Integration** — Proxmox Backup Server view is a skeleton; complete with backup job status, restore points, and datastore usage
+- [-] **PBS Integration** — view built (Overview / Backups / Jobs / Tasks tabs, VM name resolution, job schedule, task history); untested — no PBS instance available to verify
 - [ ] **Cluster Graphs** — timeframe selector buttons exist; complete the rendering pipeline for full CPU / RAM / network trending over time
 - [ ] **Affinity / Anti-affinity rules** — UI exists; backend logic for gang (same node) and spread (different nodes) placement using `/cluster/rules` (PVE 8.1+) or HA group constraints
 - [ ] **Host Profiles / desired-state config** — detect config drift by comparing node configs against a baseline profile; highlight differences
