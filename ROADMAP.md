@@ -17,7 +17,7 @@ Ideas and planned improvements, compiled from all previous sessions. Items are r
 
 ## VM & Container operations
 
-- [ ] **Bulk VM/CT operations** — checkbox-select multiple VMs / containers and perform start / stop / snapshot in a single action; table infrastructure is already in place
+- [x] **Bulk VM/CT operations** — checkbox-select multiple VMs / containers and perform start / stop / snapshot in a single action; table infrastructure is already in place
 - [ ] **Maintenance Mode drain** — one-click "evacuate all VMs off this node" before maintenance; iterate VMs on node and migrate each via API
 - [x] **Move Disk** — move one or more VM/CT disks to a different storage from the VM row (⇄ button); supports multi-disk selection, running-CT guard, post-move fill warning
 - [x] **CT template loading fix** — CT creation wizard now scopes templates and default storage to the target node
@@ -26,10 +26,10 @@ Ideas and planned improvements, compiled from all previous sessions. Items are r
 
 ## Monitoring & alerting
 
-- [ ] **Alert thresholds UI** — backend already stores `pve-alert-thresholds` (consumed by the Overview health banner); add a frontend panel to configure warning / critical thresholds for CPU, RAM, and disk per node or cluster
+- [x] **Alert thresholds UI** — backend already stores `pve-alert-thresholds` (consumed by the Overview health banner); configure warning / critical thresholds for CPU, RAM, disk, certs, vmDown, and taskError from the ⚙ Settings modal
 - [ ] **Per-VM performance alerts** — alert when a specific VM's CPU / RAM exceeds a threshold; current alerts are cluster-wide only
 - [ ] **Capacity forecasting** — "time remaining" until CPU / RAM / disk exhausted, projected from RRD linear trend; add to DRS view and Overview
-- [ ] **VM metrics sparklines** — per-VM CPU and RAM mini-graphs in the VM table rows, following the same pattern as node sidebar sparklines
+- [x] **VM metrics sparklines** — per-VM CPU and RAM mini-graphs in the VM table rows, following the same pattern as node sidebar sparklines
 
 ---
 

@@ -1028,7 +1028,7 @@
       <div id="vms-content">
         <div class="table-wrap">
           <table>
-            <thead><tr><th class="sortable" onclick="sortVMTable('vmid')">ID<span class="sort-icon">↕</span></th><th class="sortable" onclick="sortVMTable('name')">Name<span class="sort-icon">↕</span></th><th class="sortable" onclick="sortVMTable('node')">Node<span class="sort-icon">↕</span></th><th class="sortable" onclick="sortVMTable('status')">Status<span class="sort-icon">↕</span></th><th class="sortable" onclick="sortVMTable('cpu')">CPU<span class="sort-icon">↕</span></th><th class="sortable" onclick="sortVMTable('mem')">Memory<span class="sort-icon">↕</span></th><th>Disk</th><th class="sortable" onclick="sortVMTable('uptime')">Uptime<span class="sort-icon">↕</span></th><th>Tags</th><th>Actions</th></tr></thead>
+            <thead><tr><th style="width:32px" onclick="event.stopPropagation()"><input type="checkbox" title="Select all" onchange="_bulkAllToggle('vm-table-body',this.checked)" style="width:auto;margin:0;cursor:pointer"></th><th class="sortable" onclick="sortVMTable('vmid')">ID<span class="sort-icon">↕</span></th><th class="sortable" onclick="sortVMTable('name')">Name<span class="sort-icon">↕</span></th><th class="sortable" onclick="sortVMTable('node')">Node<span class="sort-icon">↕</span></th><th class="sortable" onclick="sortVMTable('status')">Status<span class="sort-icon">↕</span></th><th class="sortable" onclick="sortVMTable('cpu')">CPU<span class="sort-icon">↕</span></th><th class="sortable" onclick="sortVMTable('mem')">Memory<span class="sort-icon">↕</span></th><th>Disk</th><th class="sortable" onclick="sortVMTable('uptime')">Uptime<span class="sort-icon">↕</span></th><th>Tags</th><th>Actions</th></tr></thead>
             <tbody id="vm-table-body"></tbody>
           </table>
         </div>
@@ -1070,7 +1070,7 @@
       <div id="cts-content">
         <div class="table-wrap">
           <table>
-            <thead><tr><th class="sortable" onclick="sortCTTable('vmid')">ID<span class="sort-icon">↕</span></th><th class="sortable" onclick="sortCTTable('name')">Name<span class="sort-icon">↕</span></th><th class="sortable" onclick="sortCTTable('node')">Node<span class="sort-icon">↕</span></th><th class="sortable" onclick="sortCTTable('status')">Status<span class="sort-icon">↕</span></th><th class="sortable" onclick="sortCTTable('cpu')">CPU<span class="sort-icon">↕</span></th><th class="sortable" onclick="sortCTTable('mem')">Memory<span class="sort-icon">↕</span></th><th>Disk</th><th class="sortable" onclick="sortCTTable('uptime')">Uptime<span class="sort-icon">↕</span></th><th>Tags</th><th>Actions</th></tr></thead>
+            <thead><tr><th style="width:32px" onclick="event.stopPropagation()"><input type="checkbox" title="Select all" onchange="_bulkAllToggle('ct-table-body',this.checked)" style="width:auto;margin:0;cursor:pointer"></th><th class="sortable" onclick="sortCTTable('vmid')">ID<span class="sort-icon">↕</span></th><th class="sortable" onclick="sortCTTable('name')">Name<span class="sort-icon">↕</span></th><th class="sortable" onclick="sortCTTable('node')">Node<span class="sort-icon">↕</span></th><th class="sortable" onclick="sortCTTable('status')">Status<span class="sort-icon">↕</span></th><th class="sortable" onclick="sortCTTable('cpu')">CPU<span class="sort-icon">↕</span></th><th class="sortable" onclick="sortCTTable('mem')">Memory<span class="sort-icon">↕</span></th><th>Disk</th><th class="sortable" onclick="sortCTTable('uptime')">Uptime<span class="sort-icon">↕</span></th><th>Tags</th><th>Actions</th></tr></thead>
             <tbody id="ct-table-body"></tbody>
           </table>
         </div>
@@ -2681,6 +2681,8 @@ let nodeViewMode = localStorage.getItem('pve-node-view')||'cards';
 const _savedNodeSort = JSON.parse(localStorage.getItem('pcc-node-sort')||'null');
 let _nodeSort = _savedNodeSort?.col || 'node', _nodeSortDir = _savedNodeSort?.dir || 1;
 const _nodeHistory = {}; // node key → [{cpu, mem}, ...] ring-buffer for sparklines
+const _vmHistory   = {}; // VM/CT key → [{cpu, mem}, ...] ring-buffer for sparklines
+let _bulkSelected  = new Set(); // "connId||node||vmid||type" keys
 
 function setVMView(mode) {
   vmViewMode = mode;
@@ -5456,6 +5458,7 @@ function switchView(view) {
   if(view==='certs') loadCerts();
   if(view==='audit') loadAudit();
   if(view==='logs') loadLogs(); else _logsStopAutoRefresh();
+  _bulkClear();
   if(view==='clustergraphs') loadClusterGraphs();
   if(view==='isolib')   loadISOLibrary();
   if(view==='webhooks') loadWebhooks();
@@ -5902,19 +5905,24 @@ function renderVMTable(){
     if (c) c.innerHTML = _renderVMCardsGrouped(sorted);
     return;
   }
+  // Record sparkline history for every visible VM
+  sorted.forEach(x => _recordVMHist(`${x.connId||''}|${x.node}/${x.vmid}`, {
+    cpu: x.cpu ? x.cpu * 100 : 0,
+    mem: x.mem && x.maxmem ? (x.mem / x.maxmem) * 100 : 0
+  }));
   // Restore table structure if card view replaced it
   if (!document.getElementById('vm-table-body')) {
     const c = document.getElementById('vms-content');
-    if (c) c.innerHTML = `<div class="table-wrap"><table><thead><tr><th class="sortable" onclick="sortVMTable('vmid')">ID<span class="sort-icon">↕</span></th><th class="sortable" onclick="sortVMTable('name')">Name<span class="sort-icon">↕</span></th><th class="sortable" onclick="sortVMTable('node')">Node<span class="sort-icon">↕</span></th><th class="sortable" onclick="sortVMTable('status')">Status<span class="sort-icon">↕</span></th><th class="sortable" onclick="sortVMTable('cpu')">CPU<span class="sort-icon">↕</span></th><th class="sortable" onclick="sortVMTable('mem')">Memory<span class="sort-icon">↕</span></th><th>Disk</th><th class="sortable" onclick="sortVMTable('uptime')">Uptime<span class="sort-icon">↕</span></th><th>Tags</th><th>Actions</th></tr></thead><tbody id="vm-table-body"></tbody></table></div>`;
+    if (c) c.innerHTML = `<div class="table-wrap"><table><thead><tr><th style="width:32px" onclick="event.stopPropagation()"><input type="checkbox" title="Select all" onchange="_bulkAllToggle('vm-table-body',this.checked)" style="width:auto;margin:0;cursor:pointer"></th><th class="sortable" onclick="sortVMTable('vmid')">ID<span class="sort-icon">↕</span></th><th class="sortable" onclick="sortVMTable('name')">Name<span class="sort-icon">↕</span></th><th class="sortable" onclick="sortVMTable('node')">Node<span class="sort-icon">↕</span></th><th class="sortable" onclick="sortVMTable('status')">Status<span class="sort-icon">↕</span></th><th class="sortable" onclick="sortVMTable('cpu')">CPU<span class="sort-icon">↕</span></th><th class="sortable" onclick="sortVMTable('mem')">Memory<span class="sort-icon">↕</span></th><th>Disk</th><th class="sortable" onclick="sortVMTable('uptime')">Uptime<span class="sort-icon">↕</span></th><th>Tags</th><th>Actions</th></tr></thead><tbody id="vm-table-body"></tbody></table></div>`;
   }
   _updateSortIcons('#vms-content table', vmSort.col, vmSort.dir);
   const vgBtn = document.getElementById('vms-group-btn');
   if (vgBtn) vgBtn.classList.toggle('active', _vmGrouped);
   const _vmPins = sorted.filter(v=>_isPinned(v)), _vmRest = sorted.filter(v=>!_isPinned(v));
-  const _vmPinSep = _vmPins.length && _vmRest.length ? `<tr class="pin-sep"><td colspan="10" style="padding:2px 10px;font-size:10px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);background:var(--bg)">─── Pinned ───</td></tr>` : '';
+  const _vmPinSep = _vmPins.length && _vmRest.length ? `<tr class="pin-sep"><td colspan="11" style="padding:2px 10px;font-size:10px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);background:var(--bg)">─── Pinned ───</td></tr>` : '';
   document.getElementById('vm-table-body').innerHTML = sorted.length
-    ? (_vmGrouped ? _renderGrouped(sorted, v=>vmRow(v), 10) : _vmPins.map(v=>vmRow(v)).join('')+_vmPinSep+_vmRest.map(v=>vmRow(v)).join(''))
-    : `<tr><td colspan="9">${emptyState('<rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/>',
+    ? (_vmGrouped ? _renderGrouped(sorted, v=>vmRow(v), 11) : _vmPins.map(v=>vmRow(v)).join('')+_vmPinSep+_vmRest.map(v=>vmRow(v)).join(''))
+    : `<tr><td colspan="11">${emptyState('<rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/>',
         _vmStatusFilter !== 'all' ? `No ${_vmStatusFilter} VMs` : 'No VMs',
         _vmStatusFilter !== 'all' ? `Switch to "All" to see ${_vmStatusFilter==='running'?'stopped':'running'} VMs.` : 'Connect to a cluster or create your first VM.',
         _vmStatusFilter === 'all' ? `<button class="btn primary" onclick="openCreateVMModal()">+ Create VM</button>` : '')
@@ -5944,19 +5952,24 @@ function renderCTTable(){
     if (c) c.innerHTML = _renderVMCardsGrouped(sorted);
     return;
   }
+  // Record sparkline history for every visible CT
+  sorted.forEach(x => _recordVMHist(`${x.connId||''}|${x.node}/${x.vmid}`, {
+    cpu: x.cpu ? x.cpu * 100 : 0,
+    mem: x.mem && x.maxmem ? (x.mem / x.maxmem) * 100 : 0
+  }));
   // Restore table structure if card view replaced it
   if (!document.getElementById('ct-table-body')) {
     const c = document.getElementById('cts-content');
-    if (c) c.innerHTML = `<div class="table-wrap"><table><thead><tr><th class="sortable" onclick="sortCTTable('vmid')">ID<span class="sort-icon">↕</span></th><th class="sortable" onclick="sortCTTable('name')">Name<span class="sort-icon">↕</span></th><th class="sortable" onclick="sortCTTable('node')">Node<span class="sort-icon">↕</span></th><th class="sortable" onclick="sortCTTable('status')">Status<span class="sort-icon">↕</span></th><th class="sortable" onclick="sortCTTable('cpu')">CPU<span class="sort-icon">↕</span></th><th class="sortable" onclick="sortCTTable('mem')">Memory<span class="sort-icon">↕</span></th><th>Disk</th><th class="sortable" onclick="sortCTTable('uptime')">Uptime<span class="sort-icon">↕</span></th><th>Tags</th><th>Actions</th></tr></thead><tbody id="ct-table-body"></tbody></table></div>`;
+    if (c) c.innerHTML = `<div class="table-wrap"><table><thead><tr><th style="width:32px" onclick="event.stopPropagation()"><input type="checkbox" title="Select all" onchange="_bulkAllToggle('ct-table-body',this.checked)" style="width:auto;margin:0;cursor:pointer"></th><th class="sortable" onclick="sortCTTable('vmid')">ID<span class="sort-icon">↕</span></th><th class="sortable" onclick="sortCTTable('name')">Name<span class="sort-icon">↕</span></th><th class="sortable" onclick="sortCTTable('node')">Node<span class="sort-icon">↕</span></th><th class="sortable" onclick="sortCTTable('status')">Status<span class="sort-icon">↕</span></th><th class="sortable" onclick="sortCTTable('cpu')">CPU<span class="sort-icon">↕</span></th><th class="sortable" onclick="sortCTTable('mem')">Memory<span class="sort-icon">↕</span></th><th>Disk</th><th class="sortable" onclick="sortCTTable('uptime')">Uptime<span class="sort-icon">↕</span></th><th>Tags</th><th>Actions</th></tr></thead><tbody id="ct-table-body"></tbody></table></div>`;
   }
   _updateSortIcons('#cts-content table', ctSort.col, ctSort.dir);
   const cgBtn = document.getElementById('cts-group-btn');
   if (cgBtn) cgBtn.classList.toggle('active', _ctGrouped);
   const _ctPins = sorted.filter(c=>_isPinned(c)), _ctRest = sorted.filter(c=>!_isPinned(c));
-  const _ctPinSep = _ctPins.length && _ctRest.length ? `<tr class="pin-sep"><td colspan="10" style="padding:2px 10px;font-size:10px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);background:var(--bg)">─── Pinned ───</td></tr>` : '';
+  const _ctPinSep = _ctPins.length && _ctRest.length ? `<tr class="pin-sep"><td colspan="11" style="padding:2px 10px;font-size:10px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);background:var(--bg)">─── Pinned ───</td></tr>` : '';
   document.getElementById('ct-table-body').innerHTML = sorted.length
-    ? (_ctGrouped ? _renderGrouped(sorted, c=>vmRow(c), 10) : _ctPins.map(c=>vmRow(c)).join('')+_ctPinSep+_ctRest.map(c=>vmRow(c)).join(''))
-    : `<tr><td colspan="10" class="empty">No containers found</td></tr>`;
+    ? (_ctGrouped ? _renderGrouped(sorted, c=>vmRow(c), 11) : _ctPins.map(c=>vmRow(c)).join('')+_ctPinSep+_ctRest.map(c=>vmRow(c)).join(''))
+    : `<tr><td colspan="11" class="empty">No containers found</td></tr>`;
   _fetchAndShowIPs(sorted);
   _fetchSnapAges(sorted);
 }
@@ -6031,7 +6044,9 @@ function vmRow(x,showType=false){
   const ipLine=`<div class="vm-ip-cell" data-ipkey="${ipKey}" style="font-size:10px;font-family:monospace;margin-top:2px;color:${cachedIP?'var(--teal)':'var(--muted)'}">${cachedIP||'—'}</div>`;
   const pinned=_isPinned(x);
   const snapKey=ipKey;
+  const bulkKey=`${cid}||${x.node}||${x.vmid}||${x.type}`;
   return `<tr class="clickable-row" onclick="openDetail(${JSON.stringify(x).replace(/"/g,'&quot;')})">
+    <td onclick="event.stopPropagation()" style="width:32px;padding-left:8px"><input type="checkbox" class="bulk-chk" data-key="${bulkKey}" onchange="_bulkToggle(this.dataset.key)" ${_bulkSelected.has(bulkKey)?'checked':''} style="width:auto;margin:0;cursor:pointer"></td>
     <td style="color:var(--muted);font-size:12px;cursor:pointer" data-copy="${x.vmid}" title="Click to copy VMID">${_hl(x.vmid,_activeHlQ)}</td>
     <td>${typeChip}<strong>${_hl(x.name||'(unnamed)',_activeHlQ)}</strong><span class="vm-snap-badge" data-snapkey="${snapKey}" style="display:none;font-size:10px;margin-left:5px"></span>${ipLine}${connLabel}</td>
     ${showType?`<td style="color:var(--muted)">${_hl(x.node,_activeHlQ)}</td>`:''}
@@ -6042,6 +6057,7 @@ function vmRow(x,showType=false){
         <span style="min-width:36px;text-align:right;font-size:12px">${cpuPct}%</span>
         <div class="gauge-bar"><div class="gauge-fill ${gaugeClass(parseFloat(cpuPct)||0)}" style="width:${Math.min(parseFloat(cpuPct)||0,100)}%"></div></div>
       </div>
+      ${_vmSparkSVG(ipKey,70,14)}
     </td>
     <td title="${memFullyAllocated?'Hypervisor reports full RSS allocation — fetching balloon value…':''}">
       <div class="gauge-wrap">
@@ -6120,6 +6136,110 @@ function _recordNodeHist(key, d) {
   const h = (_nodeHistory[key] = _nodeHistory[key] || []);
   h.push({cpu: d.cpuPct, mem: d.memPct});
   if (h.length > 20) h.shift();
+}
+
+function _recordVMHist(key, d) {
+  const h = (_vmHistory[key] = _vmHistory[key] || []);
+  h.push({cpu: d.cpu||0, mem: d.mem||0});
+  if (h.length > 20) h.shift();
+}
+
+function _vmSparkSVG(key, w, h) {
+  const hist = _vmHistory[key];
+  if (!hist || hist.length < 2) return '';
+  const line = (prop, color) => {
+    const vals = hist.map(p => p[prop]);
+    const max  = Math.max(...vals, 5);
+    const pts  = vals.map((v, i) => {
+      const x = ((i / (vals.length - 1)) * w).toFixed(1);
+      const y = (h - (v / max) * (h - 2) - 1).toFixed(1);
+      return `${x},${y}`;
+    }).join(' ');
+    return `<polyline points="${pts}" fill="none" stroke="${color}" stroke-width="1.2" stroke-linejoin="round" stroke-linecap="round"/>`;
+  };
+  return `<svg width="${w}" height="${h}" style="display:block;margin-top:3px;overflow:visible" title="CPU (orange) / RAM (blue) — last ${hist.length} polls">${line('cpu','var(--accent)')}${line('mem','var(--blue)')}</svg>`;
+}
+
+function _bulkToggle(key) {
+  if (_bulkSelected.has(key)) _bulkSelected.delete(key);
+  else _bulkSelected.add(key);
+  _bulkUpdateBar();
+}
+
+function _bulkAllToggle(tbodyId, checked) {
+  const chks = document.querySelectorAll(`#${tbodyId} .bulk-chk`);
+  chks.forEach(chk => {
+    if (checked) _bulkSelected.add(chk.dataset.key);
+    else _bulkSelected.delete(chk.dataset.key);
+    chk.checked = checked;
+  });
+  _bulkUpdateBar();
+}
+
+function _bulkClear() {
+  _bulkSelected.clear();
+  document.querySelectorAll('.bulk-chk').forEach(c => c.checked = false);
+  document.querySelectorAll('thead input[type=checkbox]').forEach(c => c.checked = false);
+  _bulkUpdateBar();
+}
+
+function _bulkUpdateBar() {
+  const bar = document.getElementById('bulk-action-bar');
+  const cnt = document.getElementById('bulk-count');
+  if (!bar) return;
+  const n = _bulkSelected.size;
+  if (n === 0) {
+    bar.style.display = 'none';
+  } else {
+    bar.style.display = 'flex';
+    if (cnt) cnt.textContent = `${n} selected`;
+  }
+}
+
+async function _bulkAction(action) {
+  if (_bulkSelected.size === 0) return;
+  const items = [..._bulkSelected].map(k => {
+    const [connId, node, vmid, type] = k.split('||');
+    return {connId, node, vmid, type};
+  });
+  const label = {start:'Start',shutdown:'Shutdown',stop:'Stop',reboot:'Reboot',snapshot:'Snapshot'}[action]||action;
+  const ok = confirm(`${label} ${items.length} VM/CT(s)?`);
+  if (!ok) return;
+
+  if (action === 'snapshot') {
+    const ts = new Date().toISOString().replace(/[-:T]/g,'').slice(0,14);
+    const snapname = `bulk-${ts}`;
+    for (const {connId,node,vmid,type} of items) {
+      const conn = resolveConn(connId||'');
+      if (!conn) continue;
+      const ep = type==='vm'
+        ? `/nodes/${node}/qemu/${vmid}/snapshot`
+        : `/nodes/${node}/lxc/${vmid}/snapshot`;
+      pveFetch(conn, ep, {method:'POST', body:{snapname, description:`Bulk snapshot ${ts}`}})
+        .catch(e => console.warn(`Snapshot ${vmid} failed:`, e));
+    }
+    showToast(`Snapshotting ${items.length} VM/CT(s)…`);
+    _bulkClear();
+    return;
+  }
+
+  const actionMap = {
+    start: (type, node, vmid) => type==='vm' ? `/nodes/${node}/qemu/${vmid}/status/start` : `/nodes/${node}/lxc/${vmid}/status/start`,
+    shutdown: (type, node, vmid) => type==='vm' ? `/nodes/${node}/qemu/${vmid}/status/shutdown` : `/nodes/${node}/lxc/${vmid}/status/shutdown`,
+    stop: (type, node, vmid) => type==='vm' ? `/nodes/${node}/qemu/${vmid}/status/stop` : `/nodes/${node}/lxc/${vmid}/status/stop`,
+    reboot: (type, node, vmid) => type==='vm' ? `/nodes/${node}/qemu/${vmid}/status/reboot` : `/nodes/${node}/lxc/${vmid}/status/reboot`,
+  };
+
+  for (const {connId,node,vmid,type} of items) {
+    const conn = resolveConn(connId||'');
+    if (!conn) continue;
+    const ep = actionMap[action](type, node, vmid);
+    pveFetch(conn, ep, {method:'POST'})
+      .catch(e => console.warn(`${action} ${vmid} failed:`, e));
+  }
+  showToast(`${label}: ${items.length} VM/CT(s)…`);
+  _bulkClear();
+  setTimeout(() => { renderVMTable(); renderCTTable(); }, 1500);
 }
 
 function _sparkSVG(key, w, h) {
@@ -22381,6 +22501,18 @@ document.addEventListener('click', e => {
       <span><kbd>Esc</kbd> close</span>
     </div>
   </div>
+</div>
+
+<!-- Bulk action bar -->
+<div id="bulk-action-bar" style="display:none;position:fixed;bottom:0;left:0;right:0;z-index:9000;background:var(--bg2);border-top:2px solid var(--accent);padding:10px 20px;align-items:center;gap:12px;box-shadow:0 -4px 16px rgba(0,0,0,.4)">
+  <span id="bulk-count" style="font-weight:600;min-width:80px;color:var(--accent)">0 selected</span>
+  <button class="btn small success" onclick="_bulkAction('start')">▶ Start</button>
+  <button class="btn small warning" onclick="_bulkAction('shutdown')">⏻ Shutdown</button>
+  <button class="btn small danger" onclick="_bulkAction('stop')">■ Stop</button>
+  <button class="btn small" onclick="_bulkAction('reboot')">↺ Reboot</button>
+  <button class="btn small" onclick="_bulkAction('snapshot')">📸 Snapshot</button>
+  <div style="flex:1"></div>
+  <button class="btn small" onclick="_bulkClear()" style="color:var(--muted)">✕ Clear</button>
 </div>
 
 </body>
