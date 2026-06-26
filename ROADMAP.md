@@ -19,8 +19,8 @@ Ideas and planned improvements, compiled from all previous sessions. Items are r
 
 - [ ] **Bulk VM/CT operations** — checkbox-select multiple VMs / containers and perform start / stop / snapshot in a single action; table infrastructure is already in place
 - [ ] **Maintenance Mode drain** — one-click "evacuate all VMs off this node" before maintenance; iterate VMs on node and migrate each via API
-- [ ] **Storage vMotion** — move a VM's disks to a different datastore from the VM detail panel without full migration
-- [ ] **CT template loading fix** — CT creation wizard starts but template list doesn't display; investigate and fix the template-fetch flow
+- [x] **Move Disk** — move one or more VM/CT disks to a different storage from the VM row (⇄ button); supports multi-disk selection, running-CT guard, post-move fill warning
+- [x] **CT template loading fix** — CT creation wizard now scopes templates and default storage to the target node
 
 ---
 
@@ -36,21 +36,21 @@ Ideas and planned improvements, compiled from all previous sessions. Items are r
 ## Storage
 
 - [ ] **Storage DRS** — auto-balance VMs across datastores by capacity / I/O; build on the existing DRS engine, add storage dimension
-- [ ] **Storage detail: mount points** — show the underlying device / mount point (e.g. `/dev/sdb1`) in the storage view
-- [ ] **Storage detail: VM/CT usage** — show which VMs and containers are consuming each storage pool
-- [ ] **Thin provisioning indicators** — VMware-style overcommit visualisation (thin / thick, overprovisioned warnings) per pool
+- [x] **Storage detail: mount points** — shows underlying path / VG / pool / server for each storage type
+- [x] **Storage detail: VM/CT usage** — expand panel shows which VMs and containers have disks or backups on each storage, with size per VM
+- [x] **Thin provisioning indicators** — THIN/THICK badges, overcommit warning, committed vs used cards per storage pool
 
 ---
 
 ## Log Viewer
 
 - [ ] **Task duration** — calculate start-to-end duration from UPID hex timestamps in Cluster Events; no extra API calls needed
-- [ ] **Auto-refresh toggle** — checkbox with 30s / 60s interval for live log monitoring
+- [x] **Auto-refresh toggle** — 30s / 1 min / 2 min interval selector for live log monitoring
 - [ ] **"Recent ops" default** — load last 50 tasks across all nodes when VM/CT tab opens instead of blank-until-search
 - [ ] **Error summary banner** — strip at top of Log Viewer showing error / warn counts from the last hour across all three tabs; click to filter
 - [ ] **Task output drill-down** — click a task row to load the full task log from `/nodes/{node}/tasks/{upid}/log`
 - [ ] **Group kernel boot messages** — collapse 50+ consecutive kernel INFO rows into "Boot sequence (N messages)" with an expand arrow
-- [ ] **Date range filter** — filter syslog and cluster events by a start / end date range
+- [x] **Date range filter** — datetime range inputs on syslog and cluster events tabs with CSV export
 - [ ] **AI log analysis** — parse log entries, surface human-readable summaries, and link to relevant Proxmox KB / community resources
 
 ---
