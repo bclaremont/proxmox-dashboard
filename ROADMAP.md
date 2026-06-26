@@ -44,11 +44,11 @@ Ideas and planned improvements, compiled from all previous sessions. Items are r
 
 ## Log Viewer
 
-- [ ] **Task duration** — calculate start-to-end duration from UPID hex timestamps in Cluster Events; no extra API calls needed
+- [x] **Task duration** — calculate start-to-end duration from UPID hex timestamps in Cluster Events; no extra API calls needed
 - [x] **Auto-refresh toggle** — 30s / 1 min / 2 min interval selector for live log monitoring
-- [ ] **"Recent ops" default** — load last 50 tasks across all nodes when VM/CT tab opens instead of blank-until-search
-- [ ] **Error summary banner** — strip at top of Log Viewer showing error / warn counts from the last hour across all three tabs; click to filter
-- [ ] **Task output drill-down** — click a task row to load the full task log from `/nodes/{node}/tasks/{upid}/log`
+- [x] **"Recent ops" default** — load last 50 tasks across all nodes when VM/CT tab opens instead of blank-until-search
+- [x] **Error summary banner** — strip at top of Log Viewer showing error / warn counts across loaded syslog and cluster event data
+- [x] **Task output drill-down** — click a task row to load the full task log from `/nodes/{node}/tasks/{upid}/log`
 - [ ] **Group kernel boot messages** — collapse 50+ consecutive kernel INFO rows into "Boot sequence (N messages)" with an expand arrow
 - [x] **Date range filter** — datetime range inputs on syslog and cluster events tabs with CSV export
 - [ ] **AI log analysis** — parse log entries, surface human-readable summaries, and link to relevant Proxmox KB / community resources

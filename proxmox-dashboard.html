@@ -1663,6 +1663,10 @@
           </select>
         </div>
       </div>
+      <div id="logs-error-banner" style="display:none;margin-bottom:10px;padding:8px 14px;background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius);align-items:center;gap:10px;flex-wrap:wrap">
+        <span style="color:var(--muted);font-size:12px;white-space:nowrap">In loaded data:</span>
+        <span id="leb-content" style="display:flex;gap:6px;flex-wrap:wrap"></span>
+      </div>
       <div class="dtabs">
         <div class="dtab active" id="logs-tab-system" onclick="_logsTab('system')">System Logs</div>
         <div class="dtab" id="logs-tab-cluster" onclick="_logsTab('cluster')">Cluster Events</div>
@@ -4175,6 +4179,7 @@ function _logsTab(tab) {
     document.getElementById('logs-pane-'+t)?.classList.toggle('active', t===tab);
   });
   if (tab==='cluster' && !window._logsClusterLoaded) _loadClusterEvents();
+  if (tab==='vmops'   && !window._logsVmOpsLoaded)   _loadVmOps();
 }
 
 function _logsGetConn() {
@@ -4211,6 +4216,7 @@ function _logsToggleAutoRefresh() {
 
 async function loadLogs() {
   window._logsClusterLoaded = false;
+  window._logsVmOpsLoaded   = false;
   _logsPopulateNodeSel();
   const activeTab = document.querySelector('#view-logs .dtab.active')?.id?.replace('logs-tab-','') || 'system';
   if (activeTab==='system') await _loadSystemLogs();
@@ -4423,6 +4429,7 @@ function _renderSyslogTable() {
   html += '</tbody></table></div>';
   if (rows.length>500) html += `<p style="color:var(--muted);font-size:12px;text-align:center;padding:8px">Showing first 500 of ${rows.length} entries — use filters to narrow results.</p>`;
   document.getElementById('logs-syslog-body').innerHTML = html;
+  _logsUpdateErrorBanner();
 }
 
 const _TASK_TYPES = {
@@ -4457,10 +4464,28 @@ const _CLUSTER_TAGS = {
 };
 
 function _parseUpid(upid) {
-  // UPID:<node>:<pid>:<pstart>:<starttime>:<type>:<vmid>:<user>:
-  const m = upid.match(/^UPID:([^:]+):[^:]+:[^:]+:[^:]+:([^:]+):([^:]*):([^:@]+@[^:]+):?$/);
+  // UPID:<node>:<pid>:<pstart>:<starttime_hex>:<type>:<vmid>:<user>:
+  const m = upid.match(/^UPID:([^:]+):[^:]+:[^:]+:([0-9A-Fa-f]+):([^:]+):([^:]*):([^:@]+@[^:]+):?$/);
   if (!m) return null;
-  return { node:m[1], type:m[2], vmid:m[3], user:m[4] };
+  return { node:m[1], starttime:parseInt(m[2],16), type:m[3], vmid:m[4], user:m[5] };
+}
+
+function _logsUpdateErrorBanner() {
+  const banner = document.getElementById('logs-error-banner');
+  if (!banner) return;
+  const sysErrs  = _syslogEntries.filter(e=>e.sev==='err').length;
+  const sysWarns = _syslogEntries.filter(e=>e.sev==='warn').length;
+  const clErrs   = _clusterEntries.filter(e=>(_CL_PRI[e.pri]||'info')==='err').length;
+  const clWarns  = _clusterEntries.filter(e=>(_CL_PRI[e.pri]||'info')==='warn').length;
+  const total = sysErrs + sysWarns + clErrs + clWarns;
+  if (!total) { banner.style.display='none'; return; }
+  banner.style.display = 'flex';
+  const chip = (n, label, sev) => n ? `<span class="log-sev ${sev}" style="cursor:default;margin-right:4px">${n} ${label}</span>` : '';
+  document.getElementById('leb-content').innerHTML =
+    chip(sysErrs,  'syslog error'  +(sysErrs !==1?'s':''), 'err') +
+    chip(sysWarns, 'syslog warning'+(sysWarns!==1?'s':''), 'warn') +
+    chip(clErrs,   'cluster error' +(clErrs  !==1?'s':''), 'err') +
+    chip(clWarns,  'cluster warning'+(clWarns!==1?'s':''), 'warn');
 }
 
 function _humanizeClusterMsg(msg) {
@@ -4517,33 +4542,61 @@ function _renderClusterTable() {
   const rows = _clusterFilteredRows();
   const countEl = document.getElementById('logs-cl-count');
   if (countEl) countEl.textContent = rows.length + ' entries';
+  _logsUpdateErrorBanner();
   if (!rows.length) {
     document.getElementById('logs-cluster-body').innerHTML = '<div class="empty">No cluster events match the current filter.</div>';
     return;
   }
   let html = `<div class="table-wrap"><table class="data-table" style="table-layout:fixed">
-    <colgroup><col style="width:145px"><col style="width:90px"><col style="width:110px"><col style="width:72px"><col><col style="width:32px"></colgroup>
-    <thead><tr><th>Time</th><th>Node</th><th>Service</th><th>Severity</th><th>Message</th><th></th></tr></thead><tbody>`;
+    <colgroup><col style="width:145px"><col style="width:90px"><col style="width:110px"><col style="width:72px"><col><col style="width:60px"><col style="width:32px"></colgroup>
+    <thead><tr><th>Time</th><th>Node</th><th>Service</th><th>Severity</th><th>Message</th><th>Duration</th><th></th></tr></thead><tbody>`;
   rows.forEach((e,i) => {
     const sev = _CL_PRI[e.pri]||'info';
     const ts = e.time ? new Date(e.time*1000).toLocaleString() : '';
     const rowId = `cl-${i}`;
-    const hasDetail = sev==='err'||sev==='warn';
     const raw = e.msg || '';
     const human = _humanizeClusterMsg(raw);
     const dispTag = _CLUSTER_TAGS[e.tag||''] || e.tag || '';
     const msgCell = human
       ? `<span title="${escHtml(human.raw)}">${escHtml(human.text)}</span>${human.sub?`<span style="color:var(--muted);font-size:11px;margin-left:6px">${escHtml(human.sub)}</span>`:''}`
       : escHtml(raw);
+
+    // Extract UPID for duration calculation and task log drill-down
+    const upidM = raw.match(/UPID:\S+/);
+    const upidStr = upidM ? upidM[0].replace(/:$/, '') : null;
+    const parsed = upidStr ? _parseUpid(upidStr) : null;
+
+    // Duration only on "end task" lines where we know both start (from UPID) and end (e.time)
+    let durStr = '';
+    if (parsed && e.time && /^end task /.test(raw)) {
+      const sec = e.time - parsed.starttime;
+      if (sec >= 0) durStr = sec < 60 ? `${sec}s` : fmtUptime(sec);
+    }
+
+    const hasTaskLog = !!(parsed && upidStr);
+    const hasErrDetail = sev==='err' || sev==='warn';
+
+    let expandBtn = '';
+    let detailRow = '';
+    if (hasTaskLog) {
+      expandBtn = `<button class="log-expand" id="logx-${escHtml(rowId)}" onclick="_logsLoadTaskLog('${escHtml(parsed.node)}','${escHtml(upidStr)}','${escHtml(rowId)}')">&#x25B6;</button>`;
+      detailRow = `<tr id="logd-${escHtml(rowId)}" style="display:none"><td colspan="7" style="padding:0 0 8px 20px">
+        <div id="logdc-${escHtml(rowId)}" class="log-detail"><div class="empty" style="padding:8px">Loading log&#x2026;</div></div>
+      </td></tr>`;
+    } else if (hasErrDetail) {
+      expandBtn = `<button class="log-expand" id="logx-${escHtml(rowId)}" onclick="_logsExpandRow('${escHtml(rowId)}')">&#x25B6;</button>`;
+      detailRow = `<tr id="logd-${escHtml(rowId)}" style="display:none"><td colspan="7" style="padding:0 0 8px 20px">${_logDetailHtml(raw,rowId)}</td></tr>`;
+    }
+
     html += `<tr class="${sev==='err'?'task-row-err':sev==='warn'?'task-row-run':''}">
       <td class="log-time" style="font-size:11px">${escHtml(ts)}</td>
       <td style="color:var(--muted);font-size:12px">${escHtml(e.node||'')}</td>
       <td style="color:var(--muted);font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${escHtml(e.tag||'')}">${escHtml(dispTag)}</td>
       <td><span class="log-sev ${sev}">${sev==='err'?'ERROR':sev==='warn'?'WARN':'INFO'}</span></td>
       <td class="log-msg ${sev}" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${msgCell}</td>
-      <td style="text-align:center">${hasDetail?`<button class="log-expand" id="logx-${escHtml(rowId)}" onclick="_logsExpandRow('${escHtml(rowId)}')">&#x25B6;</button>`:''}</td>
-    </tr>`;
-    if (hasDetail) html += `<tr id="logd-${escHtml(rowId)}" style="display:none"><td colspan="6" style="padding:0 0 8px 20px">${_logDetailHtml(raw,rowId)}</td></tr>`;
+      <td style="font-size:11px;color:var(--muted)">${escHtml(durStr)}</td>
+      <td style="text-align:center">${expandBtn}</td>
+    </tr>${detailRow}`;
   });
   html += '</tbody></table></div>';
   document.getElementById('logs-cluster-body').innerHTML = html;
@@ -4564,51 +4617,75 @@ async function _loadClusterEvents() {
 }
 
 async function _loadVmOps() {
+  window._logsVmOpsLoaded = true;
   const input = (document.getElementById('logs-vmid')?.value||'').trim();
-  if (!input) return;
-  document.getElementById('logs-vmops-body').innerHTML = '<div class="empty">Searching&#x2026;</div>';
+  const isRecent = !input;
+  document.getElementById('logs-vmops-body').innerHTML = `<div class="empty">${isRecent?'Loading recent operations&#x2026;':'Searching&#x2026;'}</div>`;
   const conn = _logsGetConn();
   const get = conn ? (p=>connGet(conn,p)) : pveGet;
   const nodes = conn ? (conn.nodes||[]) : PVE.nodes;
-  let vmid = /^\d+$/.test(input) ? input : null;
-  if (!vmid) {
-    const all = typeof allVMs==='function' ? allVMs() : [];
-    const m = all.find(v=>(v.name||'').toLowerCase()===input.toLowerCase());
-    if (m) vmid = String(m.vmid);
-  }
   const tasks = [];
-  await Promise.all(nodes.map(async n => {
-    try {
-      const url = `/api2/json/nodes/${n.node}/tasks?limit=200${vmid?`&vmid=${vmid}`:''}`;
-      const d = await get(url);
-      (d.data||[]).forEach(t => tasks.push({...t, _node:n.node}));
-    } catch {}
-  }));
-  const filtered = vmid ? tasks : tasks.filter(t=>(t.id||'').toLowerCase().includes(input.toLowerCase()));
-  filtered.sort((a,b)=>(b.starttime||0)-(a.starttime||0));
-  if (!filtered.length) {
-    document.getElementById('logs-vmops-body').innerHTML = `<div class="empty">No tasks found for "${escHtml(input)}".</div>`;
+
+  if (isRecent) {
+    await Promise.all(nodes.map(async n => {
+      try {
+        const d = await get(`/api2/json/nodes/${n.node}/tasks?limit=50`);
+        (d.data||[]).forEach(t => tasks.push({...t, _node:n.node}));
+      } catch {}
+    }));
+  } else {
+    let vmid = /^\d+$/.test(input) ? input : null;
+    if (!vmid) {
+      const all = typeof allVMs==='function' ? allVMs() : [];
+      const m = all.find(v=>(v.name||'').toLowerCase()===input.toLowerCase());
+      if (m) vmid = String(m.vmid);
+    }
+    await Promise.all(nodes.map(async n => {
+      try {
+        const url = `/api2/json/nodes/${n.node}/tasks?limit=200${vmid?`&vmid=${vmid}`:''}`;
+        const d = await get(url);
+        (d.data||[]).forEach(t => tasks.push({...t, _node:n.node}));
+      } catch {}
+    }));
+    if (!vmid) tasks.splice(0, tasks.length, ...tasks.filter(t=>(t.id||'').toLowerCase().includes(input.toLowerCase())));
+  }
+
+  tasks.sort((a,b)=>(b.starttime||0)-(a.starttime||0));
+  const display = isRecent ? tasks.slice(0,100) : tasks;
+
+  if (!display.length) {
+    document.getElementById('logs-vmops-body').innerHTML = isRecent
+      ? '<div class="empty">No recent tasks found.</div>'
+      : `<div class="empty">No tasks found for "${escHtml(input)}".</div>`;
     return;
   }
-  let html = `<div class="table-wrap"><table class="data-table" style="table-layout:fixed">
-    <colgroup><col style="width:145px"><col style="width:90px"><col style="width:110px"><col style="width:80px"><col style="width:72px"><col style="width:32px"></colgroup>
-    <thead><tr><th>Started</th><th>Node</th><th>Operation</th><th>VM/CT ID</th><th>Status</th><th></th></tr></thead><tbody>`;
-  filtered.forEach((t,i) => {
+
+  const heading = isRecent
+    ? `<p style="font-size:12px;color:var(--muted);margin-bottom:8px">Recent operations across all nodes — use the search box above to filter by VM/CT.</p>`
+    : '';
+  let html = heading + `<div class="table-wrap"><table class="data-table" style="table-layout:fixed">
+    <colgroup><col style="width:145px"><col style="width:90px"><col style="width:130px"><col style="width:80px"><col style="width:72px"><col style="width:60px"><col style="width:32px"></colgroup>
+    <thead><tr><th>Started</th><th>Node</th><th>Operation</th><th>VM/CT ID</th><th>Status</th><th>Duration</th><th></th></tr></thead><tbody>`;
+  display.forEach((t,i) => {
     const ts = t.starttime ? new Date(t.starttime*1000).toLocaleString() : '';
     const running = !t.endtime;
     const ok = running || t.status==='OK' || t.status==='';
     const sevCls = running?'warn':ok?'ok':'err';
     const statusText = running?'Running':(t.status==='OK'?'OK':(t.status||'Failed'));
+    const durSec = t.endtime && t.starttime ? t.endtime - t.starttime : null;
+    const durStr = running ? '' : (durSec !== null ? (durSec < 60 ? `${durSec}s` : fmtUptime(durSec)) : '—');
+    const opLabel = _TASK_TYPES[t.type] || t.type || '';
     const rowId = `vo-${i}`;
     html += `<tr class="${!ok&&!running?'task-row-err':running?'task-row-run':''}">
       <td class="log-time" style="font-size:11px">${escHtml(ts)}</td>
       <td style="color:var(--muted);font-size:12px">${escHtml(t._node||'')}</td>
-      <td style="font-size:12px">${escHtml(t.type||'')}</td>
+      <td style="font-size:12px" title="${escHtml(t.type||'')}">${escHtml(opLabel)}</td>
       <td style="color:var(--muted);font-size:12px">${escHtml(String(t.id||t.vmid||''))}</td>
       <td><span class="log-sev ${sevCls}">${escHtml(statusText)}</span></td>
+      <td style="font-size:11px;color:var(--muted)">${escHtml(durStr)}</td>
       <td style="text-align:center"><button class="log-expand" id="logx-${escHtml(rowId)}" onclick="_logsLoadTaskLog('${escHtml(t._node)}','${escHtml(t.upid||'')}','${escHtml(rowId)}')">&#x25B6;</button></td>
     </tr>
-    <tr id="logd-${escHtml(rowId)}" style="display:none"><td colspan="6" style="padding:0 0 8px 20px">
+    <tr id="logd-${escHtml(rowId)}" style="display:none"><td colspan="7" style="padding:0 0 8px 20px">
       <div id="logdc-${escHtml(rowId)}" class="log-detail"><div class="empty" style="padding:8px">Loading log&#x2026;</div></div>
     </td></tr>`;
   });
