@@ -28,7 +28,9 @@ Ideas and planned improvements, compiled from all previous sessions. Items are r
 
 - [x] **Alert thresholds UI** — backend already stores `pve-alert-thresholds` (consumed by the Overview health banner); configure warning / critical thresholds for CPU, RAM, disk, certs, vmDown, and taskError from the ⚙ Settings modal
 - [ ] **Per-VM performance alerts** — alert when a specific VM's CPU / RAM exceeds a threshold; current alerts are cluster-wide only
-- [ ] **Capacity forecasting** — "time remaining" until CPU / RAM / disk exhausted, projected from RRD linear trend; add to DRS view and Overview
+- [x] **Anomaly badges on VM rows** — small ↑ badge on the VM name when current CPU/RAM is significantly above that VM's own rolling average from the sparkline history; tooltip shows the spike detail (inspired by Nutanix Prism anomaly detection)
+- [ ] **VM efficiency buckets** — classify every VM into Bully (resource hog), Constrained (hitting ceiling), Over-provisioned (large allocation, low usage), or Inactive (off 30+ days); show as a colour-coded summary card on Overview or DRS view (inspired by Nutanix Prism right-sizing)
+- [ ] **Capacity runway** — "Node X: ~14 days until RAM full at current growth rate"; per-node and per-storage projected days-to-full from RRD linear trend; surface on Overview stat cards and DRS view
 - [x] **VM metrics sparklines** — per-VM CPU and RAM mini-graphs in the VM table rows, following the same pattern as node sidebar sparklines
 
 ---
@@ -63,6 +65,7 @@ Ideas and planned improvements, compiled from all previous sessions. Items are r
 
 ## Quality-of-life
 
+- [ ] **Right-click context menu on VM rows** — right-click any VM/CT row to get a fast context menu (start/stop/migrate/snapshot/console) instead of hunting for the action buttons; inspired by Windows Admin Center VM list
 - [ ] **Keyboard shortcuts cheatsheet** — pressing `?` opens a modal listing all available shortcuts (command palette, refresh, view navigation, etc.)
 - [ ] **Density toggle** — compact / comfortable row spacing switch for VM and CT tables
 - [ ] **Stat card trend badges** — up / down arrows on Overview stat cards showing change since last refresh

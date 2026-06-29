@@ -6125,7 +6125,7 @@ function vmRow(x,showType=false){
   return `<tr class="clickable-row" onclick="openDetail(${JSON.stringify(x).replace(/"/g,'&quot;')})">
     <td onclick="event.stopPropagation()" style="width:32px;padding-left:8px"><input type="checkbox" class="bulk-chk" data-key="${bulkKey}" onchange="_bulkToggle(this.dataset.key)" ${_bulkSelected.has(bulkKey)?'checked':''} style="width:auto;margin:0;cursor:pointer"></td>
     <td style="color:var(--muted);font-size:12px;cursor:pointer" data-copy="${x.vmid}" title="Click to copy VMID">${_hl(x.vmid,_activeHlQ)}</td>
-    <td>${typeChip}<strong>${_hl(x.name||'(unnamed)',_activeHlQ)}</strong><span class="vm-snap-badge" data-snapkey="${snapKey}" style="display:none;font-size:10px;margin-left:5px"></span>${ipLine}${connLabel}</td>
+    <td>${typeChip}<strong>${_hl(x.name||'(unnamed)',_activeHlQ)}</strong>${_vmAnomalyBadge(ipKey)}<span class="vm-snap-badge" data-snapkey="${snapKey}" style="display:none;font-size:10px;margin-left:5px"></span>${ipLine}${connLabel}</td>
     ${showType?`<td style="color:var(--muted)">${_hl(x.node,_activeHlQ)}</td>`:''}
     <td style="color:var(--muted)">${_hl(x.node,_activeHlQ)}</td>
     <td>${statusBadge(x.status)}</td>
@@ -6235,6 +6235,23 @@ function _vmSparkSVG(key, w, h) {
     return `<polyline points="${pts}" fill="none" stroke="${color}" stroke-width="1.2" stroke-linejoin="round" stroke-linecap="round"/>`;
   };
   return `<svg width="${w}" height="${h}" style="display:block;margin-top:3px;overflow:visible" title="CPU (orange) / RAM (blue) — last ${hist.length} polls">${line('cpu','var(--accent)')}${line('mem','var(--blue)')}</svg>`;
+}
+
+function _vmAnomalyBadge(key) {
+  const hist = _vmHistory[key];
+  if (!hist || hist.length < 6) return ''; // need enough history before flagging
+  const prior = hist.slice(0, -1);
+  const cur   = hist[hist.length - 1];
+  const avg   = prop => prior.reduce((s, p) => s + p[prop], 0) / prior.length;
+  const avgCpu = avg('cpu');
+  const avgMem = avg('mem');
+  const msgs = [];
+  if (cur.cpu > avgCpu * 1.5 && (cur.cpu - avgCpu) > 0.15)
+    msgs.push(`CPU ${(cur.cpu*100).toFixed(0)}% vs avg ${(avgCpu*100).toFixed(0)}%`);
+  if (cur.mem > avgMem * 1.3 && (cur.mem - avgMem) > 0.20)
+    msgs.push(`RAM ${(cur.mem*100).toFixed(0)}% vs avg ${(avgMem*100).toFixed(0)}%`);
+  if (!msgs.length) return '';
+  return `<span style="display:inline-block;background:var(--yellow);color:var(--bg);border-radius:3px;font-size:10px;font-weight:700;padding:1px 5px;margin-left:5px;vertical-align:middle;cursor:default" title="Spike detected: ${escHtml(msgs.join(' · '))}">↑</span>`;
 }
 
 function _bulkToggle(key) {
