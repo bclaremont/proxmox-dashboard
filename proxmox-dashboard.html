@@ -7350,6 +7350,7 @@ function renderStorage(overrideData) {
       </td>
       <td onclick="event.stopPropagation()" style="white-space:nowrap">
         <div class="actions-row">
+          <button class="btn small" onclick="openStoreBrowser('${escHtml(s.node)}','${escHtml(s.storage)}','${connId}')" title="Browse files">&#x1F4C2; Browse</button>
           <button class="btn small" onclick="openEditStorageModal('${escHtml(s.storage)}','${connId}')" title="Edit">&#x270E;</button>
           <button class="btn small ${disabled?'success':'warning'}" onclick="toggleStorageDisable('${escHtml(s.storage)}','${connId}',${!!disabled})" title="${disabled?'Enable':'Disable'}">${disabled?'Enable':'Disable'}</button>
           <button class="btn small danger" onclick="confirmDeleteStorage('${escHtml(s.storage)}','${connId}')" title="Delete">Delete</button>
@@ -7447,6 +7448,156 @@ async function _storExpand(node, storage, btn) {
     detailEl.dataset.loaded = '1';
   } catch(e) {
     if (innerDiv) innerDiv.innerHTML = `<span style="color:var(--muted);font-size:12px">Could not load: ${escHtml(e.message)}</span>`;
+  }
+}
+
+// ── DATASTORE BROWSER ────────────────────────────────────
+
+let _storeBrowserCtx = null; // { node, storage, connId, items[], filter }
+
+const _SB_LABELS = {
+  images:  { label:'Disk Image',   color:'var(--accent)' },
+  rootdir: { label:'CT Disk',      color:'var(--accent)' },
+  iso:     { label:'ISO',          color:'var(--blue)'   },
+  vztmpl:  { label:'CT Template',  color:'var(--teal)'   },
+  backup:  { label:'Backup',       color:'var(--purple)' },
+  import:  { label:'Import',       color:'var(--muted)'  },
+  snippets:{ label:'Snippet',      color:'var(--muted)'  },
+};
+
+async function openStoreBrowser(node, storage, connId) {
+  _storeBrowserCtx = { node, storage, connId: connId||'', items: [], filter: 'all' };
+  document.getElementById('modal-title').textContent = `Browse: ${storage} on ${node}`;
+  document.getElementById('modal-body').innerHTML = '<div class="empty">Loading&#x2026;</div>';
+  document.getElementById('modal').classList.add('modal-wide');
+  document.getElementById('modal-bg').classList.add('open');
+
+  const conn = connId ? resolveConn(connId) : null;
+  const get  = conn ? (p => connGet(conn, p)) : pveGet;
+  try {
+    const d = await get(`/api2/json/nodes/${node}/storage/${storage}/content`);
+    _storeBrowserCtx.items = d.data || [];
+    _renderStoreBrowser();
+  } catch(e) {
+    document.getElementById('modal-body').innerHTML = `<p style="color:var(--red);padding:8px">${escHtml(e.message)}</p>`;
+  }
+}
+
+function _sbIsOrphan(item) {
+  if (item.content !== 'images' && item.content !== 'rootdir') return false;
+  if (!item.vmid) return true;
+  const vmid = String(item.vmid);
+  return !allVMs().concat(allCTs()).some(v => String(v.vmid) === vmid);
+}
+
+function _renderStoreBrowser() {
+  if (!_storeBrowserCtx) return;
+  const { node, storage, connId, items, filter } = _storeBrowserCtx;
+
+  // Count by type
+  const counts = {};
+  items.forEach(i => { const t = i.content||'other'; counts[t] = (counts[t]||0)+1; });
+
+  // Filter
+  const visible = filter === 'all' ? [...items] : items.filter(i => i.content === filter);
+  visible.sort((a, b) => {
+    const ao = _sbIsOrphan(a) ? 1 : 0, bo = _sbIsOrphan(b) ? 1 : 0;
+    if (ao !== bo) return bo - ao; // orphans first
+    return (b.size||0) - (a.size||0);
+  });
+
+  const orphanCount = visible.filter(_sbIsOrphan).length;
+
+  // Filter chips
+  const allTypes = ['all', ...Object.keys(counts)];
+  const chips = allTypes.map(t => {
+    const active = t === filter;
+    const meta   = _SB_LABELS[t];
+    const label  = t === 'all' ? `All (${items.length})` : `${meta ? meta.label : t} (${counts[t]})`;
+    return `<button class="btn small${active?' primary':''}" onclick="_storeBrowserFilter('${escHtml(t)}')" style="font-size:11px">${escHtml(label)}</button>`;
+  }).join('');
+
+  const orphanBanner = orphanCount
+    ? `<div style="margin:10px 0;padding:8px 12px;background:#f59e0b22;border:1px solid #f59e0b55;border-radius:var(--radius);font-size:12px;color:var(--yellow)">⚠ ${orphanCount} orphaned disk image${orphanCount!==1?'s':''} — the associated VM/CT no longer exists. Safe to delete if no longer needed.</div>`
+    : '';
+
+  if (!visible.length) {
+    document.getElementById('modal-body').innerHTML =
+      `<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px">${chips}</div><div class="empty">No items in this category.</div>`;
+    return;
+  }
+
+  // Known vmids for orphan check
+  const knownVmids = new Set(allVMs().concat(allCTs()).map(v => String(v.vmid)));
+
+  let rows = '';
+  visible.forEach((item, i) => {
+    const orphan  = _sbIsOrphan(item);
+    const meta    = _SB_LABELS[item.content] || { label: item.content||'?', color:'var(--muted)' };
+    const volid   = item.volid || '';
+    const dispName = volid.includes('/') ? volid.split('/').pop() : volid.split(':').pop();
+    const ctime    = item.ctime ? new Date(Number(item.ctime)*1000).toLocaleDateString() : '—';
+    const canDel   = ['images','rootdir','iso','vztmpl','backup','snippets'].includes(item.content);
+
+    let vmLabel = '—';
+    if (item.vmid) {
+      const vmid = String(item.vmid);
+      const vm = allVMs().concat(allCTs()).find(v => String(v.vmid) === vmid);
+      vmLabel = vm ? `${escHtml(vm.name||vmid)} (${vmid})` : `${vmid} ⚠`;
+    }
+
+    const orphanBadge = orphan
+      ? `<span style="background:var(--yellow);color:var(--bg);border-radius:3px;font-size:10px;font-weight:700;padding:1px 4px;margin-left:6px;font-family:sans-serif">orphaned</span>`
+      : '';
+
+    rows += `<tr class="${orphan?'task-row-run':''}">
+      <td style="font-family:monospace;font-size:11px;word-break:break-all;max-width:200px" title="${escHtml(volid)}">${escHtml(dispName)}${orphanBadge}</td>
+      <td><span style="font-size:11px;padding:2px 6px;border-radius:3px;background:${meta.color}22;color:${meta.color};border:1px solid ${meta.color}44;white-space:nowrap">${escHtml(meta.label)}</span></td>
+      <td style="font-size:12px;color:var(--muted)">${escHtml(item.format||'—')}</td>
+      <td style="font-size:12px">${fmtBytes(item.size||0)}</td>
+      <td style="font-size:12px;color:${orphan?'var(--yellow)':'var(--muted)'};max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escHtml(vmLabel)}">${vmLabel}</td>
+      <td style="font-size:12px;color:var(--muted);white-space:nowrap">${escHtml(ctime)}</td>
+      <td onclick="event.stopPropagation()" style="white-space:nowrap">
+        ${canDel ? `<button class="btn small danger" onclick="_sbDelete('${escHtml(volid)}')">Delete</button>` : ''}
+      </td>
+    </tr>`;
+  });
+
+  const totalSize = visible.reduce((s, i) => s + (i.size||0), 0);
+
+  document.getElementById('modal-body').innerHTML =
+    `<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px">${chips}</div>
+     ${orphanBanner}
+     <div style="font-size:12px;color:var(--muted);margin-bottom:8px">${visible.length} item${visible.length!==1?'s':''} · ${fmtBytes(totalSize)} total</div>
+     <div class="table-wrap"><table class="data-table" style="table-layout:fixed;width:100%">
+       <colgroup><col><col style="width:90px"><col style="width:60px"><col style="width:75px"><col style="width:140px"><col style="width:85px"><col style="width:66px"></colgroup>
+       <thead><tr><th>Name</th><th>Type</th><th>Format</th><th>Size</th><th>VM / CT</th><th>Created</th><th></th></tr></thead>
+       <tbody>${rows}</tbody>
+     </table></div>`;
+}
+
+function _storeBrowserFilter(f) {
+  if (!_storeBrowserCtx) return;
+  _storeBrowserCtx.filter = f;
+  _renderStoreBrowser();
+}
+
+async function _sbDelete(volid) {
+  if (!_storeBrowserCtx) return;
+  const { node, connId } = _storeBrowserCtx;
+  const dispName = volid.includes('/') ? volid.split('/').pop() : volid.split(':').pop();
+  if (!confirm(`Delete "${dispName}"?\n\nThis cannot be undone.`)) return;
+  const conn = connId ? resolveConn(connId) : null;
+  const storage = volid.split(':')[0];
+  const path = `/api2/json/nodes/${node}/storage/${storage}/content/${encodeURIComponent(volid)}`;
+  try {
+    if (conn) await connDelete(conn, path);
+    else      await pveDelete(path);
+    toast(`Deleted ${dispName}`, 'success');
+    _storeBrowserCtx.items = _storeBrowserCtx.items.filter(i => i.volid !== volid);
+    _renderStoreBrowser();
+  } catch(e) {
+    toast('Delete failed: ' + e.message, 'error');
   }
 }
 

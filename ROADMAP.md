@@ -43,7 +43,7 @@ Ideas and planned improvements, compiled from all previous sessions. Items are r
 ## Storage
 
 - [ ] **Storage DRS** — auto-balance VMs across datastores by capacity / I/O; build on the existing DRS engine, add storage dimension
-- [ ] **Datastore browser** — browse, download, and delete files on a storage pool via `/nodes/{node}/storage/{storage}/content`; extends the existing expand panel into a full file manager for orphaned disk images and ISOs
+- [x] **Datastore browser** — browse, download, and delete files on a storage pool via `/nodes/{node}/storage/{storage}/content`; 📂 Browse button on each storage row opens a modal with type filter chips, size totals, orphaned disk image detection, and per-item delete
 - [ ] **Consolidated snapshot manager** — single view of all snapshots across every VM and node, sortable by age and size; old snapshots are a common storage drain that is invisible in the per-VM view
 - [x] **Storage detail: mount points** — shows underlying path / VG / pool / server for each storage type
 - [x] **Storage detail: VM/CT usage** — expand panel shows which VMs and containers have disks or backups on each storage, with size per VM
