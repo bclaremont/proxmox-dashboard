@@ -18,9 +18,13 @@ Ideas and planned improvements, compiled from all previous sessions. Items are r
 ## VM & Container operations
 
 - [x] **Bulk VM/CT operations** — checkbox-select multiple VMs / containers and perform start / stop / snapshot in a single action; table infrastructure is already in place
-- [ ] **Maintenance Mode drain** — one-click "evacuate all VMs off this node" before maintenance; iterate VMs on node and migrate each via API
+- [ ] **Maintenance Mode drain** — one-click "evacuate all VMs off this node" before maintenance; iterate VMs on node and migrate each via API; extend with a guided checklist (migrate → verify HA → update → reboot → reinstate)
 - [x] **Move Disk** — move one or more VM/CT disks to a different storage from the VM row (⇄ button); supports multi-disk selection, running-CT guard, post-move fill warning
 - [x] **CT template loading fix** — CT creation wizard now scopes templates and default storage to the target node
+- [ ] **VM grouping (application stacks)** — tag VMs as part of a named group (e.g. "GitLab" = 3 VMs) and start / stop / snapshot the entire group as a unit; stored in PVE resource pools or tag convention
+- [ ] **Resource pools** — surface PVE resource pools (`/pools`) in the dashboard; show which VMs belong to each pool and their shared CPU/RAM ceiling; allow moving VMs between pools
+- [ ] **VM notes / annotations** — read and write the PVE description field (`/nodes/{node}/qemu/{vmid}/config → description`) inline from the VM detail panel; useful for documenting purpose, owner, maintenance windows
+- [ ] **Scheduled tasks calendar** — unified view of all scheduled backups, snapshot jobs, and vzdump schedules across nodes; show as a calendar or timeline so clashing windows are obvious
 
 ---
 
@@ -29,8 +33,9 @@ Ideas and planned improvements, compiled from all previous sessions. Items are r
 - [x] **Alert thresholds UI** — backend already stores `pve-alert-thresholds` (consumed by the Overview health banner); configure warning / critical thresholds for CPU, RAM, disk, certs, vmDown, and taskError from the ⚙ Settings modal
 - [ ] **Per-VM performance alerts** — alert when a specific VM's CPU / RAM exceeds a threshold; current alerts are cluster-wide only
 - [x] **Anomaly badges on VM rows** — small ↑ badge on the VM name when current CPU/RAM is significantly above that VM's own rolling average from the sparkline history; tooltip shows the spike detail (inspired by Nutanix Prism anomaly detection)
-- [ ] **VM efficiency buckets** — classify every VM into Bully (resource hog), Constrained (hitting ceiling), Over-provisioned (large allocation, low usage), or Inactive (off 30+ days); show as a colour-coded summary card on Overview or DRS view (inspired by Nutanix Prism right-sizing)
+- [ ] **VM efficiency buckets** — classify every VM into Bully (resource hog), Constrained (hitting ceiling), Over-provisioned (large allocation, low usage), or Inactive (off 30+ days); show as a colour-coded summary card on Overview or DRS view
 - [ ] **Capacity runway** — "Node X: ~14 days until RAM full at current growth rate"; per-node and per-storage projected days-to-full from RRD linear trend; surface on Overview stat cards and DRS view
+- [ ] **"VM last seen online" tracker** — for stopped VMs, show when they last ran using task history; surface as a column or tooltip in the VM table so long-idle VMs are visible
 - [x] **VM metrics sparklines** — per-VM CPU and RAM mini-graphs in the VM table rows, following the same pattern as node sidebar sparklines
 
 ---
@@ -38,6 +43,8 @@ Ideas and planned improvements, compiled from all previous sessions. Items are r
 ## Storage
 
 - [ ] **Storage DRS** — auto-balance VMs across datastores by capacity / I/O; build on the existing DRS engine, add storage dimension
+- [ ] **Datastore browser** — browse, download, and delete files on a storage pool via `/nodes/{node}/storage/{storage}/content`; extends the existing expand panel into a full file manager for orphaned disk images and ISOs
+- [ ] **Consolidated snapshot manager** — single view of all snapshots across every VM and node, sortable by age and size; old snapshots are a common storage drain that is invisible in the per-VM view
 - [x] **Storage detail: mount points** — shows underlying path / VG / pool / server for each storage type
 - [x] **Storage detail: VM/CT usage** — expand panel shows which VMs and containers have disks or backups on each storage, with size per VM
 - [x] **Thin provisioning indicators** — THIN/THICK badges, overcommit warning, committed vs used cards per storage pool
@@ -65,7 +72,12 @@ Ideas and planned improvements, compiled from all previous sessions. Items are r
 
 ## Quality-of-life
 
-- [ ] **Right-click context menu on VM rows** — right-click any VM/CT row to get a fast context menu (start/stop/migrate/snapshot/console) instead of hunting for the action buttons; inspired by Windows Admin Center VM list
+- [ ] **Quick filter chips above VM table** — one-click pills (Running / Stopped / Error / High CPU / Has snapshots) that instantly filter the VM list without typing; zero extra API calls
+- [ ] **Heatmap view** — colour-coded tile grid of all VMs by chosen metric (CPU, RAM, uptime); each VM is a tile, colour ranges green→red; better than a table for spotting outliers across 50+ VMs
+- [ ] **Snapshot timeline** — horizontal visual timeline per VM showing when snapshots were taken and how old/large they are; makes snapshot age obvious at a glance
+- [ ] **Node update tracker** — compare PVE version across all nodes and flag nodes running behind; show pending package updates from `/nodes/{node}/apt/updates`
+- [ ] **Custom columns** — let users show/hide and reorder columns in the VM/CT table (e.g. hide Disk, add IP, add last-backup age)
+- [ ] **Right-click context menu on VM rows** — right-click any VM/CT row to get a fast context menu (start/stop/migrate/snapshot/console) instead of hunting for the action buttons
 - [ ] **Keyboard shortcuts cheatsheet** — pressing `?` opens a modal listing all available shortcuts (command palette, refresh, view navigation, etc.)
 - [ ] **Density toggle** — compact / comfortable row spacing switch for VM and CT tables
 - [ ] **Stat card trend badges** — up / down arrows on Overview stat cards showing change since last refresh
