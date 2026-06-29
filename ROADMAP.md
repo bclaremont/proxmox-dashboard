@@ -44,7 +44,7 @@ Ideas and planned improvements, compiled from all previous sessions. Items are r
 
 - [ ] **Storage DRS** — auto-balance VMs across datastores by capacity / I/O; build on the existing DRS engine, add storage dimension
 - [x] **Datastore browser** — browse, download, and delete files on a storage pool via `/nodes/{node}/storage/{storage}/content`; 📂 Browse button on each storage row opens a modal with type filter chips, size totals, orphaned disk image detection, and per-item delete
-- [ ] **Consolidated snapshot manager** — single view of all snapshots across every VM and node, sortable by age and size; old snapshots are a common storage drain that is invisible in the per-VM view
+- [x] **Consolidated snapshot manager** — dedicated Snapshots view; fetches all snapshots across every VM and CT in parallel; sortable by age/name; summary cards (total, VMs with snaps, 30-day-old count, RAM-state count); per-row Rollback and Delete; old snapshots highlighted amber
 - [x] **Storage detail: mount points** — shows underlying path / VG / pool / server for each storage type
 - [x] **Storage detail: VM/CT usage** — expand panel shows which VMs and containers have disks or backups on each storage, with size per VM
 - [x] **Thin provisioning indicators** — THIN/THICK badges, overcommit warning, committed vs used cards per storage pool
@@ -72,7 +72,7 @@ Ideas and planned improvements, compiled from all previous sessions. Items are r
 
 ## Quality-of-life
 
-- [ ] **Quick filter chips above VM table** — one-click pills (Running / Stopped / Error / High CPU / Has snapshots) that instantly filter the VM list without typing; zero extra API calls
+- [x] **Quick filter chips above VM table** — one-click pills (Running / Stopped / High CPU / Anomaly) that instantly filter the VM and CT lists with live counts; zero extra API calls
 - [ ] **Heatmap view** — colour-coded tile grid of all VMs by chosen metric (CPU, RAM, uptime); each VM is a tile, colour ranges green→red; better than a table for spotting outliers across 50+ VMs
 - [ ] **Snapshot timeline** — horizontal visual timeline per VM showing when snapshots were taken and how old/large they are; makes snapshot age obvious at a glance
 - [ ] **Node update tracker** — compare PVE version across all nodes and flag nodes running behind; show pending package updates from `/nodes/{node}/apt/updates`

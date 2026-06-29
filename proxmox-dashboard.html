@@ -718,6 +718,10 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>
         Storage
       </div>
+      <div class="nav-item" data-view="snapshots" onclick="switchView('snapshots')" data-tip="Snapshots">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a10 10 0 1 0 10 10"/><path d="M12 6v6l4 2"/><path d="M16 2h6v6"/><path d="M22 2l-6 6"/></svg>
+        Snapshots
+      </div>
       <div class="nav-item" data-view="network" onclick="switchView('network')">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="16" y="16" width="6" height="6" rx="1"/><rect x="2" y="16" width="6" height="6" rx="1"/><rect x="9" y="2" width="6" height="6" rx="1"/><path d="M5 16v-4h14v4M12 12V8"/></svg>
         Network
@@ -1004,10 +1008,12 @@
             <button class="view-toggle-btn active" id="vms-view-table" onclick="setVMView('table')" title="Table view">≡</button>
             <button class="view-toggle-btn" id="vms-view-cards" onclick="setVMView('cards')" title="Card view">⊞</button>
           </div>
-          <div id="vms-status-pills" style="display:flex;gap:4px">
-            <button class="filter-pill active" id="vms-f-all"     onclick="_vmFilter('all')"    >All</button>
-            <button class="filter-pill"        id="vms-f-running" onclick="_vmFilter('running')" >● Running</button>
-            <button class="filter-pill"        id="vms-f-stopped" onclick="_vmFilter('stopped')" >○ Stopped</button>
+          <div id="vms-status-pills" style="display:flex;gap:4px;flex-wrap:wrap">
+            <button class="filter-pill active" id="vms-f-all"      onclick="_vmFilter('all')"      >All</button>
+            <button class="filter-pill"        id="vms-f-running"  onclick="_vmFilter('running')"  >● Running</button>
+            <button class="filter-pill"        id="vms-f-stopped"  onclick="_vmFilter('stopped')"  >○ Stopped</button>
+            <button class="filter-pill"        id="vms-f-high-cpu" onclick="_vmFilter('high-cpu')" >🔥 High CPU</button>
+            <button class="filter-pill"        id="vms-f-anomaly"  onclick="_vmFilter('anomaly')"  >↑ Anomaly</button>
           </div>
           <input id="vms-search" type="text" placeholder="Search…" style="width:160px;padding:5px 10px;font-size:13px;transition:width .25s ease" onfocus="this.style.width='240px'" onblur="this.style.width='160px'" oninput="_vmSearchQ=this.value;localStorage.setItem('pcc-vm-search',this.value);renderVMTable()">
           <div class="fpop" id="vms-fpop">
@@ -1045,10 +1051,12 @@
             <button class="view-toggle-btn active" id="cts-view-table" onclick="setCTView('table')" title="Table view">≡</button>
             <button class="view-toggle-btn" id="cts-view-cards" onclick="setCTView('cards')" title="Card view">⊞</button>
           </div>
-          <div id="cts-status-pills" style="display:flex;gap:4px">
-            <button class="filter-pill active" id="cts-f-all"     onclick="_ctFilter('all')"    >All</button>
-            <button class="filter-pill"        id="cts-f-running" onclick="_ctFilter('running')" >● Running</button>
-            <button class="filter-pill"        id="cts-f-stopped" onclick="_ctFilter('stopped')" >○ Stopped</button>
+          <div id="cts-status-pills" style="display:flex;gap:4px;flex-wrap:wrap">
+            <button class="filter-pill active" id="cts-f-all"      onclick="_ctFilter('all')"      >All</button>
+            <button class="filter-pill"        id="cts-f-running"  onclick="_ctFilter('running')"  >● Running</button>
+            <button class="filter-pill"        id="cts-f-stopped"  onclick="_ctFilter('stopped')"  >○ Stopped</button>
+            <button class="filter-pill"        id="cts-f-high-cpu" onclick="_ctFilter('high-cpu')" >🔥 High CPU</button>
+            <button class="filter-pill"        id="cts-f-anomaly"  onclick="_ctFilter('anomaly')"  >↑ Anomaly</button>
           </div>
           <input id="cts-search" type="text" placeholder="Search…" style="width:160px;padding:5px 10px;font-size:13px;transition:width .25s ease" onfocus="this.style.width='240px'" onblur="this.style.width='160px'" oninput="_ctSearchQ=this.value;localStorage.setItem('pcc-ct-search',this.value);renderCTTable()">
           <div class="fpop" id="cts-fpop">
@@ -1164,6 +1172,25 @@
           <tbody id="storage-body"></tbody>
         </table>
       </div>
+    </div>
+
+    <!-- SNAPSHOTS -->
+    <div id="view-snapshots" style="display:none">
+      <div class="section-header">
+        <span class="section-title">Snapshot Manager</span>
+        <div style="display:flex;gap:6px;align-items:center">
+          <select class="conn-sel" id="snaps-conn" style="width:140px;padding:5px 8px;font-size:13px" onchange="loadSnapshots()"><option value="">Primary</option></select>
+          <select id="snaps-sort" style="padding:5px 8px;font-size:13px;background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);color:var(--text)" onchange="_renderSnapshots()">
+            <option value="age-asc">Oldest first</option>
+            <option value="age-desc">Newest first</option>
+            <option value="vm">By VM name</option>
+          </select>
+          <button class="btn small" onclick="loadSnapshots()">↻ Refresh</button>
+          <span id="snaps-count" style="font-size:12px;color:var(--muted)"></span>
+        </div>
+      </div>
+      <div id="snaps-summary" style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:16px"></div>
+      <div id="snaps-body"><div class="empty">Loading…</div></div>
     </div>
 
     <!-- NETWORK -->
@@ -5489,7 +5516,7 @@ function switchView(view) {
   }
   const _viewTitles={connect:'Connect',connections:'Connections',worldmap:'World Map',savedview:'Saved View',overview:'Overview',vms:'Virtual Machines',containers:'Containers',nodes:'Nodes',tasks:'Tasks',syslog:'System Log',storage:'Storage',network:'Network',heatmap:'Heatmap',isolib:'ISO Library',contentlib:'Content Library',sdn:'SDN',capacity:'Capacity Planning',affinity:'Affinity Rules',drs:'DRS',hostprofiles:'Host Profiles',customspecs:'Custom Specs',schedules:'Schedules','pcc-admin':'Admin',datacenter:'Datacenter',pools:'Resource Pools',ceph:'Ceph',ha:'High Availability',firewall:'Firewall',backups:'Backups',users:'Users',webhooks:'Webhooks',certs:'Certificates',audit:'Audit Log',logs:'Log Viewer',reports:'Reports',clustergraphs:'Cluster Graphs',tags:'Tags',tfa:'2FA',subscriptions:'Subscriptions',updates:'Updates',pbs:'Backup Server',disks:'Disk Health',uptime:'Uptime Report'};
   document.title = 'CCC — ' + (_viewTitles[view] || view);
-  const views=['connect','connections','worldmap','savedview','overview','vms','containers','nodes','tasks','syslog','storage','network','heatmap','isolib','contentlib','sdn','capacity','affinity','drs','hostprofiles','customspecs','schedules','pcc-admin','datacenter','pools','ceph','ha','firewall','backups','users','webhooks','certs','audit','logs','reports','clustergraphs','tags','tfa','subscriptions','updates','pbs','disks','uptime'];
+  const views=['connect','connections','worldmap','savedview','overview','vms','containers','nodes','tasks','syslog','storage','snapshots','network','heatmap','isolib','contentlib','sdn','capacity','affinity','drs','hostprofiles','customspecs','schedules','pcc-admin','datacenter','pools','ceph','ha','firewall','backups','users','webhooks','certs','audit','logs','reports','clustergraphs','tags','tfa','subscriptions','updates','pbs','disks','uptime'];
   views.forEach(v=>{
     const el=document.getElementById('view-'+v);
     if(!el) return;
@@ -5531,6 +5558,7 @@ function switchView(view) {
     loadFirewall();
   }
   if(view==='backups') loadBackups();
+  if(view==='snapshots') loadSnapshots();
   if(view==='users') loadUsers();
   if(view==='certs') loadCerts();
   if(view==='audit') loadAudit();
@@ -5939,19 +5967,31 @@ function _renderGrouped(items, rowFn, colSpan) {
   return html;
 }
 
+const _VM_FILTER_IDS = ['all','running','stopped','high-cpu','anomaly'];
 function _vmFilter(f) {
   _vmStatusFilter = f;
-  ['all','running','stopped'].forEach(s => {
+  _VM_FILTER_IDS.forEach(s => {
     document.getElementById(`vms-f-${s}`)?.classList.toggle('active', s === f);
   });
   renderVMTable();
 }
 function _ctFilter(f) {
   _ctStatusFilter = f;
-  ['all','running','stopped'].forEach(s => {
+  _VM_FILTER_IDS.forEach(s => {
     document.getElementById(`cts-f-${s}`)?.classList.toggle('active', s === f);
   });
   renderCTTable();
+}
+function _applyVMFilter(x, filter) {
+  if (filter === 'all')      return true;
+  if (filter === 'running')  return x.status === 'running';
+  if (filter === 'stopped')  return x.status === 'stopped';
+  if (filter === 'high-cpu') return (x.cpu||0) > 0.8;
+  if (filter === 'anomaly') {
+    const key = `${x.connId||''}|${x.node}/${x.vmid}`;
+    return _vmAnomalyBadge(key) !== '';
+  }
+  return x.status === filter;
 }
 
 function renderVMTable(){
@@ -5964,17 +6004,21 @@ function renderVMTable(){
                      (extraConns.find(c=>c.id===connFilter)?.vms || []);
   const all  = baseList.filter(x => !x.template);
   const run  = all.filter(x => x.status === 'running').length;
-  const stop = all.filter(x => x.status !== 'running').length;
+  const stop = all.filter(x => x.status === 'stopped').length;
+  const hiCpu = all.filter(x => (x.cpu||0) > 0.8).length;
+  const anoms = all.filter(x => _vmAnomalyBadge(`${x.connId||''}|${x.node}/${x.vmid}`) !== '').length;
   // Update pill labels with counts
-  const fa = document.getElementById('vms-f-all');     if(fa) fa.textContent = `All (${all.length})`;
-  const fr = document.getElementById('vms-f-running'); if(fr) fr.textContent = `● Running (${run})`;
-  const fs = document.getElementById('vms-f-stopped'); if(fs) fs.textContent = `○ Stopped (${stop})`;
+  const fa = document.getElementById('vms-f-all');      if(fa) fa.textContent = `All (${all.length})`;
+  const fr = document.getElementById('vms-f-running');  if(fr) fr.textContent = `● Running (${run})`;
+  const fs = document.getElementById('vms-f-stopped');  if(fs) fs.textContent = `○ Stopped (${stop})`;
+  const fh = document.getElementById('vms-f-high-cpu'); if(fh) fh.textContent = `🔥 High CPU (${hiCpu})`;
+  const fan= document.getElementById('vms-f-anomaly');  if(fan) fan.textContent = `↑ Anomaly (${anoms})`;
 
   const _vmQ = _vmSearchQ.trim().toLowerCase();
   _activeHlQ = _vmQ;
   const sorted = _sortItems(
     all .filter(x => !tagF || parseTags(x.tags||'').includes(tagF))
-        .filter(x => _vmStatusFilter === 'all' || x.status === _vmStatusFilter)
+        .filter(x => _applyVMFilter(x, _vmStatusFilter))
         .filter(x => !_vmQ || String(x.vmid).includes(_vmQ) || (x.name||'').toLowerCase().includes(_vmQ) || (x.node||'').toLowerCase().includes(_vmQ)),
     vmSort.col, vmSort.dir);
   if (vmViewMode==='cards') {
@@ -6016,12 +6060,22 @@ function renderCTTable(){
   const baseList   = connFilter === '_all' ? allCTs() :
                      connFilter === ''     ? PVE.containers :
                      (extraConns.find(c=>c.id===connFilter)?.containers || []);
+  const _ctAll = baseList;
+  const ctRun   = _ctAll.filter(x => x.status === 'running').length;
+  const ctStop  = _ctAll.filter(x => x.status === 'stopped').length;
+  const ctHiCpu = _ctAll.filter(x => (x.cpu||0) > 0.8).length;
+  const ctAnoms = _ctAll.filter(x => _vmAnomalyBadge(`${x.connId||''}|${x.node}/${x.vmid}`) !== '').length;
+  const cfa = document.getElementById('cts-f-all');      if(cfa) cfa.textContent = `All (${_ctAll.length})`;
+  const cfr = document.getElementById('cts-f-running');  if(cfr) cfr.textContent = `● Running (${ctRun})`;
+  const cfs = document.getElementById('cts-f-stopped');  if(cfs) cfs.textContent = `○ Stopped (${ctStop})`;
+  const cfh = document.getElementById('cts-f-high-cpu'); if(cfh) cfh.textContent = `🔥 High CPU (${ctHiCpu})`;
+  const cfan= document.getElementById('cts-f-anomaly');  if(cfan) cfan.textContent = `↑ Anomaly (${ctAnoms})`;
   const _ctQ = _ctSearchQ.trim().toLowerCase();
   _activeHlQ = _ctQ;
   const sorted = _sortItems(
     baseList
       .filter(x => !tagF || parseTags(x.tags||'').includes(tagF))
-      .filter(x => _ctStatusFilter === 'all' || x.status === _ctStatusFilter)
+      .filter(x => _applyVMFilter(x, _ctStatusFilter))
       .filter(x => !_ctQ || String(x.vmid).includes(_ctQ) || (x.name||'').toLowerCase().includes(_ctQ) || (x.node||'').toLowerCase().includes(_ctQ)),
     ctSort.col, ctSort.dir);
   if (ctViewMode==='cards') {
@@ -7235,6 +7289,132 @@ async function loadStorageBackground() {
     });
     PVE.storage = deduped;
   } catch(e) {}
+}
+
+// ── SNAPSHOT MANAGER ──────────────────────────────────────
+
+let _snapsData = []; // flat list of {vm, node, connId, type, snap{name,description,snaptime,vmstate,parent}}
+
+async function loadSnapshots() {
+  populateConnSelectors();
+  const conn   = getViewConn('snaps-conn');
+  const get    = conn ? (p => connGet(conn, p)) : pveGet;
+  const nodes  = conn ? (conn.nodes||[]) : PVE.nodes;
+  const vms    = conn ? (conn.vms||[])   : (PVE.vms||[]);
+  const cts    = conn ? (conn.containers||[]) : (PVE.containers||[]);
+
+  document.getElementById('snaps-body').innerHTML = '<div class="empty">Fetching snapshots…</div>';
+  document.getElementById('snaps-count').textContent = '';
+
+  const results = [];
+  const items = [
+    ...vms.filter(v=>!v.template).map(v=>({...v, type:'vm'})),
+    ...cts.map(c=>({...c, type:'ct'}))
+  ];
+
+  await Promise.all(items.map(async vm => {
+    try {
+      const ep = vm.type === 'vm'
+        ? `/api2/json/nodes/${vm.node}/qemu/${vm.vmid}/snapshot`
+        : `/api2/json/nodes/${vm.node}/lxc/${vm.vmid}/snapshot`;
+      const d = await get(ep);
+      (d.data||[]).filter(s => s.name !== 'current').forEach(s => {
+        results.push({ vm, snap: s });
+      });
+    } catch {}
+  }));
+
+  _snapsData = results;
+  _renderSnapshots();
+}
+
+function _renderSnapshots() {
+  const sortSel = document.getElementById('snaps-sort')?.value || 'age-asc';
+  const sorted  = [..._snapsData].sort((a, b) => {
+    if (sortSel === 'age-asc')  return (a.snap.snaptime||0) - (b.snap.snaptime||0);
+    if (sortSel === 'age-desc') return (b.snap.snaptime||0) - (a.snap.snaptime||0);
+    if (sortSel === 'vm')       return (a.vm.name||'').localeCompare(b.vm.name||'');
+    return 0;
+  });
+
+  const countEl = document.getElementById('snaps-count');
+  if (countEl) countEl.textContent = `${sorted.length} snapshot${sorted.length!==1?'s':''} across ${new Set(sorted.map(r=>`${r.vm.node}/${r.vm.vmid}`)).size} VMs/CTs`;
+
+  // Summary cards
+  const withRam  = sorted.filter(r => r.snap.vmstate).length;
+  const now      = Date.now() / 1000;
+  const old30    = sorted.filter(r => r.snap.snaptime && (now - r.snap.snaptime) > 86400*30).length;
+  document.getElementById('snaps-summary').innerHTML = `
+    <div class="stat-card accent-blue"><div class="label">Total Snapshots</div><div class="value">${sorted.length}</div></div>
+    <div class="stat-card accent-orange"><div class="label">VMs / CTs with snapshots</div><div class="value">${new Set(sorted.map(r=>`${r.vm.node}/${r.vm.vmid}`)).size}</div></div>
+    <div class="stat-card ${old30>0?'accent-orange':'accent-green'}"><div class="label">Older than 30 days</div><div class="value">${old30}</div><div class="sub">${old30?'consider cleaning up':''}</div></div>
+    <div class="stat-card accent-purple"><div class="label">With RAM state</div><div class="value">${withRam}</div><div class="sub">larger, slower to restore</div></div>`;
+
+  if (!sorted.length) {
+    document.getElementById('snaps-body').innerHTML = '<div class="empty">No snapshots found across any VM or CT.</div>';
+    return;
+  }
+
+  let html = `<div class="table-wrap"><table class="data-table" style="table-layout:fixed">
+    <colgroup><col style="width:55px"><col><col style="width:130px"><col style="width:75px"><col style="width:160px"><col style="width:90px"><col style="width:34px"><col style="width:140px"></colgroup>
+    <thead><tr><th>ID</th><th>VM / CT</th><th>Snapshot</th><th>Node</th><th>Description</th><th>Age</th><th title="RAM state captured">RAM</th><th></th></tr></thead><tbody>`;
+
+  const now2 = Date.now() / 1000;
+  sorted.forEach((r, i) => {
+    const { vm, snap } = r;
+    const ageSec  = snap.snaptime ? now2 - snap.snaptime : null;
+    const ageStr  = ageSec !== null ? _pbsRelTime(snap.snaptime) : '—';
+    const ageOld  = ageSec !== null && ageSec > 86400 * 30;
+    const isCT    = vm.type === 'ct' || vm.type === 'lxc';
+    const typeChip= `<span class="type-chip ${isCT?'ct':'vm'}" style="font-size:10px;padding:1px 5px">${isCT?'CT':'VM'}</span>`;
+    const rowId   = `sr-${i}`;
+    const connId  = vm.connId || '';
+
+    html += `<tr class="${ageOld?'task-row-run':''}">
+      <td style="color:var(--muted);font-size:12px">${escHtml(String(vm.vmid))}</td>
+      <td>${typeChip} <strong>${escHtml(vm.name||String(vm.vmid))}</strong></td>
+      <td style="font-family:monospace;font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escHtml(snap.name)}">${escHtml(snap.name)}</td>
+      <td style="color:var(--muted);font-size:12px">${escHtml(vm.node)}</td>
+      <td style="font-size:12px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escHtml(snap.description||'')}">${escHtml(snap.description||'—')}</td>
+      <td style="font-size:12px${ageOld?';color:var(--yellow)':''}">${escHtml(ageStr)}</td>
+      <td style="text-align:center;font-size:14px">${snap.vmstate?'💾':''}</td>
+      <td onclick="event.stopPropagation()">
+        <div class="actions-row">
+          <button class="btn small warning" onclick="_snapRollback('${escHtml(vm.node)}','${escHtml(String(vm.vmid))}','${escHtml(vm.type)}','${escHtml(snap.name)}','${escHtml(connId)}','${escHtml(vm.name||String(vm.vmid))}')" title="Rollback to this snapshot">↩ Rollback</button>
+          <button class="btn small danger"  onclick="_snapDelete('${escHtml(vm.node)}','${escHtml(String(vm.vmid))}','${escHtml(vm.type)}','${escHtml(snap.name)}','${escHtml(connId)}',${i})" title="Delete snapshot">Delete</button>
+        </div>
+      </td>
+    </tr>`;
+  });
+
+  html += '</tbody></table></div>';
+  document.getElementById('snaps-body').innerHTML = html;
+}
+
+async function _snapDelete(node, vmid, type, snapname, connId, idx) {
+  const conn = connId ? resolveConn(connId) : null;
+  if (!confirm(`Delete snapshot "${snapname}" from ${type.toUpperCase()} ${vmid}?\n\nThis cannot be undone.`)) return;
+  const ep = type === 'vm' || type === 'qemu'
+    ? `/api2/json/nodes/${node}/qemu/${vmid}/snapshot/${encodeURIComponent(snapname)}`
+    : `/api2/json/nodes/${node}/lxc/${vmid}/snapshot/${encodeURIComponent(snapname)}`;
+  try {
+    if (conn) await connDelete(conn, ep); else await pveDelete(ep);
+    toast(`Deleted snapshot "${snapname}"`, 'success');
+    _snapsData.splice(idx, 1);
+    _renderSnapshots();
+  } catch(e) { toast('Delete failed: ' + e.message, 'error'); }
+}
+
+async function _snapRollback(node, vmid, type, snapname, connId, vmName) {
+  if (!confirm(`Roll back ${vmName} to snapshot "${snapname}"?\n\nThe VM/CT must be stopped. Current state will be lost.`)) return;
+  const conn = connId ? resolveConn(connId) : null;
+  const ep = type === 'vm' || type === 'qemu'
+    ? `/api2/json/nodes/${node}/qemu/${vmid}/snapshot/${encodeURIComponent(snapname)}/rollback`
+    : `/api2/json/nodes/${node}/lxc/${vmid}/snapshot/${encodeURIComponent(snapname)}/rollback`;
+  try {
+    if (conn) await connPost(conn, ep, {}); else await pvePost(ep, {});
+    toast(`Rolling back ${vmName} to "${snapname}"…`, 'success');
+  } catch(e) { toast('Rollback failed: ' + e.message, 'error'); }
 }
 
 // ── STORAGE ───────────────────────────────────────────────
