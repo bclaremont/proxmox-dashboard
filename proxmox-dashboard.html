@@ -5121,7 +5121,22 @@ async function loadDetailOverview(item) {
           <div style="margin-top:2px;color:var(--muted);font-size:12px">Uptime: ${fmtUptime(status.uptime)}</div>
         </div>
       </div>
-      ${desc ? `<div style="background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius);padding:10px 14px;margin-bottom:14px;font-size:13px;color:var(--muted);line-height:1.6">${desc}</div>` : ''}
+      <div style="margin-bottom:14px">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:5px">
+          <span style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.08em;color:var(--muted)">Notes</span>
+          <button class="btn small" onclick="event.stopPropagation();_notesEdit()" title="Edit notes" style="padding:2px 8px;font-size:11px">✎ Edit</button>
+        </div>
+        <div id="detail-notes-view" style="background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius);padding:10px 14px;font-size:13px;color:${desc?'var(--text)':'var(--muted)'};line-height:1.6;min-height:38px;cursor:text" onclick="_notesEdit()">
+          ${desc || '<em style="opacity:.55">No notes — click to add</em>'}
+        </div>
+        <div id="detail-notes-edit" style="display:none">
+          <textarea id="detail-notes-ta" rows="4" style="width:100%;box-sizing:border-box;background:var(--bg3);border:1px solid var(--accent);border-radius:var(--radius);color:var(--text);font-family:var(--font);font-size:13px;padding:8px 10px;resize:vertical;line-height:1.5">${escHtml(c.description||'')}</textarea>
+          <div style="display:flex;gap:6px;margin-top:6px">
+            <button class="btn small primary" onclick="_notesSave()">💾 Save</button>
+            <button class="btn small" onclick="_notesCancel()">✕ Cancel</button>
+          </div>
+        </div>
+      </div>
       <table class="config-table" style="background:var(--bg3);border-radius:var(--radius)">
         <tr><td>VM ID</td><td>${status.vmid||item.vmid}</td></tr>
         <tr><td>Name</td><td>${escHtml(status.name||item.name||'—')}</td></tr>
@@ -5152,6 +5167,48 @@ async function loadDetailOverview(item) {
     }
   } catch(e) {
     el.innerHTML=`<div class="empty">Failed to load status: ${escHtml(e.message)}</div>`;
+  }
+}
+
+function _notesEdit() {
+  const view = document.getElementById('detail-notes-view');
+  const edit = document.getElementById('detail-notes-edit');
+  if (!view || !edit) return;
+  view.style.display = 'none';
+  edit.style.display = '';
+  const ta = document.getElementById('detail-notes-ta');
+  if (ta) { ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); }
+}
+
+function _notesCancel() {
+  const view = document.getElementById('detail-notes-view');
+  const edit = document.getElementById('detail-notes-edit');
+  if (view) view.style.display = '';
+  if (edit) edit.style.display = 'none';
+}
+
+async function _notesSave() {
+  const item = currentDetail;
+  if (!item) return;
+  const ta = document.getElementById('detail-notes-ta');
+  if (!ta) return;
+  const desc = ta.value;
+  const ep   = item.type === 'vm' ? 'qemu' : 'lxc';
+  const btns = document.querySelectorAll('#detail-notes-edit button');
+  btns.forEach(b => b.disabled = true);
+  try {
+    await detailPut(`/api2/json/nodes/${item.node}/${ep}/${item.vmid}/config`, { description: desc });
+    const viewEl = document.getElementById('detail-notes-view');
+    if (viewEl) {
+      viewEl.innerHTML  = desc ? escHtml(desc).replace(/\n/g,'<br>') : '<em style="opacity:.55">No notes — click to add</em>';
+      viewEl.style.color = desc ? 'var(--text)' : 'var(--muted)';
+    }
+    _notesCancel();
+    toast('Notes saved', 'success');
+  } catch(e) {
+    toast('Save failed: ' + e.message, 'error');
+  } finally {
+    btns.forEach(b => b.disabled = false);
   }
 }
 
