@@ -273,6 +273,15 @@
     .fpop-row{display:flex;align-items:center;gap:9px;padding:7px 14px;font-size:13px;cursor:pointer;user-select:none;}
     .fpop-row:hover{background:var(--bg3);}
     .fpop-divider{height:1px;background:var(--border);margin:4px 0;}
+    /* Right-click context menu */
+    .ctx-menu{position:fixed;z-index:9500;background:var(--bg2);border:1px solid var(--border);border-radius:6px;padding:4px 0;min-width:190px;box-shadow:0 4px 20px rgba(0,0,0,.5);font-size:13px;user-select:none;}
+    .ctx-item{padding:7px 14px;cursor:pointer;color:var(--text);white-space:nowrap;transition:background .1s;}
+    .ctx-item:hover{background:var(--bg3);}
+    .ctx-item.ctx-danger{color:var(--red);}.ctx-item.ctx-danger:hover{background:rgba(248,81,73,.15);}
+    .ctx-item.ctx-warning{color:var(--accent);}.ctx-item.ctx-warning:hover{background:rgba(249,115,22,.12);}
+    .ctx-item.ctx-success{color:var(--green);}.ctx-item.ctx-success:hover{background:rgba(63,185,80,.12);}
+    .ctx-sep{height:1px;background:var(--border);margin:4px 0;}
+    .ctx-label{padding:4px 14px 2px;font-size:10px;text-transform:uppercase;letter-spacing:1px;color:var(--muted);font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:240px;}
     .health-ok{background:rgba(63,185,80,.07);border:1px solid rgba(63,185,80,.25);border-radius:var(--radius);padding:9px 14px;margin-bottom:16px;display:flex;align-items:center;gap:9px;font-size:13px;color:var(--green);}
     .health-warns{background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);margin-bottom:16px;overflow:hidden;}
     /* VM group header rows */
@@ -6119,7 +6128,7 @@ function vmRowOverview(x) {
   const ovIpKey  = `${cid}|${x.node}/${x.vmid}`;
   const ovCachedIP = _vmIPCache[ovIpKey];
   const ovIpLine = `<div class="vm-ip-cell" data-ipkey="${ovIpKey}" style="font-size:10px;font-family:monospace;margin-top:2px;color:${ovCachedIP?'var(--teal)':'var(--muted)'}">${ovCachedIP||'—'}</div>`;
-  return `<tr class="clickable-row" onclick="openDetail(${JSON.stringify(x).replace(/"/g,'&quot;')})">
+  return `<tr class="clickable-row" onclick="openDetail(${JSON.stringify(x).replace(/"/g,'&quot;')})" oncontextmenu="_ctxShow(event,${JSON.stringify(x).replace(/"/g,'&quot;')})">
     <td style="color:var(--muted);font-size:12px">${x.vmid}</td>
     <td><strong>${escHtml(x.name||'(unnamed)')}</strong>${ovIpLine}</td>
     <td><span class="type-chip ${typeVal==='lxc'?'ct':'vm'}">${typeVal==='lxc'?'CT':'VM'}</span></td>
@@ -6176,7 +6185,7 @@ function vmRow(x,showType=false){
   const pinned=_isPinned(x);
   const snapKey=ipKey;
   const bulkKey=`${cid}||${x.node}||${x.vmid}||${x.type}`;
-  return `<tr class="clickable-row" onclick="openDetail(${JSON.stringify(x).replace(/"/g,'&quot;')})">
+  return `<tr class="clickable-row" onclick="openDetail(${JSON.stringify(x).replace(/"/g,'&quot;')})" oncontextmenu="_ctxShow(event,${JSON.stringify(x).replace(/"/g,'&quot;')})">
     <td onclick="event.stopPropagation()" style="width:32px;padding-left:8px"><input type="checkbox" class="bulk-chk" data-key="${bulkKey}" onchange="_bulkToggle(this.dataset.key)" ${_bulkSelected.has(bulkKey)?'checked':''} style="width:auto;margin:0;cursor:pointer"></td>
     <td style="color:var(--muted);font-size:12px;cursor:pointer" data-copy="${x.vmid}" title="Click to copy VMID">${_hl(x.vmid,_activeHlQ)}</td>
     <td>${typeChip}<strong>${_hl(x.name||'(unnamed)',_activeHlQ)}</strong>${_vmAnomalyBadge(ipKey)}<span class="vm-snap-badge" data-snapkey="${snapKey}" style="display:none;font-size:10px;margin-left:5px"></span>${ipLine}${connLabel}</td>
@@ -6306,6 +6315,67 @@ function _vmAnomalyBadge(key) {
     msgs.push(`RAM ${(cur.mem*100).toFixed(0)}% vs avg ${(avgMem*100).toFixed(0)}%`);
   if (!msgs.length) return '';
   return `<span style="display:inline-block;background:var(--yellow);color:var(--bg);border-radius:3px;font-size:10px;font-weight:700;padding:1px 5px;margin-left:5px;vertical-align:middle;cursor:default" title="Spike detected: ${escHtml(msgs.join(' · '))}">↑</span>`;
+}
+
+function _ctxShow(event, x) {
+  event.preventDefault();
+  event.stopPropagation();
+  const menu = document.getElementById('vm-ctx-menu');
+  if (!menu) return;
+  const running = x.status === 'running';
+  const cid = x.connId || '';
+  const pinned = _isPinned(x);
+  const hasExtra = typeof extraConns !== 'undefined' && extraConns.length > 0;
+  const n = x.node, v = x.vmid, t = x.type, c = cid;
+  const safeName = escHtml(x.name || String(x.vmid));
+  const safeNameRaw = (x.name || '').replace(/['"]/g, '');
+  const xJson = JSON.stringify(x).replace(/"/g, '&quot;');
+
+  let h = `<div class="ctx-label">${t === 'vm' ? 'VM' : 'CT'} ${v} — ${safeName}</div><div class="ctx-sep"></div>`;
+
+  if (running) {
+    h += `<div class="ctx-item ctx-warning" onclick="_ctxHide();confirmAction('${n}','${v}','${t}','shutdown','${c}')">⏻ Shutdown</div>`;
+    h += `<div class="ctx-item ctx-danger" onclick="_ctxHide();confirmAction('${n}','${v}','${t}','stop','${c}')">■ Force Stop</div>`;
+    h += `<div class="ctx-item" onclick="_ctxHide();confirmAction('${n}','${v}','${t}','reboot','${c}')">↺ Reboot</div>`;
+  } else {
+    h += `<div class="ctx-item ctx-success" onclick="_ctxHide();vmAction('${n}','${v}','${t}','start','${c}')">▶ Start</div>`;
+  }
+
+  h += `<div class="ctx-sep"></div>`;
+  h += `<div class="ctx-item" onclick="_ctxHide();openConsole('${n}','${v}','${t}','${c}')">🖥 Console</div>`;
+  h += `<div class="ctx-item" onclick="_ctxHide();openDetail(${xJson})">⤵ Open Detail</div>`;
+
+  h += `<div class="ctx-sep"></div>`;
+  h += `<div class="ctx-item" onclick="_ctxHide();openMigrateModal('${n}','${v}','${t}','${c}')">⇢ Migrate</div>`;
+  h += `<div class="ctx-item" onclick="_ctxHide();openMoveDiskModal('${n}','${v}','${t}','${c}')">⇄ Move Disk</div>`;
+  h += `<div class="ctx-item" onclick="_ctxHide();openCloneModal('${n}','${v}','${t}','${safeNameRaw}','${c}')">⎘ Clone</div>`;
+  if (hasExtra) h += `<div class="ctx-item" onclick="_ctxHide();openXCopyModal('${n}','${v}','${t}','${c}','${safeName}')">⎘→ Copy to Cluster</div>`;
+
+  h += `<div class="ctx-sep"></div>`;
+  h += `<div class="ctx-item" onclick="_ctxHide();openPerfModal('${n}','${v}','${t}','${c}')">📊 Performance</div>`;
+  h += `<div class="ctx-item" onclick="_ctxHide();quickSnapSchedule('${n}','${v}','${t}','${c}','${safeName}')">📸 Snapshot</div>`;
+
+  h += `<div class="ctx-sep"></div>`;
+  h += `<div class="ctx-item" onclick="_ctxHide();togglePin('${n}','${v}','${c}')">${pinned ? '★ Unpin' : '☆ Pin to Top'}</div>`;
+
+  menu.innerHTML = h;
+  menu.style.display = 'block';
+  menu.style.visibility = 'hidden';
+
+  const mw = menu.offsetWidth || 190;
+  const mh = menu.offsetHeight || 320;
+  let lx = event.clientX, ly = event.clientY;
+  if (lx + mw > window.innerWidth - 8) lx = window.innerWidth - mw - 8;
+  if (ly + mh > window.innerHeight - 8) ly = window.innerHeight - mh - 8;
+  if (lx < 8) lx = 8;
+  if (ly < 8) ly = 8;
+  menu.style.left = lx + 'px';
+  menu.style.top  = ly + 'px';
+  menu.style.visibility = 'visible';
+}
+function _ctxHide() {
+  const m = document.getElementById('vm-ctx-menu');
+  if (m) m.style.display = 'none';
 }
 
 function _bulkToggle(key) {
@@ -22888,6 +22958,11 @@ document.addEventListener('click', e => {
   }
 })();
 
+// Context menu dismiss
+document.addEventListener('click', e => { if (!e.target.closest('#vm-ctx-menu')) _ctxHide(); });
+document.addEventListener('keydown', e => { if (e.key === 'Escape') _ctxHide(); });
+document.addEventListener('scroll', () => _ctxHide(), true);
+
 </script>
 
 <!-- TASK MONITOR PANEL -->
@@ -22927,6 +23002,9 @@ document.addEventListener('click', e => {
     </div>
   </div>
 </div>
+
+<!-- Right-click context menu -->
+<div id="vm-ctx-menu" class="ctx-menu" style="display:none"></div>
 
 <!-- Bulk action bar -->
 <div id="bulk-action-bar" style="display:none;position:fixed;bottom:0;left:0;right:0;z-index:9000;background:var(--bg2);border-top:2px solid var(--accent);padding:10px 20px;align-items:center;gap:12px;box-shadow:0 -4px 16px rgba(0,0,0,.4)">
