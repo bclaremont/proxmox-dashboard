@@ -343,6 +343,9 @@
     .heatmap-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:12px;margin-bottom:20px;}
     .heat-card{background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);padding:14px;text-align:center;}
     .heat-bar{height:8px;border-radius:4px;margin:5px 0 2px;}
+    .vm-heat-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:8px;margin-bottom:22px;}
+    .vm-heat-tile{background:var(--bg2);border:1px solid var(--border);border-top:3px solid var(--green);border-radius:var(--radius);padding:10px 12px;cursor:pointer;transition:transform .12s,box-shadow .12s;overflow:hidden;}
+    .vm-heat-tile:hover{transform:translateY(-2px);box-shadow:0 4px 14px rgba(0,0,0,.35);}
     /* SNAPSHOTS */
     .snap-item{background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius);padding:10px 14px;margin-bottom:8px;display:flex;align-items:center;gap:10px;}
     .snap-name{font-weight:700;font-size:13px;flex:1;}
@@ -1227,7 +1230,18 @@
     <div id="view-heatmap" style="display:none">
       <div class="section-header">
         <span class="section-title">Heatmap</span>
-        <select class="cluster-filter-sel" id="heatmap-conn" style="display:none;padding:5px 8px;font-size:13px" onchange="renderHeatmap()"><option value="_all">All Clusters</option></select>
+        <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+          <select class="cluster-filter-sel" id="heatmap-conn" style="display:none;padding:5px 8px;font-size:13px" onchange="renderHeatmap()"><option value="_all">All Clusters</option></select>
+          <select id="heatmap-metric" style="padding:5px 8px;font-size:13px;background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);color:var(--text)" onchange="renderHeatmap()">
+            <option value="cpu">CPU</option>
+            <option value="ram">RAM</option>
+            <option value="disk">Disk</option>
+          </select>
+          <label style="display:flex;align-items:center;gap:5px;font-size:12px;color:var(--muted);cursor:pointer;white-space:nowrap">
+            <input type="checkbox" id="heatmap-show-stopped" onchange="renderHeatmap()" style="width:auto;margin:0;cursor:pointer"> Stopped
+          </label>
+          <button class="btn small" onclick="renderHeatmap()">↻ Refresh</button>
+        </div>
       </div>
       <div id="heatmap-content"></div>
     </div>
@@ -9179,52 +9193,45 @@ function renderHeatmap() {
         : `<div class="section-header" style="margin-top:4px"><span class="section-title">Node Resource Usage</span></div>`;
       return `${header}<div class="heatmap-grid" style="margin-bottom:20px">${g.nodes.map(_heatCard).join('')}</div>`;
     }).join('')}
-    <div class="section-header" style="margin-top:4px">
-      <span class="section-title">Top Running VMs by CPU Load</span>
-      <button class="btn small" onclick="switchView('vms')">All VMs →</button>
-    </div>
     ${(() => {
-      const top = allItems.filter(x => x.status === 'running' && !x.template)
-        .sort((a,b) => (b.cpu||0)-(a.cpu||0)).slice(0,10);
-      if (!top.length) return emptyState(
+      const metric      = document.getElementById('heatmap-metric')?.value || 'cpu';
+      const showStopped = document.getElementById('heatmap-show-stopped')?.checked || false;
+      const metricLabel = {cpu:'CPU',ram:'RAM',disk:'Disk'}[metric] || 'CPU';
+      const items = allItems.filter(x => !x.template && (showStopped || x.status === 'running'));
+      const sorted = [...items].sort((a,b) => _vmHeatValue(b,metric) - _vmHeatValue(a,metric));
+      if (!sorted.length) return `<div style="margin-top:8px">${emptyState(
         '<rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/>',
-        'No running VMs',
-        'Start a VM to see resource usage here.',
-        `<button class="btn primary" onclick="openCreateVMModal()">+ Create VM</button>`
-      );
-      return `<div style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;margin-bottom:22px">
-        ${top.map((x,i) => {
-          const cpu    = x.cpu ? x.cpu*100 : 0;
-          const mem    = x.mem && x.maxmem ? (x.mem/x.maxmem)*100 : 0;
-          const cpuW   = Math.min(cpu, 100);
-          const typeC  = x.type === 'lxc' || x.type === 'ct' ? 'ct' : 'vm';
-          return `<div style="display:flex;align-items:center;gap:12px;padding:10px 16px;border-bottom:${i<top.length-1?'1px solid var(--border)':'none'};cursor:pointer;transition:background .1s"
-            onclick="openDetail(${JSON.stringify(x).replace(/"/g,'&quot;')})"
-            onmouseenter="this.style.background='var(--bg3)'" onmouseleave="this.style.background=''">
-            <span class="type-chip ${typeC}" style="flex-shrink:0">${typeC==='ct'?'CT':'VM'}</span>
-            <div style="min-width:0;width:140px;flex-shrink:0">
-              <div style="font-weight:600;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escHtml(x.name||String(x.vmid))}</div>
-              <div style="font-size:10px;color:var(--muted)">${escHtml(x.node)}${x.connId?' · '+escHtml(getConnName(x.connId)):''}</div>
-            </div>
-            <div style="flex:1;min-width:0">
-              <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px">
-                <span style="font-size:11px;color:var(--muted);width:28px;text-align:right;flex-shrink:0">CPU</span>
-                <div style="flex:1;height:8px;background:var(--bg3);border-radius:4px;overflow:hidden">
-                  <div style="height:100%;width:${cpuW}%;background:${cpu>80?'var(--red)':cpu>60?'var(--yellow)':'var(--accent)'};border-radius:4px;transition:width .4s"></div>
-                </div>
-                <span style="font-size:11px;font-weight:600;width:36px;color:${cpu>80?'var(--red)':cpu>60?'var(--yellow)':'var(--text)'}">${cpu.toFixed(0)}%</span>
-              </div>
-              <div style="display:flex;align-items:center;gap:6px">
-                <span style="font-size:11px;color:var(--muted);width:28px;text-align:right;flex-shrink:0">RAM</span>
-                <div style="flex:1;height:8px;background:var(--bg3);border-radius:4px;overflow:hidden">
-                  <div style="height:100%;width:${Math.min(mem,100)}%;background:${mem>80?'var(--red)':mem>60?'var(--yellow)':'var(--blue)'};border-radius:4px;transition:width .4s"></div>
-                </div>
-                <span style="font-size:11px;color:var(--muted);width:36px">${mem.toFixed(0)}%</span>
-              </div>
-            </div>
-          </div>`;
-        }).join('')}
-      </div>`;
+        'No VMs or containers',
+        'Start a VM or connect to a cluster to see the heatmap.',
+        ''
+      )}</div>`;
+      const _vmTile = x => {
+        const running = x.status === 'running';
+        const val     = _vmHeatValue(x, metric);
+        const color   = running ? heatColor(val) : 'var(--border)';
+        const typeC   = x.type === 'lxc' || x.type === 'ct' ? 'ct' : 'vm';
+        const name    = escHtml(x.name || String(x.vmid));
+        return `<div class="vm-heat-tile" style="border-top-color:${color}"
+          onclick="openDetail(${JSON.stringify(x).replace(/"/g,'&quot;')})"
+          title="${name} · #${x.vmid} · ${escHtml(x.node)}&#10;${metricLabel}: ${running ? val.toFixed(1)+'%' : 'stopped'}">
+          <div style="display:flex;align-items:center;gap:5px;margin-bottom:3px">
+            <span style="width:6px;height:6px;border-radius:50%;background:${running?'var(--green)':'var(--muted)'};flex-shrink:0"></span>
+            <span style="font-size:12px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;min-width:0">${name}</span>
+          </div>
+          <div style="font-size:10px;color:var(--muted);margin-bottom:5px">#${x.vmid} <span class="type-chip ${typeC}" style="font-size:9px;padding:0 4px;vertical-align:middle">${typeC.toUpperCase()}</span></div>
+          ${running
+            ? `<div style="font-size:20px;font-weight:700;color:${color};line-height:1">${val.toFixed(0)}%</div>
+               <div style="height:4px;background:var(--bg);border-radius:2px;margin-top:5px;overflow:hidden">
+                 <div style="height:100%;width:${Math.min(val,100)}%;background:${color};border-radius:2px;transition:width .4s"></div>
+               </div>`
+            : `<div style="font-size:12px;color:var(--muted)">stopped</div>`}
+        </div>`;
+      };
+      return `<div class="section-header" style="margin-top:4px">
+        <span class="section-title">VM/CT ${metricLabel} Heatmap</span>
+        <span style="font-size:12px;color:var(--muted)">${sorted.length} shown · sorted high→low</span>
+      </div>
+      <div class="vm-heat-grid">${sorted.map(_vmTile).join('')}</div>`;
     })()}`;
 }
 
@@ -9233,6 +9240,19 @@ function heatColor(pct) {
   if (pct > 65) return 'var(--yellow)';
   if (pct > 30) return 'var(--teal)';
   return 'var(--green)';
+}
+
+function _vmHeatValue(x, metric) {
+  if (metric === 'ram') {
+    const ipKey = `${x.connId||''}|${x.node}/${x.vmid}`;
+    const mc = _vmMemCache[ipKey];
+    const memFresh = mc && (Date.now() - mc.ts < 300000);
+    const memVal = memFresh ? mc.mem : x.mem;
+    const memMax = memFresh ? mc.maxmem : x.maxmem;
+    return memVal && memMax ? (memVal / memMax) * 100 : 0;
+  }
+  if (metric === 'disk') return x.disk && x.maxdisk ? (x.disk / x.maxdisk) * 100 : 0;
+  return x.cpu ? x.cpu * 100 : 0;
 }
 
 // ── ALERT BANNER ─────────────────────────────────────────
