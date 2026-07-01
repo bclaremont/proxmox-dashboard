@@ -23,7 +23,7 @@ Ideas and planned improvements, compiled from all previous sessions. Items are r
 - [x] **CT template loading fix** — CT creation wizard now scopes templates and default storage to the target node
 - [ ] **VM grouping (application stacks)** — tag VMs as part of a named group (e.g. "GitLab" = 3 VMs) and start / stop / snapshot the entire group as a unit; stored in PVE resource pools or tag convention
 - [ ] **Resource pools** — surface PVE resource pools (`/pools`) in the dashboard; show which VMs belong to each pool and their shared CPU/RAM ceiling; allow moving VMs between pools
-- [ ] **VM notes / annotations** — read and write the PVE description field (`/nodes/{node}/qemu/{vmid}/config → description`) inline from the VM detail panel; useful for documenting purpose, owner, maintenance windows
+- [x] **VM notes / annotations** — read and write the PVE description field (`/nodes/{node}/qemu/{vmid}/config → description`) inline from the VM detail panel; useful for documenting purpose, owner, maintenance windows
 - [ ] **Scheduled tasks calendar** — unified view of all scheduled backups, snapshot jobs, and vzdump schedules across nodes; show as a calendar or timeline so clashing windows are obvious
 
 ---
@@ -73,11 +73,11 @@ Ideas and planned improvements, compiled from all previous sessions. Items are r
 ## Quality-of-life
 
 - [x] **Quick filter chips above VM table** — one-click pills (Running / Stopped / High CPU / Anomaly) that instantly filter the VM and CT lists with live counts; zero extra API calls
-- [ ] **Heatmap view** — colour-coded tile grid of all VMs by chosen metric (CPU, RAM, uptime); each VM is a tile, colour ranges green→red; better than a table for spotting outliers across 50+ VMs
+- [x] **Heatmap view** — colour-coded tile grid of all VMs by chosen metric (CPU, RAM, disk); each VM is a tile, colour ranges green→red; metric selector + stopped toggle; node resource cards above the tile grid
 - [ ] **Snapshot timeline** — horizontal visual timeline per VM showing when snapshots were taken and how old/large they are; makes snapshot age obvious at a glance
-- [ ] **Node update tracker** — compare PVE version across all nodes and flag nodes running behind; show pending package updates from `/nodes/{node}/apt/updates`
+- [x] **Node update tracker** — pending package count badge per node (amber/red for security); version drift detection highlights minority PVE versions in amber; cached 5 min, works across multi-cluster
 - [ ] **Custom columns** — let users show/hide and reorder columns in the VM/CT table (e.g. hide Disk, add IP, add last-backup age)
-- [ ] **Right-click context menu on VM rows** — right-click any VM/CT row to get a fast context menu (start/stop/migrate/snapshot/console) instead of hunting for the action buttons
+- [x] **Right-click context menu on VM rows** — right-click any VM/CT row for a fast context menu (power, console, open detail, migrate, move disk, clone, performance, snapshot, pin); works on main table and Overview table; dismisses on click-outside / Escape / scroll
 - [ ] **Keyboard shortcuts cheatsheet** — pressing `?` opens a modal listing all available shortcuts (command palette, refresh, view navigation, etc.)
 - [ ] **Density toggle** — compact / comfortable row spacing switch for VM and CT tables
 - [ ] **Stat card trend badges** — up / down arrows on Overview stat cards showing change since last refresh
