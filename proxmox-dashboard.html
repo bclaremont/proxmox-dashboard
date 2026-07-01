@@ -1973,6 +1973,21 @@ function pccHideLogin() {
   if (overlay) overlay.style.display = 'none';
 }
 
+function _pccShowConnecting() {
+  let el = document.getElementById('pcc-connecting-overlay');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'pcc-connecting-overlay';
+    el.style.cssText = 'position:fixed;inset:0;background:var(--bg);z-index:2000;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:14px';
+    el.innerHTML = '<span class="loading" style="width:32px;height:32px;border-width:3px"></span><div style="font-size:14px;color:var(--muted);font-family:var(--font)">Connecting to clusters…</div>';
+    document.body.appendChild(el);
+  }
+  el.style.display = 'flex';
+}
+function _pccHideConnecting() {
+  document.getElementById('pcc-connecting-overlay')?.remove();
+}
+
 async function pccLogin() {
   const btn    = document.getElementById('pcc-login-btn');
   const errEl  = document.getElementById('pcc-login-err');
@@ -1994,6 +2009,7 @@ async function pccLogin() {
     sessionStorage.setItem('pcc-token', PCC_TOKEN);
     _schedulePCCRefresh(PCC_TOKEN);
     pccHideLogin();
+    _pccShowConnecting();
     await pccPostLogin();
   } catch(e) {
     errEl.textContent = e.message;
@@ -2019,7 +2035,7 @@ async function pccLogout() {
 }
 
 async function pccPostLogin() {
-  document.getElementById('init-overlay')?.remove();
+  // init-overlay (if present) stays up until pccAutoConnect() finishes loading clusters
   // Show username in topbar
   const userEl = document.getElementById('topbar-user');
   const nameEl = document.getElementById('topbar-username');
@@ -2080,12 +2096,14 @@ async function pccAutoConnect() {
     clusters = await r.json();
   } catch(e) {
     toast('Could not load clusters: ' + e.message, 'error');
+    document.getElementById('init-overlay')?.remove(); _pccHideConnecting();
     switchView('pcc-admin');
     return;
   }
 
   if (!clusters.length) {
     toast('No clusters configured yet — add one in Admin', 'info');
+    document.getElementById('init-overlay')?.remove(); _pccHideConnecting();
     switchView('pcc-admin');
     return;
   }
@@ -2125,9 +2143,11 @@ async function pccAutoConnect() {
     updateNotifBadge();
     toast('Connected to ' + clusters.length + ' cluster' + (clusters.length > 1 ? 's' : ''), 'success');
     _updatePageTitle();
+    document.getElementById('init-overlay')?.remove(); _pccHideConnecting();
     switchView('overview');
   } catch(e) {
     toast('Auto-connect failed: ' + e.message, 'error');
+    document.getElementById('init-overlay')?.remove(); _pccHideConnecting();
     switchView('pcc-admin');
   }
 }
