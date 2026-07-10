@@ -80,7 +80,7 @@ Ideas and planned improvements, compiled from all previous sessions. Items are r
 - [x] **Right-click context menu on VM rows** — right-click any VM/CT row for a fast context menu (power, console, open detail, migrate, move disk, clone, performance, snapshot, pin); works on main table and Overview table; dismisses on click-outside / Escape / scroll
 - [ ] **Keyboard shortcuts cheatsheet** — pressing `?` opens a modal listing all available shortcuts (command palette, refresh, view navigation, etc.)
 - [ ] **Density toggle** — compact / comfortable row spacing switch for VM and CT tables
-- [ ] **Stat card trend badges** — up / down arrows on Overview stat cards showing change since last refresh
+- [x] **Stat card trend badges** — up / down arrows on Overview stat cards showing change since last refresh
 - [ ] **VM grid view: separate by cluster** — grid view should group VMs by cluster the same way the list view does
 - [ ] **Mobile layout pass** — audit and fix layout breakpoints so the dashboard is usable on a phone or small tablet
 
