@@ -150,7 +150,7 @@
     tbody tr:hover{background:var(--bg3);}
     td{padding:11px 14px;vertical-align:middle;font-size:13px;}
     body.compact-rows td{padding:5px 14px;}
-    .stat-trend{font-size:12px;font-weight:700;margin-left:6px;}
+    .stat-trend{font-size:12px;font-weight:700;margin-left:6px;vertical-align:middle;}
     .stat-trend.up{color:var(--green);}
     .stat-trend.down{color:var(--red);}
     .stat-trend.up-bad{color:var(--red);}
@@ -5751,13 +5751,13 @@ function renderOverview() {
     : []);
 
   // ── Big gauge card ────────────────────────────────────────
-  const gaugeCard = (label, pct, sub, accent) => {
+  const gaugeCard = (label, pct, sub, accent, trend='') => {
     const p = Math.min(pct,100).toFixed(0);
     const col = pct>90?'var(--red)':pct>75?'var(--yellow)':accent;
     const cls = gaugeClass(pct);
     return `<div class="stat-card" style="text-align:center">
       <div class="label">${label}</div>
-      <div style="font-size:40px;font-weight:700;color:${col};line-height:1;margin:8px 0">${p}<span style="font-size:20px">%</span></div>
+      <div style="font-size:40px;font-weight:700;color:${col};line-height:1;margin:8px 0">${p}<span style="font-size:20px">%</span>${trend}</div>
       <div class="gauge-bar" style="height:8px;border-radius:4px;margin:0 0 8px"><div class="gauge-fill ${cls}" style="width:${p}%;height:100%"></div></div>
       <div class="sub">${sub}</div>
     </div>`;
@@ -5827,7 +5827,7 @@ function renderOverview() {
   const p = _prevOverviewStats;
   const vmCount = allVMs().filter(v=>!v.template).length;
   const ctCount = allCTs().length;
-  _prevOverviewStats = { running, errTasks, vmCount, ctCount };
+  _prevOverviewStats = { running, errTasks, vmCount, ctCount, nodeCount: nodes.length, storCount: PVE.storage.length, avgCpu: Math.round(avgCpu), memPct: Math.round(memPct), storPct: Math.round(storPct) };
 
   // ── Assemble ──────────────────────────────────────────────
   el.innerHTML = `
@@ -5837,17 +5837,17 @@ function renderOverview() {
       <div class="stat-card accent-green" style="cursor:pointer" title="View running VMs & CTs" onclick="_vmFilter('running');switchView('vms')"><div class="label">Running VMs &amp; CTs</div><div class="value">${running}${_trendBadge(running,p?.running)}</div><div class="sub">${stopped} stopped</div></div>
       <div class="stat-card accent-blue" style="cursor:pointer" title="View all VMs" onclick="_vmFilter('all');switchView('vms')"><div class="label">VMs</div><div class="value">${vmCount}${_trendBadge(vmCount,p?.vmCount)}</div><div class="sub">${allVMs().filter(v=>v.template).length} template${allVMs().filter(v=>v.template).length!==1?'s':''}</div></div>
       <div class="stat-card accent-purple" style="cursor:pointer" title="View all containers" onclick="_ctFilter('all');switchView('containers')"><div class="label">Containers</div><div class="value">${ctCount}${_trendBadge(ctCount,p?.ctCount)}</div><div class="sub">LXC</div></div>
-      <div class="stat-card accent-orange" style="cursor:pointer" title="View nodes" onclick="switchView('nodes')"><div class="label">Nodes</div><div class="value">${nodes.length}</div><div class="sub">${connCount} cluster${connCount!==1?'s':''}/host${connCount!==1?'s':''}</div></div>
+      <div class="stat-card accent-orange" style="cursor:pointer" title="View nodes" onclick="switchView('nodes')"><div class="label">Nodes</div><div class="value">${nodes.length}${_trendBadge(nodes.length,p?.nodeCount)}</div><div class="sub">${connCount} cluster${connCount!==1?'s':''}/host${connCount!==1?'s':''}</div></div>
       <div class="stat-card accent-yellow" style="cursor:pointer" title="View tasks" onclick="switchView('tasks')"><div class="label">Task Errors</div><div class="value" style="color:${errTasks>0?'var(--red)':'var(--green)'}">${errTasks}${_trendBadge(errTasks,p?.errTasks,true)}</div><div class="sub">recent</div></div>
-      <div class="stat-card" style="cursor:pointer" title="View storage" onclick="switchView('storage')"><div class="label">Storage Pools</div><div class="value" style="color:var(--teal)">${PVE.storage.length}</div><div class="sub">primary cluster</div></div>
+      <div class="stat-card" style="cursor:pointer" title="View storage" onclick="switchView('storage')"><div class="label">Storage Pools</div><div class="value" style="color:var(--teal)">${PVE.storage.length}${_trendBadge(PVE.storage.length,p?.storCount)}</div><div class="sub">primary cluster</div></div>
     </div>
 
     <!-- Aggregate resource gauges -->
     <div class="section-header" style="margin-bottom:10px"><span class="section-title">Resources — ${escHtml(primaryName)}</span></div>
     <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:22px">
-      ${gaugeCard('Average CPU', avgCpu, `${liveNodes.length} node(s) reporting`, 'var(--accent)')}
-      ${gaugeCard('Total Memory', memPct, `${fmtBytes(totMemUsed)} / ${fmtBytes(totMemTotal)}`, 'var(--blue)')}
-      ${gaugeCard('Total Storage', storPct, `${fmtBytes(storUsed)} / ${fmtBytes(storTot)}`, 'var(--purple)')}
+      ${gaugeCard('Average CPU', avgCpu, `${liveNodes.length} node(s) reporting`, 'var(--accent)', _trendBadge(Math.round(avgCpu),p?.avgCpu,true))}
+      ${gaugeCard('Total Memory', memPct, `${fmtBytes(totMemUsed)} / ${fmtBytes(totMemTotal)}`, 'var(--blue)', _trendBadge(Math.round(memPct),p?.memPct,true))}
+      ${gaugeCard('Total Storage', storPct, `${fmtBytes(storUsed)} / ${fmtBytes(storTot)}`, 'var(--purple)', _trendBadge(Math.round(storPct),p?.storPct,true))}
     </div>
 
     <!-- Node health bar -->
