@@ -5720,6 +5720,54 @@ function _trendBadge(cur, prev, higherIsBad=false) {
   return `<span class="stat-trend ${cls}">${up ? '▲' : '▼'}${Math.abs(cur-prev)}</span>`;
 }
 
+// ── CAPACITY RUNWAY (overview surface) ────────────────────
+// Fetches one month of RRD data per node, runs linear regression,
+// caches results for 30 min, surfaces on Overview health banner + table.
+let _runwayCache = null; // { ts, nodes:[{node,cpuDays,memDays,minDays,cpuCur,memCur,error?}], stor:[...] }
+let _runwayFetching = false;
+
+async function _fetchRunwayData() {
+  if (_runwayFetching) return;
+  _runwayFetching = true;
+  try {
+    const nodes = allNodes();
+    if (!nodes.length) { _runwayCache = { ts: Date.now(), nodes: [], stor: [] }; return; }
+    const thresh = 85;
+    const nodeRRD = {};
+    await Promise.all(nodes.map(async n => {
+      const conn = n.connId ? extraConns.find(c => c.id === n.connId) : null;
+      const getF = conn ? (p => connGet(conn, p)) : pveGet;
+      const d = await getF(`/api2/json/nodes/${n.node}/rrddata?timeframe=month&cf=AVERAGE`).catch(() => ({ data: [] }));
+      nodeRRD[n.node] = d.data || [];
+    }));
+    const nodeResults = nodes.map(n => {
+      const rrd = nodeRRD[n.node].filter(p => p.time && p.cpu != null);
+      if (!rrd.length) return { node: n.node, error: true };
+      const lastT = rrd[rrd.length - 1].time;
+      const cpuPts = rrd.map(p => ({ x: p.time, y: p.cpu * 100 }));
+      const cpuReg = _linReg(cpuPts);
+      const cpuCur = cpuPts[cpuPts.length - 1]?.y || 0;
+      const cpuDays = _daysUntil(cpuReg, lastT, thresh);
+      const memPts = rrd.filter(p => p.memtotal > 0).map(p => ({ x: p.time, y: (p.memused / p.memtotal) * 100 }));
+      const memReg = _linReg(memPts);
+      const memCur = memPts[memPts.length - 1]?.y || 0;
+      const memDays = _daysUntil(memReg, lastT, thresh);
+      const minDays = Math.min(cpuDays, memDays);
+      return { node: n.node, cpuDays, memDays, cpuCur, memCur, minDays };
+    });
+    const stor = PVE.storage.filter(s => s.total > 0 && (s.content || '').includes('images')).map(s => {
+      const pct = ((s.used || 0) / s.total) * 100;
+      const growthPerDay = parseFloat(localStorage.getItem(`cap-growth-${s.storage}-${s.node}`) || '0.1');
+      const days = growthPerDay > 0 ? (thresh - pct) / growthPerDay : Infinity;
+      return { storage: s.storage, node: s.node, pct, days };
+    });
+    _runwayCache = { ts: Date.now(), nodes: nodeResults, stor };
+    if (document.getElementById('overview-content')) renderOverview();
+  } finally {
+    _runwayFetching = false;
+  }
+}
+
 function renderOverview() {
   const el = document.getElementById('overview-content');
   if (!el) return;
@@ -5730,6 +5778,9 @@ function renderOverview() {
   const nodes    = allNodes();
   const errTasks = PVE.tasks.filter(t=>t.status&&t.status!=='OK'&&t.status!=='running'&&t.status!=='').length;
   const connCount= 1 + extraConns.filter(c=>c.status==='connected').length;
+
+  // Trigger runway data fetch if not yet loaded or stale (30 min)
+  if (nodes.length && (!_runwayCache || Date.now() - _runwayCache.ts > 1800000)) _fetchRunwayData();
 
   // ── Aggregate resource stats ──────────────────────────────
   const liveNodes = PVE.nodeStatuses.filter(n=>n.statusData&&Object.keys(n.statusData).length);
@@ -5799,6 +5850,19 @@ function renderOverview() {
   const _taskKey = 'tasks:' + errTasks;
   if (errTasks>0) healthWarns.push({ sev:'error', key:_taskKey, msg:`${errTasks} recent task error${errTasks>1?'s':''}`, go:"switchView('tasks')" });
 
+  if (_runwayCache) {
+    const critR = _runwayCache.nodes.filter(n => !n.error && isFinite(n.minDays) && n.minDays < 30);
+    if (critR.length) {
+      const _rk = 'runway:crit:' + critR.map(n=>n.node).sort().join(',');
+      healthWarns.push({ sev:'error', key:_rk, msg:`Capacity critical: ${critR.map(n=>`${n.node} (~${Math.round(n.minDays)}d runway)`).join(', ')}`, go:"switchView('capacity')" });
+    }
+    const warnR = _runwayCache.nodes.filter(n => !n.error && isFinite(n.minDays) && n.minDays >= 30 && n.minDays < 90);
+    if (warnR.length) {
+      const _wk = 'runway:warn:' + warnR.map(n=>n.node).sort().join(',');
+      healthWarns.push({ sev:'warning', key:_wk, msg:`Capacity warning: ${warnR.map(n=>`${n.node} (~${Math.round(n.minDays)}d runway)`).join(', ')}`, go:"switchView('capacity')" });
+    }
+  }
+
   const visibleWarns = healthWarns.filter(w => !_healthAckd.has(w.key));
   const hiddenCount  = healthWarns.length - visibleWarns.length;
 
@@ -5828,6 +5892,36 @@ function renderOverview() {
   const vmCount = allVMs().filter(v=>!v.template).length;
   const ctCount = allCTs().length;
   _prevOverviewStats = { running, errTasks, vmCount, ctCount, nodeCount: nodes.length, storCount: PVE.storage.length, avgCpu: Math.round(avgCpu), memPct: Math.round(memPct), storPct: Math.round(storPct) };
+
+  // ── Capacity runway section ───────────────────────────────
+  let runwaySection = '';
+  if (nodes.length) {
+    if (_runwayCache && _runwayCache.nodes.length) {
+      const runwayRows = _runwayCache.nodes.map(f => {
+        if (f.error) return `<tr><td><strong>${escHtml(f.node)}</strong></td><td colspan="5" style="color:var(--muted);font-size:12px">No RRD data</td></tr>`;
+        const cpu = _urgencyColor(f.cpuDays), mem = _urgencyColor(f.memDays), worst = _urgencyColor(f.minDays);
+        return `<tr>
+          <td><strong>${escHtml(f.node)}</strong></td>
+          <td style="color:var(--muted);font-size:12px">${f.cpuCur.toFixed(1)}%</td>
+          <td style="color:${cpu.col};font-weight:600">${cpu.label}</td>
+          <td style="color:var(--muted);font-size:12px">${f.memCur.toFixed(1)}%</td>
+          <td style="color:${mem.col};font-weight:600">${mem.label}</td>
+          <td style="color:${worst.col};font-weight:700">${worst.label}</td>
+        </tr>`;
+      }).join('');
+      runwaySection = `
+        <div class="section-header" style="margin-bottom:8px">
+          <span class="section-title">Capacity Runway</span>
+          <button class="btn small" onclick="switchView('capacity')">Full Analysis →</button>
+        </div>
+        <div class="table-wrap" style="margin-bottom:22px"><table>
+          <thead><tr><th>Node</th><th>CPU Now</th><th>CPU Runway</th><th>RAM Now</th><th>RAM Runway</th><th>Worst Case</th></tr></thead>
+          <tbody>${runwayRows}</tbody>
+        </table></div>`;
+    } else if (!_runwayCache) {
+      runwaySection = `<div style="color:var(--muted);font-size:12px;margin-bottom:18px;display:flex;align-items:center;gap:8px"><span class="loading" style="width:12px;height:12px;border-width:2px"></span>Loading capacity runway…</div>`;
+    }
+  }
 
   // ── Assemble ──────────────────────────────────────────────
   el.innerHTML = `
@@ -5859,6 +5953,9 @@ function renderOverview() {
     <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(155px,1fr));gap:8px;margin-bottom:22px">
       ${nodeCards}
     </div>` : ''}
+
+    <!-- Capacity runway -->
+    ${runwaySection}
 
     <!-- Recent tasks + Alerts (two columns) -->
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:22px">
