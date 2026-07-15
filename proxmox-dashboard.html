@@ -6319,7 +6319,7 @@ function vmRowOverview(x) {
   const ovIpLine = `<div class="vm-ip-cell" data-ipkey="${ovIpKey}" style="font-size:10px;font-family:monospace;margin-top:2px;color:${ovCachedIP?'var(--teal)':'var(--muted)'}">${ovCachedIP||'—'}</div>`;
   return `<tr class="clickable-row" onclick="openDetail(${JSON.stringify(x).replace(/"/g,'&quot;')})" oncontextmenu="_ctxShow(event,${JSON.stringify(x).replace(/"/g,'&quot;')})">
     <td style="color:var(--muted);font-size:12px">${x.vmid}</td>
-    <td><strong>${escHtml(x.name||'(unnamed)')}</strong>${ovIpLine}</td>
+    <td><strong>${escHtml(x.name||'(unnamed)')}</strong>${_vmAlertBadge(x)}${ovIpLine}</td>
     <td><span class="type-chip ${typeVal==='lxc'?'ct':'vm'}">${typeVal==='lxc'?'CT':'VM'}</span></td>
     <td style="color:var(--muted);font-size:12px">${escHtml(x.node)}</td>
     <td style="color:var(--muted);font-size:12px">${cluster}</td>
@@ -6377,7 +6377,7 @@ function vmRow(x,showType=false){
   return `<tr class="clickable-row" onclick="openDetail(${JSON.stringify(x).replace(/"/g,'&quot;')})" oncontextmenu="_ctxShow(event,${JSON.stringify(x).replace(/"/g,'&quot;')})">
     <td onclick="event.stopPropagation()" style="width:32px;padding-left:8px"><input type="checkbox" class="bulk-chk" data-key="${bulkKey}" onchange="_bulkToggle(this.dataset.key)" ${_bulkSelected.has(bulkKey)?'checked':''} style="width:auto;margin:0;cursor:pointer"></td>
     <td style="color:var(--muted);font-size:12px;cursor:pointer" data-copy="${x.vmid}" title="Click to copy VMID">${_hl(x.vmid,_activeHlQ)}</td>
-    <td>${typeChip}<strong>${_hl(x.name||'(unnamed)',_activeHlQ)}</strong>${_vmAnomalyBadge(ipKey)}<span class="vm-snap-badge" data-snapkey="${snapKey}" style="display:none;font-size:10px;margin-left:5px"></span>${ipLine}${connLabel}</td>
+    <td>${typeChip}<strong>${_hl(x.name||'(unnamed)',_activeHlQ)}</strong>${_vmAnomalyBadge(ipKey)}${_vmAlertBadge(x)}<span class="vm-snap-badge" data-snapkey="${snapKey}" style="display:none;font-size:10px;margin-left:5px"></span>${ipLine}${connLabel}</td>
     ${showType?`<td style="color:var(--muted)">${_hl(x.node,_activeHlQ)}</td>`:''}
     <td style="color:var(--muted)">${_hl(x.node,_activeHlQ)}</td>
     <td>${statusBadge(x.status)}</td>
@@ -6542,6 +6542,21 @@ function _vmAnomalyBadge(key) {
     msgs.push(`RAM ${(cur.mem*100).toFixed(0)}% vs avg ${(avgMem*100).toFixed(0)}%`);
   if (!msgs.length) return '';
   return `<span style="display:inline-block;background:var(--yellow);color:var(--bg);border-radius:3px;font-size:10px;font-weight:700;padding:1px 5px;margin-left:5px;vertical-align:middle;cursor:default" title="Spike detected: ${escHtml(msgs.join(' · '))}">↑</span>`;
+}
+
+// Badge for a currently-breached per-VM alert rule (see PER-VM PERFORMANCE ALERTS, checkVMAlerts()).
+function _vmAlertBadge(x) {
+  const cid = x.connId || '';
+  const rules = getVMAlerts().filter(r => r.enabled &&
+    String(r.vmid) === String(x.vmid) && r.node === x.node && (r.connId || '') === cid);
+  if (!rules.length) return '';
+  const breached = rules.filter(r => _vmAlertState[r.id] && _vmAlertState[r.id].breached);
+  if (!breached.length) return '';
+  const msgs = breached.map(r => {
+    const st = _vmAlertState[r.id];
+    return `${r.metric.toUpperCase()} at ${st.value.toFixed(1)}% (rule: >${r.threshold}%${r.sustained ? ` for ${r.sustained}m` : ''})`;
+  });
+  return `<span style="display:inline-block;background:var(--red);color:#fff;border-radius:3px;font-size:10px;font-weight:700;padding:1px 5px;margin-left:5px;vertical-align:middle;cursor:default" title="Alert rule breached: ${escHtml(msgs.join(' · '))}">⚠</span>`;
 }
 
 function _ctxShow(event, x) {
@@ -18906,12 +18921,14 @@ function checkVMAlerts() {
     else if (rule.metric === 'ram') value = vm.maxmem ? (vm.mem / vm.maxmem * 100) : 0;
     else if (rule.metric === 'disk') value = vm.maxdisk ? (vm.disk / vm.maxdisk * 100) : 0;
 
-    const st = _vmAlertState[rule.id] || { count: 0, lastFired: 0 };
+    const st = _vmAlertState[rule.id] || { count: 0, lastFired: 0, breached: false, value: 0 };
     const breachesNeeded = Math.max(1, Math.ceil((rule.sustained || 0) * 60 / REFRESH_S));
 
+    st.value = value;
     if (value > rule.threshold) {
       st.count++;
-      if (st.count >= breachesNeeded && now - st.lastFired > COOLDOWN_MS) {
+      st.breached = st.count >= breachesNeeded;
+      if (st.breached && now - st.lastFired > COOLDOWN_MS) {
         st.lastFired = now;
         const sev = value > rule.threshold + 10 ? 'error' : 'warning';
         const metricLabel = rule.metric.toUpperCase();
@@ -18927,6 +18944,7 @@ function checkVMAlerts() {
       }
     } else {
       st.count = 0;
+      st.breached = false;
     }
     _vmAlertState[rule.id] = st;
   });

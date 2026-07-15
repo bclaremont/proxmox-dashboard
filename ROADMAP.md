@@ -31,7 +31,7 @@ Ideas and planned improvements, compiled from all previous sessions. Items are r
 ## Monitoring & alerting
 
 - [x] **Alert thresholds UI** — backend already stores `pve-alert-thresholds` (consumed by the Overview health banner); configure warning / critical thresholds for CPU, RAM, disk, certs, vmDown, and taskError from the ⚙ Settings modal
-- [ ] **Per-VM performance alerts** — alert when a specific VM's CPU / RAM exceeds a threshold; current alerts are cluster-wide only
+- [x] **Per-VM performance alerts** — per-VM/CT rules (CPU/RAM/disk threshold + sustained duration) configurable via ⚡ VM Rules; fires notifications and shows a ⚠ badge on the VM row while a rule is actively breached
 - [x] **Anomaly badges on VM rows** — small ↑ badge on the VM name when current CPU/RAM is significantly above that VM's own rolling average from the sparkline history; tooltip shows the spike detail (inspired by Nutanix Prism anomaly detection)
 - [ ] **VM efficiency buckets** — classify every VM into Bully (resource hog), Constrained (hitting ceiling), Over-provisioned (large allocation, low usage), or Inactive (off 30+ days); show as a colour-coded summary card on Overview or DRS view
 - [x] **Capacity runway** — "Node X: ~14 days until RAM full at current growth rate"; per-node and per-storage projected days-to-full from RRD linear trend; surface on Overview stat cards and DRS view
