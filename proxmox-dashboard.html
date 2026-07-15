@@ -1202,7 +1202,14 @@
         </div>
       </div>
       <div id="snaps-summary" style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:16px"></div>
-      <div id="snaps-body"><div class="empty">Loading…</div></div>
+      <div style="display:flex;gap:0;border-bottom:1px solid var(--border);margin-bottom:16px">
+        <div class="dtab active" id="snaps-tab-table"    onclick="_snapsSwitchTab('table')">Table</div>
+        <div class="dtab"        id="snaps-tab-timeline" onclick="_snapsSwitchTab('timeline')">Timeline</div>
+      </div>
+      <div id="snaps-pane-table" class="dtab-content active">
+        <div id="snaps-body"><div class="empty">Loading…</div></div>
+      </div>
+      <div id="snaps-pane-timeline" class="dtab-content"></div>
     </div>
 
     <!-- NETWORK -->
@@ -7688,6 +7695,7 @@ function _renderSnapshots() {
 
   if (!sorted.length) {
     document.getElementById('snaps-body').innerHTML = '<div class="empty">No snapshots found across any VM or CT.</div>';
+    _renderSnapshotTimeline();
     return;
   }
 
@@ -7725,6 +7733,75 @@ function _renderSnapshots() {
 
   html += '</tbody></table></div>';
   document.getElementById('snaps-body').innerHTML = html;
+  _renderSnapshotTimeline();
+}
+
+function _snapsSwitchTab(name) {
+  ['table','timeline'].forEach(t => {
+    document.getElementById(`snaps-tab-${t}`)?.classList.toggle('active', t===name);
+    document.getElementById(`snaps-pane-${t}`)?.classList.toggle('active', t===name);
+  });
+}
+
+// Horizontal per-VM timeline of snapshot age; dots positioned by real snaptime,
+// shared time axis across all VMs so relative recency is comparable at a glance.
+function _renderSnapshotTimeline() {
+  const el = document.getElementById('snaps-pane-timeline');
+  if (!el) return;
+  if (!_snapsData.length) { el.innerHTML = '<div class="empty">No snapshots found across any VM or CT.</div>'; return; }
+
+  const groups = new Map();
+  _snapsData.forEach(r => {
+    const key = `${r.vm.connId||''}|${r.vm.node}|${r.vm.vmid}`;
+    if (!groups.has(key)) groups.set(key, { vm: r.vm, snaps: [] });
+    groups.get(key).snaps.push(r.snap);
+  });
+
+  const now     = Date.now() / 1000;
+  const times   = _snapsData.map(r => r.snap.snaptime).filter(Boolean);
+  const minT    = Math.min(...times, now);
+  const span    = Math.max(now - minT, 3600);
+  const fmtDate = t => new Date(t*1000).toLocaleDateString();
+
+  const rows = [...groups.values()].sort((a, b) => {
+    const lastA = Math.max(...a.snaps.map(s=>s.snaptime||0), 0);
+    const lastB = Math.max(...b.snaps.map(s=>s.snaptime||0), 0);
+    return lastB - lastA;
+  });
+
+  let html = `
+    <div style="font-size:12px;color:var(--muted);margin-bottom:12px">
+      Each dot is a snapshot, positioned by date · <span style="color:var(--yellow)">amber</span> = older than 30 days ·
+      larger dot = RAM state captured (larger, slower to restore)
+    </div>
+    <div style="display:flex;font-size:11px;color:var(--muted);margin-bottom:6px;padding-left:170px">
+      <span style="flex:1">${escHtml(fmtDate(minT))}</span><span>${escHtml(fmtDate(now))} (now)</span>
+    </div>`;
+
+  rows.forEach(({ vm, snaps }) => {
+    const isCT = vm.type === 'ct' || vm.type === 'lxc';
+    const dots = snaps.map(s => {
+      const t     = s.snaptime || now;
+      const pct   = (((t - minT) / span) * 100).toFixed(2);
+      const old   = (now - t) > 86400 * 30;
+      const color = old ? 'var(--yellow)' : 'var(--teal)';
+      const r     = s.vmstate ? 6 : 4;
+      const title = `${s.name}${s.description ? ' — ' + s.description : ''} · ${new Date(t*1000).toLocaleString()} · ${_pbsRelTime(t)}${s.vmstate ? ' · RAM state' : ''}`;
+      return `<circle cx="${pct}%" cy="10" r="${r}" fill="${color}" stroke="var(--bg2)" stroke-width="1"><title>${escHtml(title)}</title></circle>`;
+    }).join('');
+    html += `<div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">
+      <div style="width:150px;flex-shrink:0;font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escHtml(vm.name||String(vm.vmid))}">
+        <span class="type-chip ${isCT?'ct':'vm'}" style="font-size:10px;padding:1px 5px;margin-right:4px">${isCT?'CT':'VM'}</span>${escHtml(vm.name||String(vm.vmid))}
+      </div>
+      <svg width="100%" height="20" style="flex:1;overflow:visible">
+        <line x1="0" y1="10" x2="100%" y2="10" stroke="var(--border)" stroke-width="1"/>
+        ${dots}
+      </svg>
+      <div style="width:20px;flex-shrink:0;font-size:11px;color:var(--muted);text-align:right">${snaps.length}</div>
+    </div>`;
+  });
+
+  el.innerHTML = html;
 }
 
 async function _snapDelete(node, vmid, type, snapname, connId, idx) {
