@@ -8,6 +8,28 @@ All notable changes to PCC are documented here.
 
 ---
 
+## Log Viewer, Datastore browser, Snapshot manager, Heatmap, VM notes (2026-06/07)
+
+### Added
+- **Log Viewer improvements** — task duration calculated from UPID hex timestamps in Cluster Events; "recent ops" default (last 50 tasks across all nodes) instead of blank-until-search; task output drill-down (`GET /nodes/{node}/tasks/{upid}/log`); error/warn summary banner across loaded syslog and cluster event data
+- **Anomaly badges on VM rows** — small ↑ badge on the VM name when current CPU/RAM is significantly above that VM's own rolling average from sparkline history; tooltip shows spike detail
+- **Datastore browser** — 📂 Browse button on each storage row opens a modal to browse, download, and delete files on a storage pool via `/nodes/{node}/storage/{storage}/content`; type filter chips, size totals, orphaned disk image detection
+- **Snapshot manager view** — dedicated Snapshots view fetching all snapshots across every VM/CT in parallel; sortable by age/name; summary cards; per-row Rollback and Delete; old snapshots highlighted amber
+- **Quick filter chips** — one-click pills (Running / Stopped / High CPU / Anomaly) above the VM/CT table with live counts, zero extra API calls
+- **Right-click context menu on VM rows** — fast context menu (power, console, open detail, migrate, move disk, clone, performance, snapshot, pin) on main table and Overview table; dismisses on click-outside / Escape / scroll
+- **Node update tracker** — pending package count badge per node (amber/red for security); version drift detection highlights minority PVE versions in amber; cached 5 min, works across multi-cluster
+- **VM/CT inline notes editor** — read and write the PVE description field directly from the detail panel Overview tab
+- **Heatmap view** — colour-coded tile grid of all VMs by chosen metric (CPU, RAM, disk); metric selector + stopped toggle; node resource cards above the tile grid
+- **Overview stat card trend badges** — up/down arrows on Overview stat cards and gauge tiles showing change since last refresh
+- **Capacity runway** — "Node X: ~14 days until RAM full at current growth rate"; per-node and per-storage projected days-to-full from RRD linear regression; surfaced on Overview
+- **Per-VM alert breach badges** — ⚠ badge on the VM row while a per-VM alert rule (⚡ VM Rules) is actively breached
+- **Snapshot Timeline tab** — per-VM horizontal row of dots positioned by real snapshot date on a shared, date-scaled time axis; amber for >30 days old, larger dot for RAM-state snapshots
+
+### Fixed
+- **Blank screen after login** — dashboard no longer shows a blank screen in the gap before the Overview finishes its first load
+
+---
+
 ## Security hardening — XSS, privilege escalation, SSRF, CRLF (2026-06)
 
 ### Fixed
