@@ -8,6 +8,16 @@ All notable changes to PCC are documented here.
 
 ---
 
+## Security follow-up — XSS and shared-state privilege escalation in newer features (2026-07)
+
+### Fixed
+- **Privilege escalation — shared-state admin gating not extended to newer features** — `SHARED_ADMIN_KEYS` in `server.js` still only covered `pve-schedules`/`pve-webhooks`/`pve-alert-thresholds` from the original hardening pass. Four keys added since then (`pve-affinity-rules`, `pve-drs-settings`, `pve-host-profiles`, `pve-custom-specs`) were writable by any authenticated user despite driving privileged actions once an admin enforces/applies/deploys them (live migration, node config changes, cloud-init VM deploys) — now admin-gated the same way
+- **Stored XSS — Customisation Specs list** — the static IP/gateway fields were escaped in the create/edit form but not in the spec list view; now consistently escaped
+- **Stored XSS — Host Profiles list** — DNS/timezone/NTP fields were escaped in the Apply Profile modal but not in the profile list view; now consistently escaped
+- **Minor escaping gaps** — node names/storage names in Cluster Graphs tab buttons, the Maintenance Drain local-storage warning, and the Apply Profile node picker are now escaped for consistency (low exploitability — values are PVE-controlled, not free user text)
+
+---
+
 ## Log Viewer, Datastore browser, Snapshot manager, Heatmap, VM notes (2026-06/07)
 
 ### Added

@@ -13254,7 +13254,7 @@ async function loadClusterGraphs() {
     const tabsEl = document.getElementById('cg-node-tabs');
     tabsEl.innerHTML = `
       <button class="tf-btn ${cgSelectedNode === 'all' ? 'active' : ''}" onclick="setCGNode('all')">All Nodes (overlay)</button>
-      ${nodeNames.map(n => `<button class="tf-btn ${cgSelectedNode === n ? 'active' : ''}" onclick="setCGNode('${n}')">${n}</button>`).join('')}`;
+      ${nodeNames.map(n => `<button class="tf-btn ${cgSelectedNode === n ? 'active' : ''}" onclick="setCGNode('${n}')">${escHtml(n)}</button>`).join('')}`;
 
     // Pick which nodes to show
     const showNodes = cgSelectedNode === 'all' ? nodeNames : [cgSelectedNode];
@@ -14479,7 +14479,7 @@ function loadCustomSpecs() {
           </div>
           <div style="font-size:12px;color:var(--muted);line-height:1.8;margin-bottom:12px">
             ${s.hostname ? `Host: <strong style="color:var(--text)">${escHtml(s.hostname)}${s.domain ? '.' + escHtml(s.domain) : ''}</strong><br>` : ''}
-            Network: <strong style="color:var(--text)">${s.network === 'static' ? (s.ip || 'static') + ' gw ' + (s.gateway || '?') : 'DHCP'}</strong><br>
+            Network: <strong style="color:var(--text)">${s.network === 'static' ? escHtml(s.ip || 'static') + ' gw ' + escHtml(s.gateway || '?') : 'DHCP'}</strong><br>
             ${s.dns ? `DNS: <strong style="color:var(--text)">${escHtml(s.dns)}</strong><br>` : ''}
             ${s.user ? `User: <strong style="color:var(--text)">${escHtml(s.user)}</strong><br>` : ''}
             ${s.sshkeys ? `SSH key: <strong style="color:var(--green)">✓ configured</strong>` : ''}
@@ -19743,9 +19743,9 @@ function _renderHPTab() {
               </div>
             </div>
             <div style="font-size:12px;color:var(--muted);margin-bottom:10px;line-height:1.7">
-              ${p.settings.dns?.dns1?`DNS: <strong style="color:var(--text)">${p.settings.dns.dns1}${p.settings.dns.search?' / '+p.settings.dns.search:''}</strong><br>`:''}
-              ${p.settings.timezone?`Timezone: <strong style="color:var(--text)">${p.settings.timezone}</strong><br>`:''}
-              ${p.settings.ntpServer?`NTP: <strong style="color:var(--text)">${p.settings.ntpServer}</strong><br>`:''}
+              ${p.settings.dns?.dns1?`DNS: <strong style="color:var(--text)">${escHtml(p.settings.dns.dns1)}${p.settings.dns.search?' / '+escHtml(p.settings.dns.search):''}</strong><br>`:''}
+              ${p.settings.timezone?`Timezone: <strong style="color:var(--text)">${escHtml(p.settings.timezone)}</strong><br>`:''}
+              ${p.settings.ntpServer?`NTP: <strong style="color:var(--text)">${escHtml(p.settings.ntpServer)}</strong><br>`:''}
               ${p.settings.customHosts?.length?`Custom hosts: <strong style="color:var(--text)">${p.settings.customHosts.length} entries</strong>`:''}
             </div>
             <div style="display:flex;gap:5px;flex-wrap:wrap">
@@ -20260,7 +20260,7 @@ async function runComplianceCheck() {
 function openApplyProfileModal(profileId) {
   const profile=getHostProfiles().find(p=>p.id===profileId);
   if(!profile) return;
-  const nodeOpts=allNodes().map(n=>`<option value="${n.node}|${n.connId||''}">${n.node}${n.connId?' ('+getConnName(n.connId)+')':''}</option>`).join('');
+  const nodeOpts=allNodes().map(n=>`<option value="${escHtml(n.node)}|${escHtml(n.connId||'')}">${escHtml(n.node)}${n.connId?' ('+escHtml(getConnName(n.connId))+')':''}</option>`).join('');
   document.getElementById('modal-title').textContent=`Apply Profile — ${profile.name}`;
   document.getElementById('modal-body').innerHTML=`
     <p style="color:var(--muted);font-size:13px;margin-bottom:12px">Apply profile settings to selected nodes.</p>
@@ -20547,8 +20547,8 @@ async function openDrainNodeModal(nodeData) {
 
     ${hasLocalStorage ? `
     <div style="background:rgba(248,81,73,.08);border:1px solid rgba(248,81,73,.3);border-radius:var(--radius);padding:10px 14px;margin-bottom:14px;font-size:12px">
-      <strong style="color:var(--red)">⚠ Local storage detected on ${node}</strong><br>
-      <span style="color:var(--muted)">Pools: ${localStores.map(s=>`<strong>${s.storage}</strong> (${s.type})`).join(', ')} — these are not accessible from other nodes.
+      <strong style="color:var(--red)">⚠ Local storage detected on ${escHtml(node)}</strong><br>
+      <span style="color:var(--muted)">Pools: ${localStores.map(s=>`<strong>${escHtml(s.storage)}</strong> (${escHtml(s.type)})`).join(', ')} — these are not accessible from other nodes.
       Select a <strong>Target Storage</strong> below so disk data can be copied during migration.
       Without this, migrations of VMs on local storage will fail.</span>
     </div>` : ''}

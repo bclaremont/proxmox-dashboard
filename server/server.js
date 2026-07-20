@@ -553,9 +553,13 @@ app.get('/api/shared/:key', authMiddleware, (req, res) => {
   res.json({ value: row ? row.value : null });
 });
 
-// Keys that execute server-side actions (scheduler, webhooks) are admin-only.
-// A user-role account writing these could trigger VM operations via the backend scheduler.
-const SHARED_ADMIN_KEYS = new Set(['pve-schedules', 'pve-webhooks', 'pve-alert-thresholds']);
+// Keys that drive privileged actions (scheduler, webhooks, live migration, node config
+// changes, cloud-init deploys) are admin-only. A user-role account writing these could
+// trigger VM operations or node changes once an admin enforces/applies/deploys them.
+const SHARED_ADMIN_KEYS = new Set([
+  'pve-schedules', 'pve-webhooks', 'pve-alert-thresholds',
+  'pve-affinity-rules', 'pve-drs-settings', 'pve-host-profiles', 'pve-custom-specs',
+]);
 
 app.put('/api/shared/:key', authMiddleware, bodyParser, (req, res) => {
   if (SHARED_ADMIN_KEYS.has(req.params.key) && req.user?.role !== 'admin')
