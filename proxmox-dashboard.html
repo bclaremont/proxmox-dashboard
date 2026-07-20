@@ -19957,7 +19957,7 @@ async function _hpSnapshotRender() {
         <div style="text-align:center;padding:40px 20px;color:var(--muted)">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="width:48px;height:48px;margin:0 auto 14px;display:block;opacity:.4"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg>
           <div style="font-size:15px;margin-bottom:8px">No host config backups yet</div>
-          <div style="font-size:13px;margin-bottom:16px">Config backups are taken nightly at 02:00 (configurable in Admin settings).<br>Click <strong>Backup Now</strong> to capture immediately.</div>
+          <div style="font-size:13px;margin-bottom:16px">Config backups are taken nightly at 02:00 (configurable in Admin settings) and kept on a rolling 7-day retention.<br>Click <strong>Backup Now</strong> to capture immediately.</div>
         </div>`;
       return;
     }
@@ -20019,7 +20019,9 @@ async function _hpSnapshotRender() {
       } catch { return '—'; }
     }
 
-    let html = '';
+    let html = `<div style="font-size:12px;color:var(--muted);margin-bottom:16px;padding:10px 12px;background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius)">
+      Kept on a rolling 7-day retention &middot; stored in the PCC server's own database (<code>pcc.db</code> on the standalone host), not on the Proxmox nodes themselves — back up that file separately if you need these snapshots to survive a PCC server loss.
+    </div>`;
     for (const [key, g] of Object.entries(byNode)) {
       const snaps = g.snaps;
       const clName = clusterNames[g.cluster_id] || g.cluster_id || 'Primary';

@@ -1076,6 +1076,7 @@ async function sendDigest(cfg) {
 // Nightly disaster-recovery capture: saves DNS, timezone, /etc/hosts
 // and network interface config for every node in every cluster.
 // Purely for reference if a host is lost and needs rebuilding.
+// Rolling 7-day retention — older snapshots are pruned after each capture.
 
 async function captureAllNodeConfigs() {
   const clusters = db.prepare('SELECT * FROM clusters ORDER BY sort_order').all();
@@ -1112,6 +1113,7 @@ async function captureAllNodeConfigs() {
       }
     } catch(e) { console.error(`Node snapshot cluster error (${cluster.name}):`, e.message); }
   }
+  db.prepare("DELETE FROM node_config_snapshots WHERE ts < unixepoch() - 7*86400").run();
   setSetting('node_snapshot_last_run', new Date().toISOString().slice(0, 10));
   console.log(`Node config snapshot: captured ${total} node(s).`);
   return total;
