@@ -585,6 +585,7 @@ rm -rf /tmp/pcc-update
 git clone https://github.com/bclaremont/proxmox-dashboard.git /tmp/pcc-update
 cp /tmp/pcc-update/server/server.js       /opt/pcc/server.js
 cp /tmp/pcc-update/server/package.json    /opt/pcc/package.json
+cp /tmp/pcc-update/server/reset-2fa.js    /opt/pcc/reset-2fa.js
 cp /tmp/pcc-update/proxmox-dashboard.html /opt/pcc/public/index.html
 cp /tmp/pcc-update/console.html           /opt/pcc/public/console.html
 cp -r /tmp/pcc-update/vendor              /opt/pcc/public/vendor
