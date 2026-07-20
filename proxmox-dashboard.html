@@ -2324,7 +2324,7 @@ async function _renderPCCAdminTab() {
         <td onclick="event.stopPropagation()">
           <button class="btn small" onclick="openResetPasswordModal(${u.id},'${escHtml(u.username)}')">Reset PW</button>
           ${u.totp_enabled?`<button class="btn small warning" onclick="confirmDisableUserTotp(${u.id},'${escHtml(u.username)}')" title="For a user who lost their authenticator device">Disable 2FA</button>`:''}
-          ${u.username!==PCC_USER?.username?`<button class="btn small danger" onclick="confirmDeleteUser(${u.id},'${escHtml(u.username)}')">Delete</button>`:''}
+          ${u.username!==PCC_USER?.username?`<button class="btn small danger" onclick="confirmDeleteAdminUser(${u.id},'${escHtml(u.username)}')">Delete</button>`:''}
         </td>
       </tr>`).join('')}</tbody></table></div>`;
     return;
@@ -2830,7 +2830,7 @@ function openResetPasswordModal(id, username) {
   document.getElementById('modal-bg').classList.add('open');
 }
 
-function confirmDeleteUser(id, username) {
+function confirmDeleteAdminUser(id, username) {
   document.getElementById('modal-title').textContent = 'Delete User';
   document.getElementById('modal-body').innerHTML = `<p style="color:var(--muted)">Delete user <strong style="color:var(--red)">${escHtml(username)}</strong>?</p>`;
   modalCallback = async () => {
