@@ -63,6 +63,16 @@ Moves one or more VM/CT disks to a different storage on the same node.
 - `_executeMoveDisk()` — iterates selected disks, POSTs `move_disk` (VM) or `move_volume` (LXC), registers each UPID with task monitor; skips disks already on target; blocks if CT is running
 - APIs: `POST /nodes/{node}/qemu/{vmid}/move_disk`, `POST /nodes/{node}/lxc/{vmid}/move_volume`
 
+## PCC's own 2FA (login) vs the `view-tfa` "2FA" tab
+These are two unrelated features that happen to share the name "2FA" — don't conflate them.
+- **`view-tfa`** (`loadTFA`, `_pbsRenderOverview`-adjacent code around proxmox-dashboard.html's "2FA MANAGEMENT" section) manages 2FA on the **Proxmox VE cluster's own accounts** via PVE's `/access/tfa` API. It has nothing to do with logging into PCC.
+- **PCC's own login 2FA** guards the username/password gate into PCC itself (`server.js` `/api/auth/login`). Added 2026-07 after an audit found PCC's login had no second factor at all.
+  - `users.totp_secret` (encrypted with `encryptValue`/`decryptValue`, same as cluster tokens) / `users.totp_enabled` — server-side state
+  - `generateTotpSecret()`, `verifyTotp()`, `base32Encode`/`base32Decode`, `totpAt()` in `server.js` — hand-rolled RFC 6238 (SHA1/6-digit/30s, ±1 step drift), no external TOTP dependency by design
+  - `POST /api/auth/login` returns `{ mfaRequired: true, pendingToken }` (5min JWT) instead of a session token when `totp_enabled`; `POST /api/auth/login/totp` exchanges `{ pendingToken, code }` for the real session token
+  - `POST /api/auth/totp/setup|enable|disable` — self-service, under Admin → My Account (`openEnable2FAModal`/`openDisable2FAModal` in the HTML)
+  - `POST /api/users/:id/disable-totp` — admin override for a user who lost their device, in Admin → Users
+
 ## PBS view (`view-pbs`)
 Connects directly to PBS REST API (port 8007), separate from PVE.
 - `PBS` — module-level object `{ host, ticket, csrfToken, tokenAuth, useToken, connected }`

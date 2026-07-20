@@ -6,6 +6,9 @@ All notable changes to PCC are documented here.
 
 ## [Unreleased]
 
+### Added
+- **2FA (TOTP) for PCC's own login** — PCC's admin/user accounts had no second factor: a stolen or guessed PCC password alone was enough to sign in, separate from the existing 2FA tab which only manages 2FA on Proxmox VE cluster accounts. Users can now enable TOTP under Admin → My Account (QR + manual secret entry, standard `otpauth://` URI, works with Google Authenticator/Authy/etc.); once enabled, login requires a 6-digit code after the password via a short-lived pending token. Self-service disable requires re-entering the password; admins can also force-disable 2FA for a user who lost their device from Admin → Users. TOTP implemented from scratch with Node's `crypto` (RFC 6238, SHA1/6-digit/30s step, ±1 step drift) — no new dependency — with secrets encrypted at rest the same way cluster API tokens are.
+
 ---
 
 ## Security follow-up — XSS and shared-state privilege escalation in newer features (2026-07)

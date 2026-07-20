@@ -559,9 +559,18 @@
     <h1>PCC</h1>
     <div class="sub">Proxmox Command Center</div>
     <div id="pcc-login-err"></div>
-    <div class="form-group"><label>USERNAME</label><input id="pcc-login-user" autocomplete="username" placeholder="admin" onkeydown="if(event.key==='Enter')pccLogin()"/></div>
-    <div class="form-group"><label>PASSWORD</label><input id="pcc-login-pw" type="password" autocomplete="current-password" placeholder="••••••••" onkeydown="if(event.key==='Enter')pccLogin()"/></div>
-    <button id="pcc-login-btn" class="btn primary" style="width:100%;margin-top:8px" onclick="pccLogin()">Sign in</button>
+    <div id="pcc-login-step-pw">
+      <div class="form-group"><label>USERNAME</label><input id="pcc-login-user" autocomplete="username" placeholder="admin" onkeydown="if(event.key==='Enter')pccLogin()"/></div>
+      <div class="form-group"><label>PASSWORD</label><input id="pcc-login-pw" type="password" autocomplete="current-password" placeholder="••••••••" onkeydown="if(event.key==='Enter')pccLogin()"/></div>
+      <button id="pcc-login-btn" class="btn primary" style="width:100%;margin-top:8px" onclick="pccLogin()">Sign in</button>
+    </div>
+    <div id="pcc-login-step-totp" style="display:none">
+      <div class="form-group"><label>AUTHENTICATOR CODE</label>
+        <input id="pcc-login-totp" type="text" inputmode="numeric" maxlength="8" autocomplete="one-time-code" placeholder="000000" style="font-size:18px;letter-spacing:4px;text-align:center" onkeydown="if(event.key==='Enter')pccLoginTotp()"/>
+      </div>
+      <button id="pcc-login-totp-btn" class="btn primary" style="width:100%;margin-top:8px" onclick="pccLoginTotp()">Verify</button>
+      <button class="btn small" style="width:100%;margin-top:8px" onclick="pccLoginTotpCancel()">Back</button>
+    </div>
   </div>
 </div>
 
@@ -1972,6 +1981,15 @@ async function pccVerifySession() {
 function pccShowLogin() {
   const overlay = document.getElementById('pcc-login-overlay');
   if (overlay) overlay.style.display = 'flex';
+  _pccPendingTotpToken = null;
+  document.getElementById('pcc-login-step-pw').style.display = '';
+  document.getElementById('pcc-login-step-totp').style.display = 'none';
+  const totpEl = document.getElementById('pcc-login-totp');
+  if (totpEl) totpEl.value = '';
+  const btn = document.getElementById('pcc-login-btn');
+  if (btn) { btn.disabled = false; btn.textContent = 'Sign in'; }
+  const totpBtn = document.getElementById('pcc-login-totp-btn');
+  if (totpBtn) { totpBtn.disabled = false; totpBtn.textContent = 'Verify'; }
   setTimeout(() => document.getElementById('pcc-login-user')?.focus(), 50);
 }
 
@@ -1995,6 +2013,8 @@ function _pccHideConnecting() {
   document.getElementById('pcc-connecting-overlay')?.remove();
 }
 
+let _pccPendingTotpToken = null;
+
 async function pccLogin() {
   const btn    = document.getElementById('pcc-login-btn');
   const errEl  = document.getElementById('pcc-login-err');
@@ -2011,18 +2031,65 @@ async function pccLogin() {
     });
     const d = await r.json();
     if (!r.ok) throw new Error(d.error || 'Login failed');
-    PCC_TOKEN = d.token;
-    PCC_USER  = { username: d.username, role: d.role };
-    sessionStorage.setItem('pcc-token', PCC_TOKEN);
-    _schedulePCCRefresh(PCC_TOKEN);
-    pccHideLogin();
-    _pccShowConnecting();
-    await pccPostLogin();
+    if (d.mfaRequired) {
+      _pccPendingTotpToken = d.pendingToken;
+      document.getElementById('pcc-login-step-pw').style.display = 'none';
+      document.getElementById('pcc-login-step-totp').style.display = '';
+      setTimeout(() => document.getElementById('pcc-login-totp')?.focus(), 50);
+      btn.disabled = false; btn.textContent = 'Sign in';
+      return;
+    }
+    _pccCompleteLogin(d);
   } catch(e) {
     errEl.textContent = e.message;
     errEl.style.display = '';
     btn.disabled = false; btn.textContent = 'Sign in';
   }
+}
+
+function pccLoginTotpCancel() {
+  _pccPendingTotpToken = null;
+  document.getElementById('pcc-login-step-totp').style.display = 'none';
+  document.getElementById('pcc-login-step-pw').style.display = '';
+  document.getElementById('pcc-login-totp').value = '';
+  document.getElementById('pcc-login-err').style.display = 'none';
+}
+
+async function pccLoginTotp() {
+  const btn   = document.getElementById('pcc-login-totp-btn');
+  const errEl = document.getElementById('pcc-login-err');
+  const code  = document.getElementById('pcc-login-totp')?.value?.replace(/\s/g, '');
+  errEl.style.display = 'none';
+  if (!code) { errEl.textContent = 'Enter the 6-digit code'; errEl.style.display = ''; return; }
+  btn.disabled = true; btn.textContent = 'Verifying…';
+  try {
+    const r = await fetch('/api/auth/login/totp', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pendingToken: _pccPendingTotpToken, code })
+    });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.error || 'Verification failed');
+    _pccPendingTotpToken = null;
+    _pccCompleteLogin(d);
+  } catch(e) {
+    errEl.textContent = e.message;
+    errEl.style.display = '';
+    btn.disabled = false; btn.textContent = 'Verify';
+  }
+}
+
+function _pccCompleteLogin(d) {
+  PCC_TOKEN = d.token;
+  PCC_USER  = { username: d.username, role: d.role, totp_enabled: !!d.totp_enabled };
+  sessionStorage.setItem('pcc-token', PCC_TOKEN);
+  _schedulePCCRefresh(PCC_TOKEN);
+  document.getElementById('pcc-login-step-pw').style.display = '';
+  document.getElementById('pcc-login-step-totp').style.display = 'none';
+  document.getElementById('pcc-login-totp').value = '';
+  pccHideLogin();
+  _pccShowConnecting();
+  pccPostLogin();
 }
 
 async function pccLogout() {
@@ -2247,14 +2314,16 @@ async function _renderPCCAdminTab() {
     if (!r.ok) { el.innerHTML='<div class="empty">Failed to load users</div>'; return; }
     const users = await r.json();
     el.innerHTML = `<div class="table-wrap"><table>
-      <thead><tr><th>Username</th><th>Role</th><th>Created</th><th>Last Login</th><th>Actions</th></tr></thead>
+      <thead><tr><th>Username</th><th>Role</th><th>2FA</th><th>Created</th><th>Last Login</th><th>Actions</th></tr></thead>
       <tbody>${users.map(u => `<tr>
         <td><strong>${escHtml(u.username)}</strong>${u.username===PCC_USER?.username?' <span style="font-size:10px;color:var(--accent)">(you)</span>':''}</td>
         <td><span class="badge ${u.role==='admin'?'warn':'running'}" style="font-size:10px"><span class="badge-dot"></span>${u.role}</span></td>
+        <td>${u.totp_enabled?'<span class="badge running" style="font-size:10px"><span class="badge-dot"></span>on</span>':'<span style="color:var(--muted);font-size:12px">off</span>'}</td>
         <td style="color:var(--muted);font-size:12px">${u.created_at?new Date(u.created_at*1000).toLocaleDateString():'—'}</td>
         <td style="color:var(--muted);font-size:12px">${u.last_login?new Date(u.last_login*1000).toLocaleString():'Never'}</td>
         <td onclick="event.stopPropagation()">
           <button class="btn small" onclick="openResetPasswordModal(${u.id},'${escHtml(u.username)}')">Reset PW</button>
+          ${u.totp_enabled?`<button class="btn small warning" onclick="confirmDisableUserTotp(${u.id},'${escHtml(u.username)}')" title="For a user who lost their authenticator device">Disable 2FA</button>`:''}
           ${u.username!==PCC_USER?.username?`<button class="btn small danger" onclick="confirmDeleteUser(${u.id},'${escHtml(u.username)}')">Delete</button>`:''}
         </td>
       </tr>`).join('')}</tbody></table></div>`;
@@ -2388,6 +2457,16 @@ async function _renderPCCAdminTab() {
       <div id="acc-err" style="display:none;color:var(--red);font-size:12px;margin-bottom:8px"></div>
       <button class="btn primary" onclick="changeOwnPassword()">Change Password</button>
       <hr style="border:none;border-top:1px solid var(--border);margin:20px 0"/>
+      <div class="section-title" style="font-size:11px;margin-bottom:10px">TWO-FACTOR AUTHENTICATION</div>
+      <div id="acc-2fa-body">${PCC_USER?.totp_enabled
+        ? `<div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
+             <span class="badge running" style="font-size:10px"><span class="badge-dot"></span>Enabled</span>
+             <span style="font-size:12px;color:var(--muted)">This account requires a code at sign-in.</span>
+           </div>
+           <button class="btn small danger" onclick="openDisable2FAModal()">Disable 2FA</button>`
+        : `<div style="font-size:12px;color:var(--muted);margin-bottom:10px">Not enabled — anyone with your password alone can sign in.</div>
+           <button class="btn small primary" onclick="openEnable2FAModal()">Enable 2FA</button>`}</div>
+      <hr style="border:none;border-top:1px solid var(--border);margin:20px 0"/>
       <div class="section-title" style="font-size:11px;margin-bottom:10px">CONFIG BACKUP</div>
       <div style="font-size:12px;color:var(--muted);margin-bottom:10px">Export all settings (rules, schedules, webhooks, specs) as a JSON file. Import to restore or copy to another instance.</div>
       <div style="display:flex;gap:8px;margin-bottom:20px">
@@ -2511,6 +2590,88 @@ async function changeOwnPassword() {
     document.getElementById('acc-new-pw').value = '';
     document.getElementById('acc-conf-pw').value = '';
   } catch(e) { errEl.textContent = e.message; errEl.style.display = ''; }
+}
+
+// ── OWN 2FA (PCC login, not the PVE cluster's 2FA tab) ────
+
+async function openEnable2FAModal() {
+  let setup;
+  try {
+    const r = await fetch('/api/auth/totp/setup', { method:'POST', headers:{ Authorization:'Bearer '+PCC_TOKEN } });
+    setup = await r.json();
+    if (!r.ok) throw new Error(setup.error || 'Setup failed');
+  } catch(e) { toast('Failed to start 2FA setup: '+e.message, 'error'); return; }
+
+  document.getElementById('modal-title').textContent = 'Enable Two-Factor Authentication';
+  document.getElementById('modal-body').innerHTML = `
+    <p style="color:var(--muted);font-size:13px;margin-bottom:14px">
+      Scan the QR code with an authenticator app (Google Authenticator, Authy, etc.), then enter the 6-digit code to confirm. You will need this code every time you sign in to PCC.
+    </p>
+    <div style="display:flex;gap:18px;align-items:flex-start;margin-bottom:14px">
+      <div id="acc-totp-qr" style="background:#fff;padding:8px;border-radius:6px;flex-shrink:0"></div>
+      <div style="flex:1;min-width:0">
+        <div class="form-group">
+          <label>MANUAL ENTRY — secret key</label>
+          <div style="display:flex;gap:6px;align-items:center">
+            <input id="acc-totp-secret-show" value="${setup.secret}" readonly style="font-family:monospace;font-size:12px;letter-spacing:2px"/>
+            <button type="button" class="btn small" onclick="navigator.clipboard.writeText('${setup.secret}').then(()=>toast('Copied','success'))">Copy</button>
+          </div>
+        </div>
+        <div class="form-group"><label>VERIFICATION CODE — enter the 6-digit code from your app</label>
+          <input id="acc-totp-verify" type="text" inputmode="numeric" maxlength="8" placeholder="000000" style="font-size:18px;letter-spacing:4px;text-align:center"/>
+        </div>
+      </div>
+    </div>`;
+
+  setTimeout(() => {
+    const qrEl = document.getElementById('acc-totp-qr');
+    if (!qrEl) return;
+    if (typeof QRCode !== 'undefined') {
+      new QRCode(qrEl, { text:setup.uri, width:160, height:160, colorDark:'#000', colorLight:'#fff' });
+    } else {
+      qrEl.innerHTML = `<div style="font-size:11px;color:var(--muted);padding:8px;width:160px;word-break:break-all">${escHtml(setup.uri)}</div>`;
+    }
+  }, 50);
+
+  modalCallback = async () => {
+    const code = (document.getElementById('acc-totp-verify').value||'').replace(/\s/g,'');
+    if (!code || code.length < 6) return toast('Enter the 6-digit verification code from your app', 'error');
+    try {
+      const r = await fetch('/api/auth/totp/enable', {
+        method:'POST', headers:{ Authorization:'Bearer '+PCC_TOKEN, 'Content-Type':'application/json' },
+        body: JSON.stringify({ code })
+      });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.error);
+      PCC_USER.totp_enabled = true;
+      toast('2FA enabled — you will be asked for a code next time you sign in', 'success');
+      switchPCCAdminTab('account');
+    } catch(e) { toast('Failed: '+e.message+' — check the code is correct', 'error'); }
+  };
+  document.getElementById('modal-bg').classList.add('open');
+}
+
+function openDisable2FAModal() {
+  document.getElementById('modal-title').textContent = 'Disable Two-Factor Authentication';
+  document.getElementById('modal-body').innerHTML = `
+    <p style="color:var(--red);font-size:13px;margin-bottom:12px">⚠ This removes the second factor from your account — your password alone will be enough to sign in.</p>
+    <div class="form-group"><label>CONFIRM YOUR PASSWORD</label><input id="acc-2fa-disable-pw" type="password"/></div>`;
+  modalCallback = async () => {
+    const password = document.getElementById('acc-2fa-disable-pw')?.value;
+    if (!password) return toast('Enter your password', 'error');
+    try {
+      const r = await fetch('/api/auth/totp/disable', {
+        method:'POST', headers:{ Authorization:'Bearer '+PCC_TOKEN, 'Content-Type':'application/json' },
+        body: JSON.stringify({ password })
+      });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.error);
+      PCC_USER.totp_enabled = false;
+      toast('2FA disabled', 'success');
+      switchPCCAdminTab('account');
+    } catch(e) { toast('Failed: '+e.message, 'error'); }
+  };
+  document.getElementById('modal-bg').classList.add('open');
 }
 
 // ── CLUSTER CRUD ──────────────────────────────────────────
@@ -2675,6 +2836,19 @@ function confirmDeleteUser(id, username) {
   modalCallback = async () => {
     const r = await fetch('/api/users/' + id, { method:'DELETE', headers:{ Authorization:'Bearer '+PCC_TOKEN }});
     if (r.ok) { toast('User deleted', 'info'); switchPCCAdminTab('users'); }
+    else { const d=await r.json(); toast(d.error,'error'); }
+  };
+  document.getElementById('modal-bg').classList.add('open');
+}
+
+function confirmDisableUserTotp(id, username) {
+  document.getElementById('modal-title').textContent = 'Disable 2FA for User';
+  document.getElementById('modal-body').innerHTML = `
+    <p style="color:var(--muted)">Remove 2FA from <strong style="color:var(--accent)">${escHtml(username)}</strong>?</p>
+    <p style="color:var(--yellow);font-size:12px;margin-top:8px">⚠ They will be able to sign in with just their password. Verify their identity through another channel first.</p>`;
+  modalCallback = async () => {
+    const r = await fetch(`/api/users/${id}/disable-totp`, { method:'POST', headers:{ Authorization:'Bearer '+PCC_TOKEN }});
+    if (r.ok) { toast(`2FA disabled for ${username}`, 'info'); switchPCCAdminTab('users'); }
     else { const d=await r.json(); toast(d.error,'error'); }
   };
   document.getElementById('modal-bg').classList.add('open');

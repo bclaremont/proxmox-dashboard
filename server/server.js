@@ -102,6 +102,8 @@ db.exec(`
 // Add columns to existing DBs that pre-date the expanded schema
 try { db.exec('ALTER TABLE node_config_snapshots ADD COLUMN status TEXT'); } catch {}
 try { db.exec('ALTER TABLE node_config_snapshots ADD COLUMN storage TEXT'); } catch {}
+try { db.exec('ALTER TABLE users ADD COLUMN totp_secret TEXT'); } catch {}
+try { db.exec('ALTER TABLE users ADD COLUMN totp_enabled INTEGER NOT NULL DEFAULT 0'); } catch {}
 
 // Seed default admin on first run
 if (db.prepare('SELECT COUNT(*) AS c FROM users').get().c === 0) {
@@ -143,6 +145,67 @@ function decryptValue(stored) {
   const decipher = crypto.createDecipheriv('aes-256-gcm', key, iv);
   decipher.setAuthTag(tag);
   return decipher.update(data).toString('utf8') + decipher.final('utf8');
+}
+
+// ── TOTP (RFC 6238) ───────────────────────────────────────
+// Self-contained HMAC-SHA1 TOTP (30s step, 6 digits) — no external
+// dependency; the secret is encrypted at rest with encryptValue() above.
+
+function base32Encode(buf) {
+  const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+  let bits = 0, value = 0, output = '';
+  for (const byte of buf) {
+    value = (value << 8) | byte;
+    bits += 8;
+    while (bits >= 5) {
+      output += alphabet[(value >>> (bits - 5)) & 31];
+      bits -= 5;
+    }
+  }
+  if (bits > 0) output += alphabet[(value << (5 - bits)) & 31];
+  return output;
+}
+
+function base32Decode(str) {
+  const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+  let bits = 0, value = 0;
+  const bytes = [];
+  for (const ch of String(str).toUpperCase().replace(/=+$/, '')) {
+    const idx = alphabet.indexOf(ch);
+    if (idx === -1) continue;
+    value = (value << 5) | idx;
+    bits += 5;
+    if (bits >= 8) {
+      bytes.push((value >>> (bits - 8)) & 0xff);
+      bits -= 8;
+    }
+  }
+  return Buffer.from(bytes);
+}
+
+function generateTotpSecret() {
+  return base32Encode(crypto.randomBytes(20)); // 160-bit secret
+}
+
+function totpAt(secretB32, counter) {
+  const key = base32Decode(secretB32);
+  const buf = Buffer.alloc(8);
+  buf.writeBigUInt64BE(BigInt(counter));
+  const hmac   = crypto.createHmac('sha1', key).update(buf).digest();
+  const offset = hmac[hmac.length - 1] & 0x0f;
+  const code   = ((hmac[offset] & 0x7f) << 24 | (hmac[offset + 1] & 0xff) << 16 |
+                  (hmac[offset + 2] & 0xff) << 8 | (hmac[offset + 3] & 0xff)) % 1000000;
+  return code.toString().padStart(6, '0');
+}
+
+// Accepts the previous/current/next 30s window to tolerate clock drift.
+function verifyTotp(secretB32, token) {
+  if (!/^\d{6}$/.test(token || '')) return false;
+  const counter = Math.floor(Date.now() / 1000 / 30);
+  for (let drift = -1; drift <= 1; drift++) {
+    if (totpAt(secretB32, counter + drift) === token) return true;
+  }
+  return false;
 }
 
 // Migrate any existing plaintext auth_values to encrypted on startup
@@ -398,6 +461,17 @@ app.post('/api/auth/login', loginRateLimit, bodyParser, (req, res) => {
   _loginAttempts.delete(ip);
   _accountLockout.delete(username);
 
+  // 2FA enabled — hold off on the real session token until the TOTP code checks out.
+  if (user.totp_enabled) {
+    const pendingToken = jwt.sign(
+      { id: user.id, mfaPending: true },
+      JWT_SECRET,
+      { expiresIn: '5m' }
+    );
+    audit(username, 'POST', '/api/auth/login', null, 200, { ip, mfaPending: true });
+    return res.json({ mfaRequired: true, pendingToken });
+  }
+
   db.prepare('UPDATE users SET last_login = unixepoch() WHERE id = ?').run(user.id);
   const jti   = crypto.randomBytes(16).toString('hex');
   const token = jwt.sign(
@@ -407,11 +481,45 @@ app.post('/api/auth/login', loginRateLimit, bodyParser, (req, res) => {
   );
   audit(username, 'POST', '/api/auth/login', null, 200, { ip });
   logLogin(ip, username, true, req);
-  res.json({ token, username: user.username, role: user.role });
+  res.json({ token, username: user.username, role: user.role, totp_enabled: !!user.totp_enabled });
+});
+
+// Completes login for accounts with 2FA enabled — exchanges the short-lived
+// pendingToken from /api/auth/login plus a TOTP code for a real session token.
+app.post('/api/auth/login/totp', loginRateLimit, bodyParser, (req, res) => {
+  const { pendingToken, code } = req.body || {};
+  const ip = _clientIp(req) || 'unknown';
+  if (!pendingToken || !code) return res.status(400).json({ error: 'pendingToken and code required' });
+
+  let payload;
+  try { payload = jwt.verify(pendingToken, JWT_SECRET); } catch { return res.status(401).json({ error: 'Login expired — sign in again' }); }
+  if (!payload.mfaPending) return res.status(400).json({ error: 'Invalid pending token' });
+
+  const user = db.prepare('SELECT * FROM users WHERE id = ?').get(payload.id);
+  if (!user || !user.totp_enabled) return res.status(401).json({ error: 'Invalid session — sign in again' });
+
+  const secret = decryptValue(user.totp_secret);
+  if (!verifyTotp(secret, String(code).replace(/\s/g, ''))) {
+    audit(user.username, 'POST', '/api/auth/login/totp', null, 401, { ip, reason: 'bad TOTP code' });
+    logLogin(ip, user.username, false, req);
+    return res.status(401).json({ error: 'Invalid code' });
+  }
+
+  db.prepare('UPDATE users SET last_login = unixepoch() WHERE id = ?').run(user.id);
+  const jti   = crypto.randomBytes(16).toString('hex');
+  const token = jwt.sign(
+    { id: user.id, username: user.username, role: user.role, jti },
+    JWT_SECRET,
+    { expiresIn: '4h' }
+  );
+  audit(user.username, 'POST', '/api/auth/login/totp', null, 200, { ip });
+  logLogin(ip, user.username, true, req);
+  res.json({ token, username: user.username, role: user.role, totp_enabled: !!user.totp_enabled });
 });
 
 app.get('/api/auth/me', authMiddleware, (req, res) => {
-  res.json({ username: req.user.username, role: req.user.role });
+  const user = db.prepare('SELECT totp_enabled FROM users WHERE id = ?').get(req.user.id);
+  res.json({ username: req.user.username, role: req.user.role, totp_enabled: !!user?.totp_enabled });
 });
 
 // Logout — revokes the current token server-side
@@ -451,10 +559,46 @@ app.post('/api/auth/change-password', authMiddleware, bodyParser, (req, res) => 
   res.json({ ok: true });
 });
 
+// ── 2FA (own account) ─────────────────────────────────────
+// Setup generates a secret (not active yet); enable requires proof of
+// possession via a valid code before totp_enabled flips on.
+
+app.post('/api/auth/totp/setup', authMiddleware, (req, res) => {
+  const secret = generateTotpSecret();
+  db.prepare('UPDATE users SET totp_secret = ?, totp_enabled = 0 WHERE id = ?')
+    .run(encryptValue(secret), req.user.id);
+  const label = encodeURIComponent(`PCC:${req.user.username}`);
+  const uri   = `otpauth://totp/${label}?secret=${secret}&issuer=PCC&algorithm=SHA1&digits=6&period=30`;
+  audit(req.user.username, 'POST', '/api/auth/totp/setup', null, 200, null);
+  res.json({ secret, uri });
+});
+
+app.post('/api/auth/totp/enable', authMiddleware, bodyParser, (req, res) => {
+  const { code } = req.body || {};
+  const user = db.prepare('SELECT totp_secret FROM users WHERE id = ?').get(req.user.id);
+  if (!user?.totp_secret) return res.status(400).json({ error: 'Call setup first' });
+  const secret = decryptValue(user.totp_secret);
+  if (!verifyTotp(secret, String(code || '').replace(/\s/g, '')))
+    return res.status(400).json({ error: 'Invalid code — check your authenticator app' });
+  db.prepare('UPDATE users SET totp_enabled = 1 WHERE id = ?').run(req.user.id);
+  audit(req.user.username, 'POST', '/api/auth/totp/enable', null, 200, null);
+  res.json({ ok: true });
+});
+
+app.post('/api/auth/totp/disable', authMiddleware, bodyParser, (req, res) => {
+  const { password } = req.body || {};
+  const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
+  if (!user || !bcrypt.compareSync(password || '', user.password_hash))
+    return res.status(401).json({ error: 'Incorrect password' });
+  db.prepare('UPDATE users SET totp_enabled = 0, totp_secret = NULL WHERE id = ?').run(req.user.id);
+  audit(req.user.username, 'POST', '/api/auth/totp/disable', null, 200, null);
+  res.json({ ok: true });
+});
+
 // ── USERS (admin) ─────────────────────────────────────────
 
 app.get('/api/users', authMiddleware, adminOnly, (req, res) => {
-  res.json(db.prepare('SELECT id, username, role, created_at, last_login FROM users ORDER BY id').all());
+  res.json(db.prepare('SELECT id, username, role, created_at, last_login, totp_enabled FROM users ORDER BY id').all());
 });
 
 app.post('/api/users', authMiddleware, adminOnly, bodyParser, (req, res) => {
@@ -483,6 +627,14 @@ app.put('/api/users/:id', authMiddleware, adminOnly, bodyParser, (req, res) => {
       .run(bcrypt.hashSync(password, 10), req.params.id);
   }
   audit(req.user.username, 'PUT', '/api/users/' + req.params.id, null, 200, { role });
+  res.json({ ok: true });
+});
+
+// Admin override — for a user who lost their authenticator device
+app.post('/api/users/:id/disable-totp', authMiddleware, adminOnly, (req, res) => {
+  const r = db.prepare('UPDATE users SET totp_enabled = 0, totp_secret = NULL WHERE id = ?').run(req.params.id);
+  if (r.changes === 0) return res.status(404).json({ error: 'User not found' });
+  audit(req.user.username, 'POST', '/api/users/' + req.params.id + '/disable-totp', null, 200, null);
   res.json({ ok: true });
 });
 
