@@ -1998,18 +1998,63 @@ function pccHideLogin() {
   if (overlay) overlay.style.display = 'none';
 }
 
+const _CONNECTING_LINES = [
+  'Waking up the hypervisors…',
+  'Reticulating VLANs…',
+  'Politely asking Ceph to hurry up…',
+  'Counting VMs (there are a lot)…',
+  'Negotiating with the cluster quorum…',
+  'Untangling the network bridges…',
+  'Checking nobody rebooted a node again…',
+  'Summoning tasks from the void…',
+  'Buffering enthusiasm…',
+  'Herding containers…',
+  'Pinging pvestatd and hoping for the best…',
+  'Connecting to clusters…',
+];
+const _CONNECTING_TIPS = [
+  'Tip: Press Ctrl+K anywhere to open the command palette.',
+  'Tip: Press ? to see the full list of keyboard shortcuts.',
+  'Tip: Press G then a letter (V, C, N, S, T…) to jump straight to a view.',
+  'Tip: Click a storage row to expand its VM/CT disk and backup breakdown.',
+  'Tip: You can move a VM or CT’s disk to different storage from its detail view.',
+  'Tip: The Heatmap view helps spot noisy-neighbour VMs at a glance.',
+  'Tip: Set up an Email/Webhook digest under Admin → Security for a daily cluster summary.',
+];
+let _connectingTimer = null;
+
 function _pccShowConnecting() {
   let el = document.getElementById('pcc-connecting-overlay');
   if (!el) {
     el = document.createElement('div');
     el.id = 'pcc-connecting-overlay';
-    el.style.cssText = 'position:fixed;inset:0;background:var(--bg);z-index:2000;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:14px';
-    el.innerHTML = '<span class="loading" style="width:32px;height:32px;border-width:3px"></span><div style="font-size:14px;color:var(--muted);font-family:var(--font)">Connecting to clusters…</div>';
+    el.style.cssText = 'position:fixed;inset:0;background:var(--bg);z-index:2000;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:14px;text-align:center;padding:0 24px';
+    el.innerHTML = `<span class="loading" style="width:32px;height:32px;border-width:3px"></span>
+      <div id="pcc-connecting-line" style="font-size:14px;color:var(--muted);font-family:var(--font);min-height:20px"></div>
+      <div id="pcc-connecting-tip" style="font-size:12px;color:var(--border);font-family:var(--font);max-width:360px"></div>`;
     document.body.appendChild(el);
   }
   el.style.display = 'flex';
+
+  const lineEl = document.getElementById('pcc-connecting-line');
+  const tipEl  = document.getElementById('pcc-connecting-tip');
+  tipEl.textContent = _CONNECTING_TIPS[Math.floor(Math.random() * _CONNECTING_TIPS.length)];
+
+  const shown = new Set();
+  const nextLine = () => {
+    if (shown.size >= _CONNECTING_LINES.length) shown.clear();
+    let pick;
+    do { pick = _CONNECTING_LINES[Math.floor(Math.random() * _CONNECTING_LINES.length)]; } while (shown.has(pick));
+    shown.add(pick);
+    lineEl.textContent = pick;
+  };
+  nextLine();
+  clearInterval(_connectingTimer);
+  _connectingTimer = setInterval(nextLine, 1800);
 }
 function _pccHideConnecting() {
+  clearInterval(_connectingTimer);
+  _connectingTimer = null;
   document.getElementById('pcc-connecting-overlay')?.remove();
 }
 
