@@ -686,6 +686,26 @@ PCC includes several layers of protection out of the box. This section summarise
 | `/etc/wireguard/wg0.conf` | WireGuard hub config |
 | `/etc/letsencrypt/live/pcc.*/` | TLS certificates |
 
+### Locked out — 2FA broken or authenticator lost
+
+If a PCC account has 2FA enabled (Admin → My Account → Two-Factor Authentication) and the
+authenticator device is lost, broken, or the code is rejected, an **admin** can normally
+disable it for you from Admin → Users → "Disable 2FA". But if the locked-out account is the
+*only* admin, there's no other account to do that from — SSH into the PCC server instead and
+run the break-glass script that ships with PCC:
+
+```bash
+cd /opt/pcc
+node reset-2fa.js --list          # see every user and their 2FA status
+node reset-2fa.js <username>      # disable 2FA for that user
+```
+
+This writes directly to `pcc.db` — no restart needed, the user can sign in with just their
+password on the next attempt. Have them re-enable 2FA once they have a working authenticator.
+
+There's no equivalent one-liner for a fully forgotten *password* yet — for now that requires
+generating a bcrypt hash and updating `users.password_hash` in `pcc.db` by hand.
+
 ---
 
 ---

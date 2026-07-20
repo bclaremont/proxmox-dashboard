@@ -72,6 +72,7 @@ These are two unrelated features that happen to share the name "2FA" — don't c
   - `POST /api/auth/login` returns `{ mfaRequired: true, pendingToken }` (5min JWT) instead of a session token when `totp_enabled`; `POST /api/auth/login/totp` exchanges `{ pendingToken, code }` for the real session token
   - `POST /api/auth/totp/setup|enable|disable` — self-service, under Admin → My Account (`openEnable2FAModal`/`openDisable2FAModal` in the HTML)
   - `POST /api/users/:id/disable-totp` — admin override for a user who lost their device, in Admin → Users
+  - `server/reset-2fa.js` — break-glass CLI for when the *only* admin is locked out (no other admin account to use the UI override from); run on the PCC server itself: `node reset-2fa.js --list` / `node reset-2fa.js <username>`. Documented in SETUP.md under Troubleshooting.
 
 ## PBS view (`view-pbs`)
 Connects directly to PBS REST API (port 8007), separate from PVE.
