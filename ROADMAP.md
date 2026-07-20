@@ -37,6 +37,8 @@ Ideas and planned improvements, compiled from all previous sessions. Items are r
 - [x] **Capacity runway** — "Node X: ~14 days until RAM full at current growth rate"; per-node and per-storage projected days-to-full from RRD linear trend; surface on Overview stat cards and DRS view
 - [ ] **"VM last seen online" tracker** — for stopped VMs, show when they last ran using task history; surface as a column or tooltip in the VM table so long-idle VMs are visible
 - [x] **VM metrics sparklines** — per-VM CPU and RAM mini-graphs in the VM table rows, following the same pattern as node sidebar sparklines
+- [ ] **Proactive health patrol** — scheduled background sweep (e.g. every 10min–24h) that flags problems with zero configured rules: failed backup jobs, storage approaching capacity, VMs stuck in a restart loop, container health failures; surfaces "silent failures" the user hasn't set a threshold for (inspired by Pulse's "Patrol")
+- [ ] **Hysteresis on alert thresholds** — require a breach to clear by a margin (e.g. drop 10% below the threshold) before re-arming, not just cross back over the line; cuts alert flapping on Overview-level `pve-alert-thresholds`, complementing the sustained-duration logic already in per-VM alerts (inspired by Pulse's "Smart Alerts")
 
 ---
 
