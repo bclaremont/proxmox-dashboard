@@ -1,6 +1,6 @@
-# Certus Command Centre (Proxmox VE Dashboard)
+# PCC — Proxmox Command Center (Proxmox VE Dashboard)
 
-> Previously "PCC — Proxmox Command Center". Rebranded to **Certus Command Centre**. JS variables (`PCC_BACKEND`, `PCC_TOKEN`) retain the PCC prefix — do not rename them.
+> Briefly rebranded to "Certus Command Centre"; reverted back to **PCC — Proxmox Command Center** per the user's request. The hexagon logo/favicon introduced during that rebrand was kept. JS variables (`PCC_BACKEND`, `PCC_TOKEN`) and the `_certusLogoHref` constant retain their existing names — do not rename them.
 
 ## Files
 - **Dev repo**: `/opt/proxmox-dashboard/` — only ever edit files here
@@ -35,7 +35,7 @@ The live deployment works like this:
 - **Cluster picker**: use `getViewConn(selId)` → `resolveConn()` to get the active connection for a view. Never manually overwrite a `.conn-sel` dropdown's innerHTML — `populateConnSelectors()` owns all of them and will overwrite manual changes
 
 ## Favicon
-- Certus hexagon logo is embedded as a base64 PNG data URI in both `proxmox-dashboard.html` and `console.html` — no external requests at runtime
+- Hexagon logo is embedded as a base64 PNG data URI in both `proxmox-dashboard.html` and `console.html` — no external requests at runtime
 - `_certusLogoHref` — const that captures the logo data URI at startup; `updateFaviconBadge()` uses it as the canvas base so alert-count badges don't overwrite the logo
 - Background colour is `#1a1a2e` (matches dark theme); if the logo is updated, ensure the PNG palette has no near-white entries or it will glow on dark browser chrome
 

@@ -1,8 +1,8 @@
-# Certus Command Centre
+# PCC — Proxmox Command Center
 
-**Certus Command Centre** is an open-source, browser-based management dashboard for [Proxmox VE](https://www.proxmox.com/en/proxmox-virtual-environment/overview). It provides a single interface across multiple clusters and standalone hosts, with features that go well beyond the standard Proxmox web UI.
+**PCC** is an open-source, browser-based management dashboard for [Proxmox VE](https://www.proxmox.com/en/proxmox-virtual-environment/overview). It provides a single interface across multiple clusters and standalone hosts, with features that go well beyond the standard Proxmox web UI.
 
-> Certus Command Centre is an independent open-source project and is not affiliated with, endorsed by, or
+> PCC is an independent open-source project and is not affiliated with, endorsed by, or
 > sponsored by Proxmox Server Solutions GmbH.
 > Proxmox® and Proxmox VE® are registered trademarks of Proxmox Server Solutions GmbH.
 
@@ -36,7 +36,7 @@
 - **Host Config Backup** — nightly snapshot of every node's DNS, timezone, network interfaces and storage config saved to SQLite; disaster-recovery reference if a host is lost and needs rebuilding; compare snapshots to see exactly what changed between runs
 - **Maintenance drain** — evacuate all VMs from a node before maintenance with one click
 - **Cross-cluster VM copy** — guided 4-step wizard to cold-copy a VM between clusters (vzdump → scp → vzrestore); useful for DR and cluster migrations
-- **Config export/import** — backup and restore all Certus Command Centre settings (rules, schedules, webhooks, specs) as a JSON file; supports merge or full-replace import
+- **Config export/import** — backup and restore all PCC settings (rules, schedules, webhooks, specs) as a JSON file; supports merge or full-replace import
 
 ### Monitoring & alerting
 - **SMART + ZFS health** — per-node physical disk health (SMART status, temperature, wearout) and ZFS pool status (health, usage, fragmentation)
@@ -70,9 +70,9 @@
 - **Tags** — manage allowed VM/CT tags cluster-wide
 
 ### Standalone server mode
-When deployed on its own Debian VM, Certus Command Centre adds team and security features:
+When deployed on its own Debian VM, PCC adds team and security features:
 - **Per-user logins** with roles (admin / user)
-- **IP allowlist** — restrict access to defined CIDR ranges; 127.0.0.1 always permitted
+- **IP allowlist** — restrict PCC access to defined CIDR ranges; 127.0.0.1 always permitted
 - **Login activity log** — every login attempt recorded with IP, timestamp, success/failure and browser
 - **Idle session timeout** — configurable auto-logout (15 min – 8 hours) with 60-second warning banner
 - **Shared settings** — profiles, affinity rules, saved views and schedules synced across the team
@@ -92,7 +92,7 @@ When deployed on its own Debian VM, Certus Command Centre adds team and security
 
 ## Architecture
 
-Certus Command Centre is a **single HTML file** at its core — no build step, no framework.
+PCC is a **single HTML file** at its core — no build step, no framework.
 
 ```
 proxmox-dashboard.html   — the entire dashboard UI and client-side logic
@@ -124,7 +124,7 @@ See **[SETUP.md](SETUP.md)** for full installation instructions.
 
 ## Quick start (direct mode)
 
-The fastest way to try Certus Command Centre — runs on any Proxmox host in a few minutes:
+The fastest way to try PCC — runs on any Proxmox host in a few minutes:
 
 ```bash
 # On the Proxmox host
@@ -155,7 +155,7 @@ For production use with HTTPS, team logins and 24/7 scheduling, see the [standal
 - Proxmox API tokens **encrypted at rest** (AES-256-GCM)
 - Login **rate limiting** (per-IP) + **account lockout** (per-username)
 - JWT **revocation on logout**, 4-hour token expiry with auto-refresh; minimum 32-char secret enforced at startup
-- **IP allowlist** — restrict access to named CIDR ranges (standalone mode)
+- **IP allowlist** — restrict PCC access to named CIDR ranges (standalone mode)
 - **Login activity log** — every attempt recorded with IP, UA, success/failure
 - **Idle session timeout** — configurable auto-logout with 60-second warning
 - Full **audit log** of all write operations including auth events

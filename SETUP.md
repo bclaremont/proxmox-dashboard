@@ -1,12 +1,12 @@
-# Certus Command Centre
+# PCC
 ## Setup Guide
 
-**Certus Command Centre** is an open-source, browser-based management dashboard for
+**PCC** is an open-source, browser-based management dashboard for
 Proxmox VE. It goes beyond the standard Proxmox web UI to give you a single pane of glass
 across multiple clusters and standalone hosts — whether they're on the same LAN or spread
 across different client sites.
 
-Out of the box Certus Command Centre gives you:
+Out of the box PCC gives you:
 
 - **Unified fleet view** — all your VMs, containers, nodes and storage across every connected
   cluster in one interface, with live resource gauges, heatmaps and cluster graphs
@@ -19,21 +19,21 @@ Out of the box Certus Command Centre gives you:
 - **Advanced fleet management** — maintenance drain, affinity/anti-affinity rules, storage
   DRS, per-VM alerts, VM customisation specs, host profiles, scheduled operations, and more — all free and open source
 
-Certus Command Centre is a single HTML file at its core, served by either a lightweight Node.js backend
+PCC is a single HTML file at its core, served by either a lightweight Node.js backend
 (standalone mode) or directly from a Proxmox host via nginx (direct mode). There is no
 database to manage beyond a single SQLite file, no Docker, no Kubernetes, no fuss.
 
-> Certus Command Centre is an independent open-source project and is not affiliated with, endorsed by, or
+> PCC is an independent open-source project and is not affiliated with, endorsed by, or
 > sponsored by Proxmox Server Solutions GmbH. Proxmox® and Proxmox VE® are registered
 > trademarks of Proxmox Server Solutions GmbH.
 
 ---
 
-Certus Command Centre can be deployed in two ways. Choose the one that fits your situation:
+PCC can be deployed in two ways. Choose the one that fits your situation:
 
 | | **Standalone VM** ✅ Recommended | **Direct mode** |
 |---|---|---|
-| **What it is** | Runs on its own Debian VM with a Node.js backend | Runs on a Proxmox host, served by nginx |
+| **What it is** | PCC runs on its own Debian VM with a Node.js backend | PCC runs on a Proxmox host, served by nginx |
 | **Separate VM needed** | Yes — any Debian VM (1 vCPU, 512 MB RAM, 10 GB) | No |
 | **nginx** | ✅ Installed automatically by `setup.sh` | ❌ Must install and configure manually |
 | **Node.js backend** | ✅ Installed automatically by `setup.sh` | ❌ Not used |
@@ -86,7 +86,7 @@ apt update && apt upgrade -y
 
 ### Firewall (UFW)
 
-Only open the ports Certus Command Centre actually needs:
+Only open the ports PCC actually needs:
 
 ```bash
 apt install -y ufw
@@ -176,14 +176,14 @@ systemctl start apparmor
 aa-status
 ```
 
-After the Certus Command Centre setup is complete and nginx is running, confirm its profile is enforcing:
+After the PCC setup is complete and nginx is running, confirm its profile is enforcing:
 
 ```bash
 aa-status | grep nginx
 # Should show: /usr/sbin/nginx (enforce)
 ```
 
-> **What about the Certus Command Centre Node.js backend?**
+> **What about the PCC Node.js backend?**
 > Writing a tight AppArmor profile for a Node.js application that makes outbound connections
 > to Proxmox hosts on dynamic IPs and ports is non-trivial. Getting it wrong causes silent
 > failures that are hard to debug. The backend runs as a dedicated `pcc` system user with
@@ -212,7 +212,7 @@ dig +short pcc.yourdomain.com
 
 ---
 
-## Step 4 — Get Certus Command Centre files onto the Debian VM
+## Step 4 — Get PCC files onto the Debian VM
 
 SSH into the new Debian VM, then run:
 
@@ -301,8 +301,8 @@ At the end you'll see:
 
 1. Open `https://pcc.yourdomain.com` in your browser
 2. Log in with `admin` and the password shown after setup
-3. Go to **Admin → My Account → Change Password** and set a strong password
-4. Optionally add team members under **Admin → Users**
+3. Go to **Admin → PCC Admin → My Account → Change Password** and set a strong password
+4. Optionally add team members under **Admin → PCC Admin → Users**
 
 ---
 
@@ -316,7 +316,7 @@ In the **Proxmox web UI** (`https://your-pve-host:8006`):
 2. Fill in:
    - **User:** `root@pam`
    - **Token ID:** `pcc`
-   - **Privilege Separation:** ☐ (unchecked — Certus Command Centre needs full access)
+   - **Privilege Separation:** ☐ (unchecked — PCC needs full access)
 3. Click **Add**
 4. **Copy the token secret** shown — it is only displayed once
 
@@ -339,7 +339,7 @@ Common mistakes: missing the `PVEAPIToken=` prefix · missing the `!` between us
 
 ## Step 8 — Add your first cluster
 
-In Certus Command Centre, go to **Admin → Clusters → + Add Cluster**:
+In PCC, go to **Admin → PCC Admin → Clusters → + Add Cluster**:
 
 | Field | Value |
 |---|---|
@@ -350,20 +350,20 @@ In Certus Command Centre, go to **Admin → Clusters → + Add Cluster**:
 | **Sort order** | `0` (primary cluster) |
 
 > **Host URL options:**
-> - **Same LAN as the VM:** use `https://pve-ip:8006` directly — the server can reach it
+> - **Same LAN as PCC VM:** use `https://pve-ip:8006` directly — the PCC server can reach it
 > - **Remote site:** use the WireGuard IP (see Step 8) — `https://10.99.0.x:8006`
-> - The backend proxies all API calls server-side, so the browser never connects to Proxmox directly
+> - The PCC backend proxies all API calls server-side, so the browser never connects to Proxmox directly
 
-Click **Add**, then **sign out and back in** — Certus Command Centre will auto-connect on login.
+Click **Add**, then **sign out and back in** — PCC will auto-connect on login.
 
 ---
 
 ## Step 9 — Add a remote site via WireGuard
 
 For Proxmox clusters at **different locations** (client sites, remote DCs), use WireGuard so the
-server can reach them securely without exposing the Proxmox API to the internet.
+PCC server can reach them securely without exposing the Proxmox API to the internet.
 
-On the **Debian VM**, run:
+On the **PCC Debian VM**, run:
 
 ```bash
 sudo bash /opt/pcc/add-site.sh --name "Client A" --wg-ip 10.99.0.2
@@ -414,12 +414,12 @@ Repeat for each additional site, incrementing the WireGuard IP:
 
 ### High availability for multi-node remote clusters
 
-**The problem:** If a remote site is a Proxmox cluster (multiple nodes) and you connect
-to a single node, losing that node loses visibility for the whole cluster — even though
+**The problem:** If a remote site is a Proxmox cluster (multiple nodes) and you connect PCC
+to a single node, losing that node loses PCC visibility for the whole cluster — even though
 the other nodes are healthy.
 
 **The solution:** Use `keepalived` so the WireGuard tunnel automatically moves to another
-node if the primary goes down. Certus Command Centre always connects to the same WireGuard IP and never
+node if the primary goes down. PCC always connects to the same WireGuard IP and never
 notices the failover.
 
 **How it works:** All nodes in the cluster share the same WireGuard private key and IP.
@@ -497,8 +497,8 @@ ip addr show wg0 # should show 10.99.0.x
 
 On the backup nodes, `wg show` should show nothing (WireGuard not running there).
 
-**7. In Admin → Clusters** — use the same WireGuard IP as always (`https://10.99.0.x:8006`).
-Nothing changes on the Certus Command Centre side. The hub's peer entry in `wg0.conf` stays identical.
+**7. In PCC Admin → Clusters** — use the same WireGuard IP as always (`https://10.99.0.x:8006`).
+Nothing changes on the PCC side. The hub's peer entry in `wg0.conf` stays identical.
 
 #### Testing failover
 
@@ -512,7 +512,7 @@ Within 3 seconds, the backup node should take over. Check on the backup:
 wg show   # should now show the WireGuard interface
 ```
 
-Certus Command Centre should continue working without any manual intervention.
+PCC should continue working without any manual intervention.
 
 > **Note:** `nopreempt` prevents the original master from taking back control when it recovers.
 > This avoids unnecessary tunnel flaps. Remove it if you prefer the highest-priority node to
@@ -522,7 +522,7 @@ Certus Command Centre should continue working without any manual intervention.
 
 ## Step 10 — Add team members
 
-Go to **Admin → Users → + Add User**:
+Go to **Admin → PCC Admin → Users → + Add User**:
 
 | Field | Note |
 |---|---|
@@ -548,7 +548,7 @@ journalctl -u pcc -f          # live logs
 systemctl restart pcc
 ```
 
-### Update Certus Command Centre to latest version
+### Update PCC to latest version
 
 **The easy way — `pcc-update` command**
 
@@ -620,7 +620,7 @@ For offsite backup, copy `pcc.db` anywhere — it's a single self-contained file
 
 ## Security reference
 
-Certus Command Centre includes several layers of protection out of the box. This section summarises what is built in so you know what is and isn't covered.
+PCC includes several layers of protection out of the box. This section summarises what is built in so you know what is and isn't covered.
 
 ### Authentication
 
@@ -657,7 +657,7 @@ Certus Command Centre includes several layers of protection out of the box. This
 
 ### What is NOT covered (and why)
 
-- **Content Security Policy** — Certus Command Centre uses inline `<script>` blocks throughout the single-file HTML. A meaningful CSP would require a large refactor and is not yet implemented.
+- **Content Security Policy** — PCC uses inline `<script>` blocks throughout the single-file HTML. A meaningful CSP would require a large refactor and is not yet implemented.
 - **JWT revocation across restarts** — the revocation blacklist is in-memory. A server restart clears it. Acceptable because tokens expire in 4h anyway.
 - **Direct mode HTTPS** — adding TLS to the direct mode nginx requires a certificate. Add one (self-signed or Let's Encrypt) if you need HTTPS on port 8080.
 
@@ -671,8 +671,8 @@ Certus Command Centre includes several layers of protection out of the box. This
 | `502 Bad Gateway` | `systemctl status pcc` — the Node.js process may have crashed |
 | Let's Encrypt failed | Verify port 80 is reachable: `curl http://pcc.yourdomain.com` from outside |
 | Can't reach Proxmox | Check WireGuard: `wg show` — look for latest handshake time |
-| WireGuard no handshake | Port 51820/UDP must be open inbound on the standalone VM |
-| Console not working | Browser must be able to reach the standalone server; WireGuard tunnel must be up |
+| WireGuard no handshake | Port 51820/UDP must be open inbound on the PCC VM |
+| Console not working | Browser must be able to reach PCC server; WireGuard tunnel must be up |
 | Cluster shows error | Test API token: `curl -k -H "Authorization: PVEAPIToken=..." https://pve:8006/api2/json/version` |
 
 ### Key file locations
@@ -681,7 +681,7 @@ Certus Command Centre includes several layers of protection out of the box. This
 |---|---|
 | `/opt/pcc/.env` | JWT secret, DB path, admin password (readable by root only) |
 | `/opt/pcc/data/pcc.db` | SQLite database — all config, users, schedules |
-| `/opt/pcc/public/index.html` | Certus Command Centre dashboard HTML |
+| `/opt/pcc/public/index.html` | PCC dashboard HTML |
 | `/etc/nginx/sites-available/pcc` | nginx HTTPS config |
 | `/etc/wireguard/wg0.conf` | WireGuard hub config |
 | `/etc/letsencrypt/live/pcc.*/` | TLS certificates |
@@ -692,7 +692,7 @@ Certus Command Centre includes several layers of protection out of the box. This
 
 ## Part B — Direct Mode (Proxmox host, no separate VM)
 
-Direct mode runs Certus Command Centre directly on a Proxmox host, served by nginx on port 8080.
+Direct mode runs PCC directly on a Proxmox host, served by nginx on port 8080.
 nginx acts as a reverse proxy to the Proxmox API on port 8006.
 
 > **Note:** Proxmox does **not** include nginx — it uses its own `pveproxy` on port 8006.
@@ -730,13 +730,13 @@ nginx -t && systemctl reload nginx
 rm -rf /tmp/pcc-src
 ```
 
-Certus Command Centre is now available at `http://your-pve-ip:8080`.
+PCC is now available at `http://your-pve-ip:8080`.
 
 Open it in your browser and connect with your Proxmox credentials (username e.g. `root@pam`).
 
 ### Keeping direct mode up to date
 
-When a new version of Certus Command Centre is released:
+When a new version of PCC is released:
 
 ```bash
 git clone https://github.com/bclaremont/proxmox-dashboard.git /tmp/pcc-update
@@ -756,4 +756,4 @@ No nginx restart needed — the HTML is served as static files.
 
 ---
 
-*Certus Command Centre is an independent open-source project and is not affiliated with, endorsed by, or sponsored by Proxmox Server Solutions GmbH. Proxmox® and Proxmox VE® are registered trademarks of Proxmox Server Solutions GmbH.*
+*PCC is an independent open-source project and is not affiliated with, endorsed by, or sponsored by Proxmox Server Solutions GmbH. Proxmox® and Proxmox VE® are registered trademarks of Proxmox Server Solutions GmbH.*
