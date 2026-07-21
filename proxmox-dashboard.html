@@ -98,6 +98,10 @@
     .pcc-tree{margin:4px 0;}
     .pcc-tree-row{display:flex;align-items:center;gap:6px;padding:6px 6px;border-radius:6px;cursor:pointer;font-size:12.5px;white-space:nowrap;overflow:hidden;}
     .pcc-tree-row:hover{background:var(--bg3);}
+    .pcc-tree-row.active{background:rgba(249,115,22,.15);box-shadow:inset 3px 0 0 var(--accent);}
+    .pcc-tree-hover-btn{display:none;flex-shrink:0;align-items:center;justify-content:center;width:16px;height:16px;border-radius:4px;font-size:9px;color:var(--muted);}
+    .pcc-tree-row:hover .pcc-tree-hover-btn{display:flex;}
+    .pcc-tree-hover-btn:hover{background:var(--bg2);color:var(--accent);}
     .pcc-tree-toggle{width:11px;flex-shrink:0;text-align:center;color:var(--muted);cursor:pointer;}
     .pcc-tree-toggle::before{content:'▸';display:inline-block;font-size:9px;transition:transform .12s;}
     .pcc-tree-toggle.leaf::before{content:'';}
@@ -5235,6 +5239,7 @@ async function loadSnapshots(node, type, vmid, get=pveGet) {
 
 async function openDetail(item) {
   currentDetail = item;
+  renderSidebarTree();
   destroyCharts();
   document.getElementById('detail-panel').classList.add('open');
   document.getElementById('detail-overlay').classList.add('open');
@@ -5269,6 +5274,7 @@ async function openDetail(item) {
 
 async function openNodeDetail(nodeData) {
   currentDetail = {...nodeData, _isNode:true};
+  renderSidebarTree();
   destroyCharts();
   document.getElementById('detail-panel').classList.add('open');
   document.getElementById('detail-overlay').classList.add('open');
@@ -5299,6 +5305,7 @@ function closeDetail() {
   if (btn) btn.textContent = '⤢';
   destroyCharts();
   currentDetail = null;
+  renderSidebarTree();
   document.querySelectorAll('.dtab').forEach(t=>t.style.display='');
 }
 
@@ -5835,10 +5842,13 @@ function destroyCharts() {
 
 // ── POWER ACTIONS ─────────────────────────────────────────
 
-async function vmAction(node, vmid, type, action) {
+async function vmAction(node, vmid, type, action, connId='') {
   const endpoint = type==='vm'?'qemu':'lxc';
+  const path = `/api2/json/nodes/${node}/${endpoint}/${vmid}/status/${action}`;
   try {
-    await pvePost(`/api2/json/nodes/${node}/${endpoint}/${vmid}/status/${action}`);
+    const conn = resolveConn(connId);
+    if (conn) await connPost(conn, path);
+    else await pvePost(path);
     toast(`${action} sent to ${type.toUpperCase()} ${vmid}`,'success');
     setTimeout(refreshAll,2000);
   } catch(e) { toast(`Failed to ${action} ${vmid}: `+e.message,'error'); }
@@ -6334,6 +6344,7 @@ function togglePin(node, vmid, connId) {
   if (_pinnedVMs.has(k)) _pinnedVMs.delete(k); else _pinnedVMs.add(k);
   localStorage.setItem('pcc-pins', JSON.stringify([..._pinnedVMs]));
   renderCurrentView();
+  renderSidebarTree();
 }
 
 function _hl(text, q) {
@@ -7283,6 +7294,47 @@ function _pccTreeGroupsForConn(conn) {
   return groups;
 }
 
+// ── Current-selection matching (highlight + auto-reveal) ──
+function _pccTreeGuestMatchesCurrent(guest) {
+  if (!currentDetail || currentDetail._isNode) return false;
+  return String(guest.vmid) === String(currentDetail.vmid)
+      && guest._kind === currentDetail.type
+      && (guest.connId||'') === (currentDetail.connId||'');
+}
+function _pccTreeNodeMatchesCurrent(nodeObj) {
+  if (!currentDetail || !currentDetail._isNode) return false;
+  return nodeObj.node === currentDetail.node && (nodeObj.connId||'') === (currentDetail.connId||'');
+}
+function _pccTreeGroupHasCurrent(g) {
+  if (g.isNode && _pccTreeNodeMatchesCurrent(g.nodeObj)) return true;
+  return g.guests.some(_pccTreeGuestMatchesCurrent);
+}
+function _pccTreeCurrentIdentity() {
+  if (!currentDetail) return null;
+  return currentDetail._isNode
+    ? `node|${currentDetail.connId||''}|${currentDetail.node}`
+    : `guest|${currentDetail.connId||''}|${currentDetail.type}|${currentDetail.vmid}`;
+}
+let _pccTreeLastScrolledIdentity;
+
+// Renders one guest leaf row: icon, name/id, and a hover-reveal start/shutdown button.
+function _pccTreeRenderGuestRow(guest, kKey) {
+  _pccTreeRegistry[kKey] = guest;
+  const label   = guest.name || `${guest._kind==='vm'?'VM':'CT'} ${guest.vmid}`;
+  const active  = _pccTreeGuestMatchesCurrent(guest) ? ' active' : '';
+  const cid     = guest.connId||'';
+  const actionBtn = guest.status === 'running'
+    ? `<span class="pcc-tree-hover-btn" title="Shutdown" onclick="event.stopPropagation();confirmAction('${guest.node}','${guest.vmid}','${guest._kind}','shutdown','${cid}')">⏻</span>`
+    : `<span class="pcc-tree-hover-btn" title="Start" onclick="event.stopPropagation();vmAction('${guest.node}','${guest.vmid}','${guest._kind}','start','${cid}')">▶</span>`;
+  return `<div class="pcc-tree-row${active}" onclick="_pccTreeOpenGuest('${kKey}')" title="${escHtml(label)} · ${guest._kind==='vm'?'VM':'CT'}">
+    <span class="pcc-tree-toggle leaf"></span>
+    <span class="pcc-tree-icon">${_pccTreeGuestIcon(guest)}</span>
+    <span class="pcc-tree-label">${escHtml(label)}</span>
+    ${actionBtn}
+    <span class="pcc-tree-count">#${guest.vmid}</span>
+  </div>`;
+}
+
 function renderSidebarTree() {
   const root = document.getElementById('sidebar-tree');
   if (!root) return;
@@ -7306,11 +7358,33 @@ function renderSidebarTree() {
   }
 
   let html = '';
+
+  // Pinned VMs/CTs — cross-cluster, flat, above the per-connection tree
+  const pinned = conns
+    .flatMap(c => [...c.vms.map(v=>({...v,_kind:'vm'})), ...c.containers.map(x=>({...x,_kind:'ct'}))])
+    .filter(_isPinned)
+    .sort((a,b) => (a.name||'').localeCompare(b.name||''));
+  if (pinned.length) {
+    const pinnedHasCurrent = pinned.some(_pccTreeGuestMatchesCurrent);
+    const pinnedCollapsed  = _pccTreeCollapsed('pinned') && !pinnedHasCurrent;
+    html += `<div class="pcc-tree-node${pinnedCollapsed?' collapsed':''}" id="pcc-tree-pinned">
+      <div class="pcc-tree-row">
+        <span class="pcc-tree-toggle" onclick="event.stopPropagation();_pccTreeToggle('pinned')"></span>
+        <span class="pcc-tree-icon" style="color:var(--accent)">★</span>
+        <span class="pcc-tree-label">Pinned</span>
+        <span class="pcc-tree-count">${pinned.length}</span>
+      </div>
+      <div class="pcc-tree-children">`;
+    pinned.forEach((guest, i) => html += _pccTreeRenderGuestRow(guest, 'pinned-' + i));
+    html += `</div></div>`;
+  }
+
   for (const conn of conns) {
     if (!conn.nodeStatuses.length && conn.id) continue; // hide extra connections with no data (not yet loaded / errored)
-    const connKey   = 'conn-' + _pccTreeSafeId(conn.id || 'primary');
-    const collapsed = _pccTreeCollapsed(connKey);
-    const groups    = _pccTreeGroupsForConn(conn);
+    const connKey        = 'conn-' + _pccTreeSafeId(conn.id || 'primary');
+    const groups          = _pccTreeGroupsForConn(conn);
+    const connHasCurrent  = groups.some(_pccTreeGroupHasCurrent);
+    const collapsed        = _pccTreeCollapsed(connKey) && !connHasCurrent;
 
     html += `<div class="pcc-tree-node${collapsed?' collapsed':''}" id="pcc-tree-${connKey}">
       <div class="pcc-tree-row">
@@ -7322,32 +7396,28 @@ function renderSidebarTree() {
       <div class="pcc-tree-children">`;
 
     for (const g of groups) {
-      const gKey       = connKey + '-' + g.key;
-      const gCollapsed = _pccTreeCollapsed(gKey) || _pccTreeCompact;
-      const guestCount = g.guests.length;
+      const gKey          = connKey + '-' + g.key;
+      const groupHasCurrent = _pccTreeGroupHasCurrent(g);
+      const gCollapsed    = (_pccTreeCollapsed(gKey) || _pccTreeCompact) && !groupHasCurrent;
+      const guestCount    = g.guests.length;
+      const isGroupActive = g.isNode && _pccTreeNodeMatchesCurrent(g.nodeObj);
       if (g.isNode) _pccTreeRegistry[gKey] = g.nodeObj;
       const openAttr = g.isNode ? `onclick="_pccTreeOpenNode('${gKey}')"` : (g.onOpen ? `onclick="${g.onOpen}"` : '');
+      const showGuests = !_pccTreeCompact || groupHasCurrent; // reveal the whole branch if it contains the open item, even under compact mode
 
       html += `<div class="pcc-tree-node${gCollapsed?' collapsed':''}" id="pcc-tree-${gKey}">
-        <div class="pcc-tree-row">
-          <span class="pcc-tree-toggle${(guestCount&&!_pccTreeCompact)?'':' leaf'}" onclick="event.stopPropagation();_pccTreeToggle('${gKey}')"></span>
+        <div class="pcc-tree-row${isGroupActive?' active':''}">
+          <span class="pcc-tree-toggle${(guestCount&&showGuests)?'':' leaf'}" onclick="event.stopPropagation();_pccTreeToggle('${gKey}')"></span>
           <span class="pcc-tree-dot" style="background:${g.dotColor||'var(--muted)'}" title="${escHtml(g.dotTitle||'')}"></span>
           <span class="pcc-tree-label" ${openAttr} title="${escHtml(g.label)}">${escHtml(g.label)}</span>
           <span class="pcc-tree-count">${guestCount}</span>
         </div>
         <div class="pcc-tree-children">`;
 
-      if (!_pccTreeCompact) {
+      if (showGuests) {
         for (const guest of g.guests) {
           const kKey = gKey + '-' + guest._kind + '-' + _pccTreeSafeId(String(guest.vmid));
-          _pccTreeRegistry[kKey] = guest;
-          const label = guest.name || `${guest._kind==='vm'?'VM':'CT'} ${guest.vmid}`;
-          html += `<div class="pcc-tree-row" onclick="_pccTreeOpenGuest('${kKey}')" title="${escHtml(label)} · ${guest._kind==='vm'?'VM':'CT'}">
-            <span class="pcc-tree-toggle leaf"></span>
-            <span class="pcc-tree-icon">${_pccTreeGuestIcon(guest)}</span>
-            <span class="pcc-tree-label">${escHtml(label)}</span>
-            <span class="pcc-tree-count">#${guest.vmid}</span>
-          </div>`;
+          html += _pccTreeRenderGuestRow(guest, kKey);
         }
       }
       html += `</div></div>`;
@@ -7355,6 +7425,16 @@ function renderSidebarTree() {
     html += `</div></div>`;
   }
   root.innerHTML = html;
+
+  // Auto-scroll to the currently-open item, but only once per newly-opened item —
+  // not on every periodic refresh, so we don't yank the sidebar while browsing elsewhere.
+  const identity = _pccTreeCurrentIdentity();
+  if (identity && identity !== _pccTreeLastScrolledIdentity) {
+    _pccTreeLastScrolledIdentity = identity;
+    root.querySelector('.pcc-tree-row.active')?.scrollIntoView({ block:'nearest' });
+  } else if (!identity) {
+    _pccTreeLastScrolledIdentity = undefined;
+  }
 }
 
 // ── COLLAPSIBLE SIDEBAR SECTIONS ──────────────────────────
