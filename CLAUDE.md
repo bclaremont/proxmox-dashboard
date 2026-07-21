@@ -63,6 +63,9 @@ Moves one or more VM/CT disks to a different storage on the same node.
 - `_executeMoveDisk()` — iterates selected disks, POSTs `move_disk` (VM) or `move_volume` (LXC), registers each UPID with task monitor; skips disks already on target; blocks if CT is running
 - APIs: `POST /nodes/{node}/qemu/{vmid}/move_disk`, `POST /nodes/{node}/lxc/{vmid}/move_volume`
 
+## Fail2Ban status (Admin → Security) is deliberately read-only
+`pcc.service` runs as an unprivileged `pcc` user with `NoNewPrivileges=yes` — that flag blocks sudo-based privilege escalation, not just direct root exec, so there's no clean way to give the Node process live `fail2ban-client` access (which needs root) without weakening that hardening for the whole service. The design instead: a root-owned systemd timer (`server/pcc-fail2ban-status.service`/`.timer`, script at `server/fail2ban-status.sh`) dumps status to `/opt/pcc/data/fail2ban-status.json` every 30s; `GET /api/admin/fail2ban` in `server.js` just reads that file. **Don't add an "unban" button by reaching for `fail2ban-client` directly from server.js** — it'll fail (no permission) or require re-opening the NoNewPrivileges tradeoff. If unban is ever wanted, the discussed safe path is a second root-owned watcher polling a request queue the `pcc` user can write to (mirrors how the read side already avoids granting the app any new privilege). Setup is optional and manual — see SETUP.md "Fail2Ban dashboard status (optional)" — `pcc-update` keeps `fail2ban-status.sh` current but does not install/enable the systemd units themselves.
+
 ## PCC's own 2FA (login) vs the `view-tfa` "2FA" tab
 These are two unrelated features that happen to share the name "2FA" — don't conflate them.
 - **`view-tfa`** (`loadTFA`, `_pbsRenderOverview`-adjacent code around proxmox-dashboard.html's "2FA MANAGEMENT" section) manages 2FA on the **Proxmox VE cluster's own accounts** via PVE's `/access/tfa` API. It has nothing to do with logging into PCC.

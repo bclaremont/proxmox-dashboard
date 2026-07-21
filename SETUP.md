@@ -129,6 +129,33 @@ systemctl restart fail2ban
 fail2ban-client status
 ```
 
+**Optional — show fail2ban status in the PCC dashboard (Admin → Security):**
+
+`fail2ban-client` needs root, and the `pcc` service intentionally runs as an unprivileged
+user with `NoNewPrivileges=yes` (so it can't be granted sudo access to run it directly).
+Instead, a small root-owned timer dumps status to a JSON file every 30s that the `pcc`
+user can read — the dashboard only ever reads that file. This is read-only: there's no
+"unban" button, since that would need a way for the unprivileged service to trigger a
+privileged action, which is exactly what this design avoids.
+
+```bash
+# fail2ban-status.sh is already at /opt/pcc/ after running pcc-update (or the manual
+# full update) — this only needs to be run once, to install and enable the timer.
+chmod +x /opt/pcc/fail2ban-status.sh
+
+cd /tmp && git clone --depth 1 https://github.com/bclaremont/proxmox-dashboard.git pcc-f2b-setup
+cp pcc-f2b-setup/server/pcc-fail2ban-status.service /etc/systemd/system/
+cp pcc-f2b-setup/server/pcc-fail2ban-status.timer   /etc/systemd/system/
+rm -rf pcc-f2b-setup
+
+systemctl daemon-reload
+systemctl enable --now pcc-fail2ban-status.timer
+
+# Check it ran and produced output the pcc user can read
+systemctl status pcc-fail2ban-status.timer --no-pager
+cat /opt/pcc/data/fail2ban-status.json
+```
+
 ### Automatic security updates
 
 ```bash
@@ -586,6 +613,8 @@ git clone https://github.com/bclaremont/proxmox-dashboard.git /tmp/pcc-update
 cp /tmp/pcc-update/server/server.js       /opt/pcc/server.js
 cp /tmp/pcc-update/server/package.json    /opt/pcc/package.json
 cp /tmp/pcc-update/server/reset-2fa.js    /opt/pcc/reset-2fa.js
+cp /tmp/pcc-update/server/fail2ban-status.sh /opt/pcc/fail2ban-status.sh
+chmod +x /opt/pcc/fail2ban-status.sh
 cp /tmp/pcc-update/proxmox-dashboard.html /opt/pcc/public/index.html
 cp /tmp/pcc-update/console.html           /opt/pcc/public/console.html
 cp -r /tmp/pcc-update/vendor              /opt/pcc/public/vendor
@@ -682,6 +711,7 @@ PCC includes several layers of protection out of the box. This section summarise
 |---|---|
 | `/opt/pcc/.env` | JWT secret, DB path, admin password (readable by root only) |
 | `/opt/pcc/data/pcc.db` | SQLite database — all config, users, schedules |
+| `/opt/pcc/data/fail2ban-status.json` | Written every 30s by `pcc-fail2ban-status.timer` (optional, root-owned) — read-only source for Admin → Security's fail2ban card |
 | `/opt/pcc/public/index.html` | PCC dashboard HTML |
 | `/etc/nginx/sites-available/pcc` | nginx HTTPS config |
 | `/etc/wireguard/wg0.conf` | WireGuard hub config |

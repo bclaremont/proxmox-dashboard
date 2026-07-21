@@ -17,6 +17,8 @@ echo "Copying files..."
 cp "$TMP/server/server.js"       /opt/pcc/server.js
 cp "$TMP/server/package.json"    /opt/pcc/package.json
 cp "$TMP/server/reset-2fa.js"    /opt/pcc/reset-2fa.js
+cp "$TMP/server/fail2ban-status.sh" /opt/pcc/fail2ban-status.sh
+chmod +x /opt/pcc/fail2ban-status.sh
 cp "$TMP/proxmox-dashboard.html" /opt/pcc/public/index.html
 cp "$TMP/console.html"           /opt/pcc/public/console.html
 cp -r "$TMP/vendor"              /opt/pcc/public/vendor

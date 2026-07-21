@@ -2473,6 +2473,7 @@ async function _renderPCCAdminTab() {
     const idleTimeout = sRes.idle_timeout_mins || 0;
     setTimeout(loadDigestSettings, 50);
     setTimeout(renderAlertSuppressionSettings, 50);
+    setTimeout(loadFail2banStatus, 50);
 
     el.innerHTML = `
       <!-- IP Allowlist -->
@@ -2516,6 +2517,13 @@ async function _renderPCCAdminTab() {
         <div style="font-size:14px;font-weight:700;margin-bottom:4px">Alert Suppression</div>
         <div style="font-size:12px;color:var(--muted);margin-bottom:12px">When you dismiss a health warning on the Overview page, how long should that category of warning stay hidden (unless the underlying condition changes first)?</div>
         <div id="alert-suppress-rows" style="display:flex;flex-direction:column;gap:9px"></div>
+      </div>
+
+      <!-- Fail2Ban -->
+      <div style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);padding:18px;margin-bottom:16px">
+        <div style="font-size:14px;font-weight:700;margin-bottom:4px">Fail2Ban</div>
+        <div style="font-size:12px;color:var(--muted);margin-bottom:12px">Read-only status from the PCC server's own fail2ban, if configured. Written every 30s by a small root-owned timer — see SETUP.md.</div>
+        <div id="fail2ban-body"><div class="empty"><span class="loading"></span></div></div>
       </div>
 
       <!-- Digest -->
@@ -4322,6 +4330,47 @@ function _updateAlertSuppression(cat, hours) {
   s[cat] = parseInt(hours, 10);
   saveAlertSuppression(s);
   toast('Suppression duration updated', 'success');
+}
+
+async function loadFail2banStatus() {
+  const el = document.getElementById('fail2ban-body');
+  if (!el) return;
+  let d;
+  try {
+    const r = await fetch('/api/admin/fail2ban', { headers: { Authorization: 'Bearer ' + PCC_TOKEN } });
+    d = await r.json();
+  } catch(e) {
+    el.innerHTML = `<div class="empty">Failed to load: ${escHtml(e.message)}</div>`;
+    return;
+  }
+
+  if (!d.configured) {
+    el.innerHTML = `<div style="font-size:12px;color:var(--muted)">Not set up yet — see SETUP.md "Fail2Ban dashboard status (optional)" to enable this.</div>`;
+    return;
+  }
+  if (!d.available) {
+    el.innerHTML = `<div style="font-size:12px;color:var(--muted)">fail2ban isn't installed or isn't running on this server.</div>`;
+    return;
+  }
+
+  const staleNote = d.stale ? `<div style="font-size:11px;color:var(--yellow);margin-bottom:8px">⚠ Status is over 5 minutes old — check pcc-fail2ban-status.timer is still running.</div>` : '';
+
+  if (!d.jails || !d.jails.length) {
+    el.innerHTML = staleNote + `<div class="empty">No jails configured.</div>`;
+    return;
+  }
+
+  el.innerHTML = staleNote + d.jails.map(j => `
+    <div style="border:1px solid var(--border);border-radius:var(--radius);padding:10px 14px;margin-bottom:8px">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:${j.bannedIPs.length?'8px':'0'}">
+        <strong style="font-family:monospace;font-size:13px">${escHtml(j.name)}</strong>
+        <span class="badge ${j.currentlyBanned>0?'stopped':'running'}" style="font-size:10px"><span class="badge-dot"></span>${j.currentlyBanned} currently banned</span>
+        <span style="font-size:11px;color:var(--muted);margin-left:auto">${j.totalBanned} total banned · ${j.totalFailed} total failures</span>
+      </div>
+      ${j.bannedIPs.length ? `<div style="display:flex;flex-wrap:wrap;gap:5px">${j.bannedIPs.map(ip=>
+        `<span style="font-family:monospace;font-size:11px;background:var(--bg3);border:1px solid var(--border);border-radius:12px;padding:2px 9px">${escHtml(ip)}</span>`
+      ).join('')}</div>` : ''}
+    </div>`).join('');
 }
 
 function _healthAck(key, cat) {

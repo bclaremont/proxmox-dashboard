@@ -1,0 +1,7 @@
+[Unit]
+Description=PCC — dump fail2ban status for the dashboard (read-only)
+ConditionFileIsExecutable=/opt/pcc/fail2ban-status.sh
+
+[Service]
+Type=oneshot
+ExecStart=/opt/pcc/fail2ban-status.sh

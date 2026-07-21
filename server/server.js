@@ -19,6 +19,7 @@ const path     = require('path');
 const url      = require('url');
 const net      = require('net');
 const crypto   = require('crypto');
+const fs       = require('fs');
 
 const PORT       = parseInt(process.env.PORT || '3000');
 const JWT_SECRET = process.env.JWT_SECRET;
@@ -759,6 +760,20 @@ app.put('/api/admin/settings', authMiddleware, adminOnly, bodyParser, (req, res)
 app.get('/api/admin/login-log', authMiddleware, adminOnly, (req, res) => {
   const limit = Math.min(parseInt(req.query.limit) || 100, 500);
   res.json(db.prepare('SELECT * FROM login_log ORDER BY id DESC LIMIT ?').all(limit));
+});
+
+// Read-only — written by a root-owned systemd timer (pcc-fail2ban-status.timer), since
+// the pcc service itself runs unprivileged and fail2ban-client needs root. See SETUP.md.
+const FAIL2BAN_STATUS_PATH = '/opt/pcc/data/fail2ban-status.json';
+app.get('/api/admin/fail2ban', authMiddleware, adminOnly, (req, res) => {
+  let raw;
+  try { raw = fs.readFileSync(FAIL2BAN_STATUS_PATH, 'utf8'); }
+  catch { return res.json({ configured: false }); }
+  try {
+    const data = JSON.parse(raw);
+    const staleSecs = Math.floor(Date.now()/1000) - (data.generated_at || 0);
+    res.json({ configured: true, stale: staleSecs > 300, ...data });
+  } catch { res.json({ configured: false }); }
 });
 
 app.post('/api/admin/digest/test', authMiddleware, adminOnly, async (req, res) => {
