@@ -91,6 +91,21 @@
     .nav-badge{margin-left:auto;background:var(--red);color:#fff;font-size:10px;padding:1px 6px;border-radius:10px;font-weight:700;}
     .nav-sub-header{font-size:9px;text-transform:uppercase;letter-spacing:1.3px;color:var(--muted);padding:10px 10px 2px 18px;pointer-events:none;user-select:none;opacity:.65;}
     .sidebar-collapsed .nav-sub-header{display:none;}
+    /* DATACENTER TREE — connection -> node -> VM/CT, nested independently of .sidebar-section collapse */
+    .pcc-tree{margin:2px 0;}
+    .pcc-tree-row{display:flex;align-items:center;gap:5px;padding:4px 6px;border-radius:6px;cursor:pointer;font-size:12px;white-space:nowrap;overflow:hidden;}
+    .pcc-tree-row:hover{background:var(--bg3);}
+    .pcc-tree-toggle{width:11px;flex-shrink:0;text-align:center;color:var(--muted);cursor:pointer;}
+    .pcc-tree-toggle::before{content:'▸';display:inline-block;font-size:9px;transition:transform .12s;}
+    .pcc-tree-toggle.leaf::before{content:'';}
+    .pcc-tree-node:not(.collapsed)>.pcc-tree-row>.pcc-tree-toggle::before{transform:rotate(90deg);}
+    .pcc-tree-icon{flex-shrink:0;width:13px;height:13px;display:flex;align-items:center;justify-content:center;color:var(--muted);}
+    .pcc-tree-icon svg{width:13px;height:13px;}
+    .pcc-tree-dot{width:6px;height:6px;border-radius:50%;flex-shrink:0;}
+    .pcc-tree-label{flex:1;overflow:hidden;text-overflow:ellipsis;color:var(--text);}
+    .pcc-tree-count{font-size:10px;color:var(--muted);flex-shrink:0;}
+    .pcc-tree-node.collapsed>.pcc-tree-children{display:none;}
+    .sidebar-collapsed .pcc-tree{display:none;}
     /* Focus styles for keyboard navigation */
     .btn:focus-visible,.nav-item:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid var(--accent);outline-offset:1px;}
     /* MAIN */
@@ -637,26 +652,42 @@
         Overview
       </div>
     </div>
-    <!-- MONITOR -->
-    <div class="sidebar-section collapsed" data-section="monitor">
+    <!-- DATACENTER (object tree: connection -> node -> VM/CT) -->
+    <div class="sidebar-section" data-section="datacenter-tree">
       <div class="sidebar-label" onclick="toggleSidebarSection(this)">
-        <span class="sidebar-label-inner"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>Monitor</span>
+        <span class="sidebar-label-inner"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="M8.59 13.51l6.83 3.98M15.41 6.51l-6.82 3.98"/></svg>Datacenter</span>
         <span class="sidebar-chevron"></span>
       </div>
-      <div class="nav-sub-header">Fleet</div>
       <div class="nav-item" data-view="connections" onclick="switchView('connections')">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="M8.59 13.51l6.83 3.98M15.41 6.51l-6.82 3.98"/></svg>
         Clusters &amp; Hosts
         <span class="nav-badge" id="conn-count-badge" style="display:none;background:var(--blue)">0</span>
       </div>
+      <div id="sidebar-tree" class="pcc-tree"></div>
+      <div class="nav-sub-header">Browse</div>
+      <div class="nav-item" data-view="vms" onclick="switchView('vms')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
+        All Virtual Machines
+      </div>
+      <div class="nav-item" data-view="containers" onclick="switchView('containers')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg>
+        All Containers
+      </div>
+      <div class="nav-item" data-view="nodes" onclick="switchView('nodes')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg>
+        All Nodes
+      </div>
       <div class="nav-item" data-view="worldmap" onclick="switchView('worldmap')">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
         World Map
       </div>
-      <div class="nav-sub-header">Nodes</div>
-      <div class="nav-item" data-view="nodes" onclick="switchView('nodes')">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg>
-        Nodes
+    </div>
+
+    <!-- MONITORING -->
+    <div class="sidebar-section collapsed" data-section="monitoring">
+      <div class="sidebar-label" onclick="toggleSidebarSection(this)">
+        <span class="sidebar-label-inner"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>Monitoring</span>
+        <span class="sidebar-chevron"></span>
       </div>
       <div class="nav-item" data-view="heatmap" onclick="switchView('heatmap')">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M3 15h18M9 3v18M15 3v18"/></svg>
@@ -666,16 +697,6 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
         Cluster Graphs
       </div>
-      <div class="nav-sub-header">Guests</div>
-      <div class="nav-item" data-view="vms" onclick="switchView('vms')">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
-        Virtual Machines
-      </div>
-      <div class="nav-item" data-view="containers" onclick="switchView('containers')">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg>
-        Containers
-      </div>
-      <div class="nav-sub-header">Health &amp; Logs</div>
       <div class="nav-item" data-view="disks" onclick="switchView('disks')">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14c0 1.66 4.03 3 9 3s9-1.34 9-3V5"/><path d="M3 12c0 1.66 4.03 3 9 3s9-1.34 9-3"/></svg>
         Disk Health
@@ -4267,6 +4288,7 @@ async function refreshAll() {
       ...extraConns.map(c => refreshExtraConn(c))]);
     renderCurrentView();
     renderSidebarNodes();
+    renderSidebarTree();
     checkAndFireAlerts();
     updateTopbarStats();
     populateTagFilters();
@@ -7110,6 +7132,107 @@ function renderSidebarNodes(){
   }
 }
 
+// ── DATACENTER TREE (sidebar) ─────────────────────────────
+// Connection -> Node -> VM/CT, rendered from whatever refreshAll()/refreshExtraConn()
+// already fetched (no extra API calls). Re-rendered every refresh cycle, so the
+// object registry below only needs to stay valid between renders, not across them.
+
+let _pccTreeRegistry = {};
+
+function _pccTreeSafeId(s) { return String(s).replace(/[^a-zA-Z0-9_-]/g, '_'); }
+
+function _pccTreeCollapsed(key) { return localStorage.getItem('pcc-tree-'+key) === '1'; }
+
+function _pccTreeToggle(key) {
+  const el = document.getElementById('pcc-tree-'+key);
+  if (!el) return;
+  const collapsed = el.classList.toggle('collapsed');
+  if (collapsed) localStorage.setItem('pcc-tree-'+key, '1');
+  else localStorage.removeItem('pcc-tree-'+key);
+}
+
+function _pccTreeOpenNode(key) {
+  const item = _pccTreeRegistry[key];
+  if (item) openNodeDetail(item);
+}
+
+function _pccTreeOpenGuest(key) {
+  const item = _pccTreeRegistry[key];
+  if (item) openDetail(item);
+}
+
+function _pccTreeGuestDot(status) {
+  return status === 'running' ? 'var(--green)' : status === 'paused' ? 'var(--yellow)' : 'var(--muted)';
+}
+
+function renderSidebarTree() {
+  const root = document.getElementById('sidebar-tree');
+  if (!root) return;
+  _pccTreeRegistry = {};
+
+  const conns = [{ id:'', name:'Primary', nodeStatuses:PVE.nodeStatuses||[], vms:PVE.vms||[], containers:PVE.containers||[] }]
+    .concat(extraConns.map(c => ({ id:c.id, name:c.name, nodeStatuses:c.nodeStatuses||[], vms:c.vms||[], containers:c.containers||[] })));
+
+  if (!conns.some(c => c.nodeStatuses.length)) {
+    root.innerHTML = '<div style="padding:6px 8px;font-size:11px;color:var(--muted)">Not connected yet…</div>';
+    return;
+  }
+
+  let html = '';
+  for (const conn of conns) {
+    if (!conn.nodeStatuses.length && conn.id) continue; // hide extra connections with no data (not yet loaded / errored)
+    const connKey   = 'conn-' + _pccTreeSafeId(conn.id || 'primary');
+    const collapsed = _pccTreeCollapsed(connKey);
+    html += `<div class="pcc-tree-node${collapsed?' collapsed':''}" id="pcc-tree-${connKey}">
+      <div class="pcc-tree-row" style="padding-left:6px">
+        <span class="pcc-tree-toggle${conn.nodeStatuses.length?'':' leaf'}" onclick="event.stopPropagation();_pccTreeToggle('${connKey}')"></span>
+        <span class="pcc-tree-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="M8.59 13.51l6.83 3.98M15.41 6.51l-6.82 3.98"/></svg></span>
+        <span class="pcc-tree-label" onclick="switchView('connections')" title="Manage clusters">${escHtml(conn.name)}</span>
+        <span class="pcc-tree-count">${conn.nodeStatuses.length}</span>
+      </div>
+      <div class="pcc-tree-children">`;
+
+    for (const node of conn.nodeStatuses) {
+      const nodeKey    = connKey + '-nd-' + _pccTreeSafeId(node.node);
+      const nCollapsed = _pccTreeCollapsed(nodeKey);
+      const vms   = conn.vms.filter(v => v.node === node.node);
+      const cts   = conn.containers.filter(c => c.node === node.node);
+      const guestCount = vms.length + cts.length;
+      const online = node.status === 'online';
+      _pccTreeRegistry[nodeKey] = node;
+
+      html += `<div class="pcc-tree-node${nCollapsed?' collapsed':''}" id="pcc-tree-${nodeKey}">
+        <div class="pcc-tree-row" style="padding-left:20px">
+          <span class="pcc-tree-toggle${guestCount?'':' leaf'}" onclick="event.stopPropagation();_pccTreeToggle('${nodeKey}')"></span>
+          <span class="pcc-tree-dot" style="background:${online?'var(--green)':'var(--red)'}" title="${online?'Online':'Offline'}"></span>
+          <span class="pcc-tree-label" onclick="_pccTreeOpenNode('${nodeKey}')" title="${escHtml(node.node)}">${escHtml(node.node)}</span>
+          <span class="pcc-tree-count">${guestCount}</span>
+        </div>
+        <div class="pcc-tree-children">`;
+
+      const guests = [
+        ...vms.map(v => ({ ...v, _kind:'vm' })),
+        ...cts.map(c => ({ ...c, _kind:'ct' })),
+      ].sort((a,b) => (a.name||'').localeCompare(b.name||''));
+
+      for (const g of guests) {
+        const gKey = nodeKey + '-' + g._kind + '-' + _pccTreeSafeId(String(g.vmid));
+        _pccTreeRegistry[gKey] = g;
+        const label = g.name || `${g._kind==='vm'?'VM':'CT'} ${g.vmid}`;
+        html += `<div class="pcc-tree-row" style="padding-left:34px" onclick="_pccTreeOpenGuest('${gKey}')" title="${escHtml(label)}">
+          <span class="pcc-tree-toggle leaf"></span>
+          <span class="pcc-tree-dot" style="background:${_pccTreeGuestDot(g.status)}"></span>
+          <span class="pcc-tree-label">${escHtml(label)}</span>
+          <span class="pcc-tree-count">#${g.vmid}</span>
+        </div>`;
+      }
+      html += `</div></div>`;
+    }
+    html += `</div></div>`;
+  }
+  root.innerHTML = html;
+}
+
 // ── COLLAPSIBLE SIDEBAR SECTIONS ──────────────────────────
 
 function toggleSidebarSection(labelEl) {
@@ -7118,15 +7241,18 @@ function toggleSidebarSection(labelEl) {
   section.classList.toggle('collapsed');
   const id = section.dataset.section;
   if (id) {
-    if (!section.classList.contains('collapsed')) localStorage.setItem('sc-'+id,'open');
-    else localStorage.removeItem('sc-'+id);
+    // Most sections default to collapsed in markup (so 'closed' never needs storing for
+    // them), but the Datacenter tree defaults to open — store both states explicitly so
+    // either kind of section can remember a user override across reloads.
+    localStorage.setItem('sc-'+id, section.classList.contains('collapsed') ? 'closed' : 'open');
   }
 }
 
 function restoreSidebarSections() {
-  // Sections default to collapsed; restore any the user has explicitly opened.
   document.querySelectorAll('.sidebar-section[data-section]').forEach(s => {
-    if (localStorage.getItem('sc-'+s.dataset.section) === 'open') s.classList.remove('collapsed');
+    const pref = localStorage.getItem('sc-'+s.dataset.section);
+    if (pref === 'open') s.classList.remove('collapsed');
+    else if (pref === 'closed') s.classList.add('collapsed');
   });
 }
 
