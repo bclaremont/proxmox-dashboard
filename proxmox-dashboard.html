@@ -95,8 +95,8 @@
     .pcc-tree-toolbar{display:flex;align-items:center;justify-content:space-between;gap:6px;padding:4px 8px 6px;}
     .pcc-tree-modes{display:flex;gap:4px;}
     .pcc-tree-modes .filter-pill,#pcc-tree-compact-btn{padding:2px 8px;font-size:10px;}
-    .pcc-tree{margin:2px 0;}
-    .pcc-tree-row{display:flex;align-items:center;gap:5px;padding:4px 6px;border-radius:6px;cursor:pointer;font-size:12px;white-space:nowrap;overflow:hidden;}
+    .pcc-tree{margin:4px 0;}
+    .pcc-tree-row{display:flex;align-items:center;gap:6px;padding:6px 6px;border-radius:6px;cursor:pointer;font-size:12.5px;white-space:nowrap;overflow:hidden;}
     .pcc-tree-row:hover{background:var(--bg3);}
     .pcc-tree-toggle{width:11px;flex-shrink:0;text-align:center;color:var(--muted);cursor:pointer;}
     .pcc-tree-toggle::before{content:'▸';display:inline-block;font-size:9px;transition:transform .12s;}
@@ -106,8 +106,13 @@
     .pcc-tree-icon svg{width:13px;height:13px;}
     .pcc-tree-dot{width:6px;height:6px;border-radius:50%;flex-shrink:0;}
     .pcc-tree-label{flex:1;overflow:hidden;text-overflow:ellipsis;color:var(--text);}
+    /* Connection/node/pool/tag group rows read as headings; guest leaves stay regular weight */
+    .pcc-tree-node>.pcc-tree-row>.pcc-tree-label{font-weight:600;}
     .pcc-tree-count{font-size:10px;color:var(--muted);flex-shrink:0;}
     .pcc-tree-node.collapsed>.pcc-tree-children{display:none;}
+    /* Connector guide-line per nesting level, like a file-tree — indent now comes from here,
+       not per-row inline padding, so depth is unlimited and consistent. */
+    .pcc-tree-children{margin-left:9px;padding-left:7px;border-left:1px solid var(--border);margin-top:2px;}
     .sidebar-collapsed .pcc-tree{display:none;}
     /* Focus styles for keyboard navigation */
     .btn:focus-visible,.nav-item:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid var(--accent);outline-offset:1px;}
@@ -661,11 +666,6 @@
         <span class="sidebar-label-inner"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="M8.59 13.51l6.83 3.98M15.41 6.51l-6.82 3.98"/></svg>Datacenter</span>
         <span class="sidebar-chevron"></span>
       </div>
-      <div class="nav-item" data-view="connections" onclick="switchView('connections')">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="M8.59 13.51l6.83 3.98M15.41 6.51l-6.82 3.98"/></svg>
-        Clusters &amp; Hosts
-        <span class="nav-badge" id="conn-count-badge" style="display:none;background:var(--blue)">0</span>
-      </div>
       <div class="pcc-tree-toolbar">
         <div class="pcc-tree-modes" id="pcc-tree-modes">
           <button class="filter-pill active" data-mode="node" onclick="_pccTreeSetMode('node')" title="Group by node">Node</button>
@@ -691,6 +691,11 @@
       <div class="nav-item" data-view="worldmap" onclick="switchView('worldmap')">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
         World Map
+      </div>
+      <div class="nav-item" data-view="connections" onclick="switchView('connections')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="M8.59 13.51l6.83 3.98M15.41 6.51l-6.82 3.98"/></svg>
+        Clusters &amp; Hosts
+        <span class="nav-badge" id="conn-count-badge" style="display:none;background:var(--blue)">0</span>
       </div>
     </div>
 
@@ -7211,6 +7216,15 @@ function _pccTreeGuestDot(status) {
   return status === 'running' ? 'var(--green)' : status === 'paused' ? 'var(--yellow)' : 'var(--muted)';
 }
 
+// Same VM/CT icon shapes used by the "All Virtual Machines"/"All Containers" nav items,
+// coloured by status — gives guest rows a type at a glance instead of an identical dot.
+function _pccTreeGuestIcon(guest) {
+  const color = _pccTreeGuestDot(guest.status);
+  return guest._kind === 'vm'
+    ? `<svg viewBox="0 0 24 24" fill="none" stroke="${color}" stroke-width="2.5"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>`
+    : `<svg viewBox="0 0 24 24" fill="none" stroke="${color}" stroke-width="2.5"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg>`;
+}
+
 // Returns this connection's guests bucketed according to the active tree mode.
 // Each group: { key, label, guests[], isNode?, nodeObj?, dotColor?, dotTitle?, onOpen? }
 function _pccTreeGroupsForConn(conn) {
@@ -7299,7 +7313,7 @@ function renderSidebarTree() {
     const groups    = _pccTreeGroupsForConn(conn);
 
     html += `<div class="pcc-tree-node${collapsed?' collapsed':''}" id="pcc-tree-${connKey}">
-      <div class="pcc-tree-row" style="padding-left:6px">
+      <div class="pcc-tree-row">
         <span class="pcc-tree-toggle${groups.length?'':' leaf'}" onclick="event.stopPropagation();_pccTreeToggle('${connKey}')"></span>
         <span class="pcc-tree-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="M8.59 13.51l6.83 3.98M15.41 6.51l-6.82 3.98"/></svg></span>
         <span class="pcc-tree-label" onclick="switchView('connections')" title="Manage clusters">${escHtml(conn.name)}</span>
@@ -7315,7 +7329,7 @@ function renderSidebarTree() {
       const openAttr = g.isNode ? `onclick="_pccTreeOpenNode('${gKey}')"` : (g.onOpen ? `onclick="${g.onOpen}"` : '');
 
       html += `<div class="pcc-tree-node${gCollapsed?' collapsed':''}" id="pcc-tree-${gKey}">
-        <div class="pcc-tree-row" style="padding-left:20px">
+        <div class="pcc-tree-row">
           <span class="pcc-tree-toggle${(guestCount&&!_pccTreeCompact)?'':' leaf'}" onclick="event.stopPropagation();_pccTreeToggle('${gKey}')"></span>
           <span class="pcc-tree-dot" style="background:${g.dotColor||'var(--muted)'}" title="${escHtml(g.dotTitle||'')}"></span>
           <span class="pcc-tree-label" ${openAttr} title="${escHtml(g.label)}">${escHtml(g.label)}</span>
@@ -7328,9 +7342,9 @@ function renderSidebarTree() {
           const kKey = gKey + '-' + guest._kind + '-' + _pccTreeSafeId(String(guest.vmid));
           _pccTreeRegistry[kKey] = guest;
           const label = guest.name || `${guest._kind==='vm'?'VM':'CT'} ${guest.vmid}`;
-          html += `<div class="pcc-tree-row" style="padding-left:34px" onclick="_pccTreeOpenGuest('${kKey}')" title="${escHtml(label)}">
+          html += `<div class="pcc-tree-row" onclick="_pccTreeOpenGuest('${kKey}')" title="${escHtml(label)} · ${guest._kind==='vm'?'VM':'CT'}">
             <span class="pcc-tree-toggle leaf"></span>
-            <span class="pcc-tree-dot" style="background:${_pccTreeGuestDot(guest.status)}"></span>
+            <span class="pcc-tree-icon">${_pccTreeGuestIcon(guest)}</span>
             <span class="pcc-tree-label">${escHtml(label)}</span>
             <span class="pcc-tree-count">#${guest.vmid}</span>
           </div>`;
