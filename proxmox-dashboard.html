@@ -92,6 +92,9 @@
     .nav-sub-header{font-size:9px;text-transform:uppercase;letter-spacing:1.3px;color:var(--muted);padding:10px 10px 2px 18px;pointer-events:none;user-select:none;opacity:.65;}
     .sidebar-collapsed .nav-sub-header{display:none;}
     /* DATACENTER TREE — connection -> node -> VM/CT, nested independently of .sidebar-section collapse */
+    .pcc-tree-toolbar{display:flex;align-items:center;justify-content:space-between;gap:6px;padding:4px 8px 6px;}
+    .pcc-tree-modes{display:flex;gap:4px;}
+    .pcc-tree-modes .filter-pill,#pcc-tree-compact-btn{padding:2px 8px;font-size:10px;}
     .pcc-tree{margin:2px 0;}
     .pcc-tree-row{display:flex;align-items:center;gap:5px;padding:4px 6px;border-radius:6px;cursor:pointer;font-size:12px;white-space:nowrap;overflow:hidden;}
     .pcc-tree-row:hover{background:var(--bg3);}
@@ -663,6 +666,14 @@
         Clusters &amp; Hosts
         <span class="nav-badge" id="conn-count-badge" style="display:none;background:var(--blue)">0</span>
       </div>
+      <div class="pcc-tree-toolbar">
+        <div class="pcc-tree-modes" id="pcc-tree-modes">
+          <button class="filter-pill active" data-mode="node" onclick="_pccTreeSetMode('node')" title="Group by node">Node</button>
+          <button class="filter-pill" data-mode="pool" onclick="_pccTreeSetMode('pool')" title="Group by resource pool">Pool</button>
+          <button class="filter-pill" data-mode="tag" onclick="_pccTreeSetMode('tag')" title="Group by tag">Tag</button>
+        </div>
+        <button class="filter-pill" id="pcc-tree-compact-btn" onclick="_pccTreeToggleCompact()" title="Hide VMs/CTs — show just topology">⊟</button>
+      </div>
       <div id="sidebar-tree" class="pcc-tree"></div>
       <div class="nav-sub-header">Browse</div>
       <div class="nav-item" data-view="vms" onclick="switchView('vms')">
@@ -1069,6 +1080,10 @@
                 <div style="font-size:10px;color:var(--muted);margin-bottom:5px;text-transform:uppercase;letter-spacing:.05em">Tag</div>
                 <select id="vms-tag-filter" style="width:100%;padding:4px 7px;font-size:12px" onchange="renderVMTable();_fpopRefresh('vms')"><option value="">All Tags</option></select>
               </div>
+              <div style="padding:0 14px 10px">
+                <div style="font-size:10px;color:var(--muted);margin-bottom:5px;text-transform:uppercase;letter-spacing:.05em">Pool</div>
+                <select id="vms-pool-filter" style="width:100%;padding:4px 7px;font-size:12px" onchange="renderVMTable();_fpopRefresh('vms')"><option value="">All Pools</option></select>
+              </div>
             </div>
           </div>
           <button class="btn small primary" onclick="openCreateVMModal()">+ Create VM</button>
@@ -1111,6 +1126,10 @@
               <div style="padding:6px 14px 10px">
                 <div style="font-size:10px;color:var(--muted);margin-bottom:5px;text-transform:uppercase;letter-spacing:.05em">Tag</div>
                 <select id="cts-tag-filter" style="width:100%;padding:4px 7px;font-size:12px" onchange="renderCTTable();_fpopRefresh('cts')"><option value="">All Tags</option></select>
+              </div>
+              <div style="padding:0 14px 10px">
+                <div style="font-size:10px;color:var(--muted);margin-bottom:5px;text-transform:uppercase;letter-spacing:.05em">Pool</div>
+                <select id="cts-pool-filter" style="width:100%;padding:4px 7px;font-size:12px" onchange="renderCTTable();_fpopRefresh('cts')"><option value="">All Pools</option></select>
               </div>
             </div>
           </div>
@@ -6329,7 +6348,10 @@ function _fpopToggle(menuId) {
   if (!menu) return;
   const opening = !menu.classList.contains('open');
   document.querySelectorAll('.fpop-menu.open').forEach(m => m.classList.remove('open'));
-  if (opening) menu.classList.add('open');
+  if (opening) {
+    menu.classList.add('open');
+    if (menuId === 'vms-fmenu' || menuId === 'cts-fmenu') _ensurePoolsLoaded().then(populatePoolFilters);
+  }
 }
 
 document.addEventListener('click', e => {
@@ -6339,14 +6361,16 @@ document.addEventListener('click', e => {
 }, true);
 
 function _fpopRefresh(prefix) {
-  const tagSel = document.getElementById(prefix + '-tag-filter');
+  const tagSel  = document.getElementById(prefix + '-tag-filter');
+  const poolSel = document.getElementById(prefix + '-pool-filter');
   const grpChk = document.getElementById(prefix + '-group-chk');
   const grouped = prefix === 'vms' ? _vmGrouped : _ctGrouped;
   if (grpChk) grpChk.checked = !!grouped;
   const btn = document.getElementById(prefix + '-fpop-btn');
   if (!btn) return;
-  const hasTag = tagSel?.value && tagSel.value !== '';
-  btn.classList.toggle('active', !!grouped || !!hasTag);
+  const hasTag  = tagSel?.value && tagSel.value !== '';
+  const hasPool = poolSel?.value && poolSel.value !== '';
+  btn.classList.toggle('active', !!grouped || !!hasTag || !!hasPool);
 }
 
 function _toggleVMGroup() {
@@ -6462,10 +6486,12 @@ function renderVMTable(){
   const fh = document.getElementById('vms-f-high-cpu'); if(fh) fh.textContent = `🔥 High CPU (${hiCpu})`;
   const fan= document.getElementById('vms-f-anomaly');  if(fan) fan.textContent = `↑ Anomaly (${anoms})`;
 
+  const poolF = document.getElementById('vms-pool-filter')?.value||'';
   const _vmQ = _vmSearchQ.trim().toLowerCase();
   _activeHlQ = _vmQ;
   const sorted = _sortItems(
     all .filter(x => !tagF || parseTags(x.tags||'').includes(tagF))
+        .filter(x => !poolF || _guestPoolIds(x).includes(poolF))
         .filter(x => _applyVMFilter(x, _vmStatusFilter))
         .filter(x => !_vmQ || String(x.vmid).includes(_vmQ) || (x.name||'').toLowerCase().includes(_vmQ) || (x.node||'').toLowerCase().includes(_vmQ)),
     vmSort.col, vmSort.dir);
@@ -6518,11 +6544,13 @@ function renderCTTable(){
   const cfs = document.getElementById('cts-f-stopped');  if(cfs) cfs.textContent = `○ Stopped (${ctStop})`;
   const cfh = document.getElementById('cts-f-high-cpu'); if(cfh) cfh.textContent = `🔥 High CPU (${ctHiCpu})`;
   const cfan= document.getElementById('cts-f-anomaly');  if(cfan) cfan.textContent = `↑ Anomaly (${ctAnoms})`;
+  const poolF = document.getElementById('cts-pool-filter')?.value||'';
   const _ctQ = _ctSearchQ.trim().toLowerCase();
   _activeHlQ = _ctQ;
   const sorted = _sortItems(
     baseList
       .filter(x => !tagF || parseTags(x.tags||'').includes(tagF))
+      .filter(x => !poolF || _guestPoolIds(x).includes(poolF))
       .filter(x => _applyVMFilter(x, _ctStatusFilter))
       .filter(x => !_ctQ || String(x.vmid).includes(_ctQ) || (x.name||'').toLowerCase().includes(_ctQ) || (x.node||'').toLowerCase().includes(_ctQ)),
     ctSort.col, ctSort.dir);
@@ -7133,11 +7161,14 @@ function renderSidebarNodes(){
 }
 
 // ── DATACENTER TREE (sidebar) ─────────────────────────────
-// Connection -> Node -> VM/CT, rendered from whatever refreshAll()/refreshExtraConn()
-// already fetched (no extra API calls). Re-rendered every refresh cycle, so the
-// object registry below only needs to stay valid between renders, not across them.
+// Connection -> (Node | Pool | Tag) -> VM/CT, rendered from whatever refreshAll()/
+// refreshExtraConn() already fetched (no extra API calls, except Pool mode which
+// lazily loads pool membership on first use). Re-rendered every refresh cycle, so
+// the object registry below only needs to stay valid between renders, not across them.
 
 let _pccTreeRegistry = {};
+let _pccTreeMode    = localStorage.getItem('pcc-tree-mode') || 'node'; // 'node' | 'pool' | 'tag'
+let _pccTreeCompact = localStorage.getItem('pcc-tree-compact') === '1'; // hide guest leaves
 
 function _pccTreeSafeId(s) { return String(s).replace(/[^a-zA-Z0-9_-]/g, '_'); }
 
@@ -7149,6 +7180,21 @@ function _pccTreeToggle(key) {
   const collapsed = el.classList.toggle('collapsed');
   if (collapsed) localStorage.setItem('pcc-tree-'+key, '1');
   else localStorage.removeItem('pcc-tree-'+key);
+}
+
+function _pccTreeSetMode(mode) {
+  _pccTreeMode = mode;
+  localStorage.setItem('pcc-tree-mode', mode);
+  document.querySelectorAll('#pcc-tree-modes .filter-pill').forEach(b => b.classList.toggle('active', b.dataset.mode === mode));
+  if (mode === 'pool') _ensurePoolsLoaded().then(renderSidebarTree);
+  else renderSidebarTree();
+}
+
+function _pccTreeToggleCompact() {
+  _pccTreeCompact = !_pccTreeCompact;
+  localStorage.setItem('pcc-tree-compact', _pccTreeCompact ? '1' : '0');
+  document.getElementById('pcc-tree-compact-btn')?.classList.toggle('active', _pccTreeCompact);
+  renderSidebarTree();
 }
 
 function _pccTreeOpenNode(key) {
@@ -7165,10 +7211,72 @@ function _pccTreeGuestDot(status) {
   return status === 'running' ? 'var(--green)' : status === 'paused' ? 'var(--yellow)' : 'var(--muted)';
 }
 
+// Returns this connection's guests bucketed according to the active tree mode.
+// Each group: { key, label, guests[], isNode?, nodeObj?, dotColor?, dotTitle?, onOpen? }
+function _pccTreeGroupsForConn(conn) {
+  const guests = [
+    ...conn.vms.map(v => ({ ...v, _kind:'vm' })),
+    ...conn.containers.map(c => ({ ...c, _kind:'ct' })),
+  ];
+  const byName = (a,b) => (a.name||'').localeCompare(b.name||'');
+
+  if (_pccTreeMode === 'node') {
+    return conn.nodeStatuses.map(node => ({
+      key: 'nd-' + _pccTreeSafeId(node.node),
+      label: node.node,
+      isNode: true,
+      nodeObj: node,
+      dotColor: node.status==='online' ? 'var(--green)' : 'var(--red)',
+      dotTitle: node.status==='online' ? 'Online' : 'Offline',
+      guests: guests.filter(g => g.node === node.node).sort(byName),
+    }));
+  }
+
+  if (_pccTreeMode === 'pool') {
+    const connPools = poolsData.filter(p => (p.connId||'') === (conn.id||''));
+    const groups = connPools.map(p => {
+      const vmids = new Set((p.members||[]).filter(m => m.vmid != null).map(m => String(m.vmid)));
+      return {
+        key: 'pl-' + _pccTreeSafeId(p.poolid),
+        label: p.poolid,
+        dotColor: 'var(--blue)',
+        onOpen: `filterByPool('${escHtml(p.poolid)}','${conn.id||''}')`,
+        guests: guests.filter(g => vmids.has(String(g.vmid))).sort(byName),
+      };
+    });
+    const inAnyPool = new Set(connPools.flatMap(p => (p.members||[]).filter(m => m.vmid != null).map(m => String(m.vmid))));
+    const ungrouped = guests.filter(g => !inAnyPool.has(String(g.vmid)));
+    if (ungrouped.length) groups.push({ key:'pl-none', label:'No Pool', dotColor:'var(--muted)', guests: ungrouped.sort(byName) });
+    return groups;
+  }
+
+  // tag mode — a guest with multiple tags appears once per tag (matches Proxmox's own Tag View)
+  const byTag = new Map();
+  const untagged = [];
+  guests.forEach(g => {
+    const tags = parseTags(g.tags||'');
+    if (!tags.length) { untagged.push(g); return; }
+    tags.forEach(t => { if (!byTag.has(t)) byTag.set(t, []); byTag.get(t).push(g); });
+  });
+  const groups = [...byTag.keys()].sort().map(t => ({
+    key: 'tg-' + _pccTreeSafeId(t),
+    label: t,
+    dotColor: tagColor(t),
+    onOpen: `filterByTag('${escHtml(t)}')`,
+    guests: byTag.get(t).sort(byName),
+  }));
+  if (untagged.length) groups.push({ key:'tg-none', label:'Untagged', dotColor:'var(--muted)', guests: untagged.sort(byName) });
+  return groups;
+}
+
 function renderSidebarTree() {
   const root = document.getElementById('sidebar-tree');
   if (!root) return;
   _pccTreeRegistry = {};
+
+  // Sync toolbar button states in case a persisted mode/compact preference hasn't been reflected yet
+  document.querySelectorAll('#pcc-tree-modes .filter-pill').forEach(b => b.classList.toggle('active', b.dataset.mode === _pccTreeMode));
+  document.getElementById('pcc-tree-compact-btn')?.classList.toggle('active', _pccTreeCompact);
 
   const conns = [{ id:'', name:'Primary', nodeStatuses:PVE.nodeStatuses||[], vms:PVE.vms||[], containers:PVE.containers||[] }]
     .concat(extraConns.map(c => ({ id:c.id, name:c.name, nodeStatuses:c.nodeStatuses||[], vms:c.vms||[], containers:c.containers||[] })));
@@ -7177,54 +7285,56 @@ function renderSidebarTree() {
     root.innerHTML = '<div style="padding:6px 8px;font-size:11px;color:var(--muted)">Not connected yet…</div>';
     return;
   }
+  if (_pccTreeMode === 'pool' && !_poolsEverLoaded) {
+    root.innerHTML = '<div style="padding:6px 8px;font-size:11px;color:var(--muted)"><span class="loading" style="width:11px;height:11px;border-width:2px"></span> Loading pools…</div>';
+    _ensurePoolsLoaded().then(renderSidebarTree); // handles mode restored from localStorage on page load, not just a fresh click
+    return;
+  }
 
   let html = '';
   for (const conn of conns) {
     if (!conn.nodeStatuses.length && conn.id) continue; // hide extra connections with no data (not yet loaded / errored)
     const connKey   = 'conn-' + _pccTreeSafeId(conn.id || 'primary');
     const collapsed = _pccTreeCollapsed(connKey);
+    const groups    = _pccTreeGroupsForConn(conn);
+
     html += `<div class="pcc-tree-node${collapsed?' collapsed':''}" id="pcc-tree-${connKey}">
       <div class="pcc-tree-row" style="padding-left:6px">
-        <span class="pcc-tree-toggle${conn.nodeStatuses.length?'':' leaf'}" onclick="event.stopPropagation();_pccTreeToggle('${connKey}')"></span>
+        <span class="pcc-tree-toggle${groups.length?'':' leaf'}" onclick="event.stopPropagation();_pccTreeToggle('${connKey}')"></span>
         <span class="pcc-tree-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="M8.59 13.51l6.83 3.98M15.41 6.51l-6.82 3.98"/></svg></span>
         <span class="pcc-tree-label" onclick="switchView('connections')" title="Manage clusters">${escHtml(conn.name)}</span>
         <span class="pcc-tree-count">${conn.nodeStatuses.length}</span>
       </div>
       <div class="pcc-tree-children">`;
 
-    for (const node of conn.nodeStatuses) {
-      const nodeKey    = connKey + '-nd-' + _pccTreeSafeId(node.node);
-      const nCollapsed = _pccTreeCollapsed(nodeKey);
-      const vms   = conn.vms.filter(v => v.node === node.node);
-      const cts   = conn.containers.filter(c => c.node === node.node);
-      const guestCount = vms.length + cts.length;
-      const online = node.status === 'online';
-      _pccTreeRegistry[nodeKey] = node;
+    for (const g of groups) {
+      const gKey       = connKey + '-' + g.key;
+      const gCollapsed = _pccTreeCollapsed(gKey) || _pccTreeCompact;
+      const guestCount = g.guests.length;
+      if (g.isNode) _pccTreeRegistry[gKey] = g.nodeObj;
+      const openAttr = g.isNode ? `onclick="_pccTreeOpenNode('${gKey}')"` : (g.onOpen ? `onclick="${g.onOpen}"` : '');
 
-      html += `<div class="pcc-tree-node${nCollapsed?' collapsed':''}" id="pcc-tree-${nodeKey}">
+      html += `<div class="pcc-tree-node${gCollapsed?' collapsed':''}" id="pcc-tree-${gKey}">
         <div class="pcc-tree-row" style="padding-left:20px">
-          <span class="pcc-tree-toggle${guestCount?'':' leaf'}" onclick="event.stopPropagation();_pccTreeToggle('${nodeKey}')"></span>
-          <span class="pcc-tree-dot" style="background:${online?'var(--green)':'var(--red)'}" title="${online?'Online':'Offline'}"></span>
-          <span class="pcc-tree-label" onclick="_pccTreeOpenNode('${nodeKey}')" title="${escHtml(node.node)}">${escHtml(node.node)}</span>
+          <span class="pcc-tree-toggle${(guestCount&&!_pccTreeCompact)?'':' leaf'}" onclick="event.stopPropagation();_pccTreeToggle('${gKey}')"></span>
+          <span class="pcc-tree-dot" style="background:${g.dotColor||'var(--muted)'}" title="${escHtml(g.dotTitle||'')}"></span>
+          <span class="pcc-tree-label" ${openAttr} title="${escHtml(g.label)}">${escHtml(g.label)}</span>
           <span class="pcc-tree-count">${guestCount}</span>
         </div>
         <div class="pcc-tree-children">`;
 
-      const guests = [
-        ...vms.map(v => ({ ...v, _kind:'vm' })),
-        ...cts.map(c => ({ ...c, _kind:'ct' })),
-      ].sort((a,b) => (a.name||'').localeCompare(b.name||''));
-
-      for (const g of guests) {
-        const gKey = nodeKey + '-' + g._kind + '-' + _pccTreeSafeId(String(g.vmid));
-        _pccTreeRegistry[gKey] = g;
-        const label = g.name || `${g._kind==='vm'?'VM':'CT'} ${g.vmid}`;
-        html += `<div class="pcc-tree-row" style="padding-left:34px" onclick="_pccTreeOpenGuest('${gKey}')" title="${escHtml(label)}">
-          <span class="pcc-tree-toggle leaf"></span>
-          <span class="pcc-tree-dot" style="background:${_pccTreeGuestDot(g.status)}"></span>
-          <span class="pcc-tree-label">${escHtml(label)}</span>
-          <span class="pcc-tree-count">#${g.vmid}</span>
-        </div>`;
+      if (!_pccTreeCompact) {
+        for (const guest of g.guests) {
+          const kKey = gKey + '-' + guest._kind + '-' + _pccTreeSafeId(String(guest.vmid));
+          _pccTreeRegistry[kKey] = guest;
+          const label = guest.name || `${guest._kind==='vm'?'VM':'CT'} ${guest.vmid}`;
+          html += `<div class="pcc-tree-row" style="padding-left:34px" onclick="_pccTreeOpenGuest('${kKey}')" title="${escHtml(label)}">
+            <span class="pcc-tree-toggle leaf"></span>
+            <span class="pcc-tree-dot" style="background:${_pccTreeGuestDot(guest.status)}"></span>
+            <span class="pcc-tree-label">${escHtml(label)}</span>
+            <span class="pcc-tree-count">#${guest.vmid}</span>
+          </div>`;
+        }
       }
       html += `</div></div>`;
     }
@@ -21459,6 +21569,46 @@ function deleteCurrentView() {
 // Official: https://pve.proxmox.com/pve-docs/api-viewer/#/pools
 
 let poolsData = [];    // [{poolid, comment, connId, connName, members:[]}]
+let _poolsEverLoaded = false;
+
+// Pools are normally only fetched when the Pools view itself is opened. Other features
+// (pool filter dropdowns, the Datacenter tree's "By Pool" mode) need the same data without
+// forcing the user through that view first — this lazily loads it once, on first use.
+async function _ensurePoolsLoaded() {
+  if (_poolsEverLoaded) return;
+  await loadPools();
+}
+
+function _guestPoolIds(g) {
+  return poolsData
+    .filter(p => (p.connId||'') === (g.connId||'') && (p.members||[]).some(m => m.vmid != null && String(m.vmid) === String(g.vmid)))
+    .map(p => p.poolid);
+}
+
+// Populate pool filter dropdowns from current pool data (mirrors populateTagFilters)
+function populatePoolFilters() {
+  const multi = extraConns.length > 0;
+  const opts = poolsData.map(p => ({ value: p.poolid, label: multi ? `${p.poolid} (${p.connName})` : p.poolid }))
+    .sort((a,b) => a.label.localeCompare(b.label));
+  ['vms-pool-filter','cts-pool-filter'].forEach(id => {
+    const el = document.getElementById(id); if (!el) return;
+    const cur = el.value;
+    el.innerHTML = '<option value="">All Pools</option>' + opts.map(o => `<option value="${escHtml(o.value)}"${o.value===cur?' selected':''}>${escHtml(o.label)}</option>`).join('');
+  });
+}
+
+// Jump to the VMs table filtered by pool (mirrors filterByTag)
+function filterByPool(poolid, connId) {
+  ['vms-pool-filter','cts-pool-filter'].forEach(id => {
+    const el = document.getElementById(id); if (el) el.value = poolid;
+  });
+  ['vms-conn','cts-conn'].forEach(id => {
+    const el = document.getElementById(id); if (el) el.value = connId || '';
+  });
+  if (currentView==='vms') renderVMTable();
+  else if (currentView==='containers') renderCTTable();
+  else switchView('vms');
+}
 let activePool = null; // currently expanded pool card
 
 async function loadPools() {
@@ -21484,6 +21634,8 @@ async function loadPools() {
     } catch(e) { p.members = []; }
   }));
 
+  _poolsEverLoaded = true;
+  populatePoolFilters();
   renderPools();
 }
 
