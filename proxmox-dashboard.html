@@ -867,6 +867,10 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
         Admin
       </div>
+      <div class="nav-item" id="nav-pcc-security" data-view="security" onclick="switchView('security')" style="display:none">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2l7 4v6c0 5-3.5 9-7 10-3.5-1-7-5-7-10V6l7-4z"/><path d="M9 12l2 2 4-4"/></svg>
+        Security
+      </div>
       <div class="nav-item" data-view="users" onclick="switchView('users')">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
         Users &amp; Perms
@@ -1462,10 +1466,17 @@
         <div class="dtab active"  onclick="switchPCCAdminTab('clusters')">Clusters</div>
         <div class="dtab"         onclick="switchPCCAdminTab('users')">Users</div>
         <div class="dtab"         onclick="switchPCCAdminTab('audit')">Audit Log</div>
-        <div class="dtab"         onclick="switchPCCAdminTab('security')">Security</div>
         <div class="dtab"         onclick="switchPCCAdminTab('account')">My Account</div>
       </div>
       <div id="pcc-admin-content"><div class="empty">Loading…</div></div>
+    </div>
+
+    <!-- SECURITY (PCC's own — IP allowlist, idle timeout, alert suppression, fail2ban, digest, login log) -->
+    <div id="view-security" style="display:none">
+      <div class="section-header">
+        <span class="section-title">Security</span>
+      </div>
+      <div id="security-content"><div class="empty">Loading…</div></div>
     </div>
 
     <!-- CUSTOMISATION SPECS -->
@@ -2213,9 +2224,11 @@ async function pccPostLogin() {
     nameEl.textContent = PCC_USER.username;
     userEl.style.display = 'flex';
   }
-  // Show PCC Admin nav item for admins
+  // Show PCC Admin / Security nav items for admins
   const adminNav = document.getElementById('nav-pcc-admin');
   if (adminNav && PCC_USER?.role === 'admin') adminNav.style.display = '';
+  const securityNav = document.getElementById('nav-pcc-security');
+  if (securityNav && PCC_USER?.role === 'admin') securityNav.style.display = '';
 
   // Show logout option in topbar disconnect button
   const disconnectBtn = document.getElementById('btn-disconnect');
@@ -2354,7 +2367,7 @@ function loadPCCAdmin() {
 function switchPCCAdminTab(tab) {
   _pccAdminTab = tab;
   document.querySelectorAll('#pcc-admin-tabs .dtab').forEach((t, i) => {
-    t.classList.toggle('active', ['clusters','users','audit','security','account'][i] === tab);
+    t.classList.toggle('active', ['clusters','users','audit','account'][i] === tab);
   });
   const actEl = document.getElementById('pcc-admin-actions');
   if (actEl) actEl.innerHTML = tab === 'clusters' && PCC_USER?.role === 'admin'
@@ -2462,97 +2475,6 @@ async function _renderPCCAdminTab() {
     return;
   }
 
-  // ── SECURITY ──────────────────────────────────────────────
-  if (_pccAdminTab === 'security') {
-    const [sRes, logRes] = await Promise.all([
-      fetch('/api/admin/settings', { headers: hdr }).then(r=>r.json()).catch(()=>({})),
-      fetch('/api/admin/login-log?limit=50', { headers: hdr }).then(r=>r.json()).catch(()=>[]),
-    ]);
-    _secAllowlist = sRes.ip_allowlist || [];
-    const allowlist = _secAllowlist;
-    const idleTimeout = sRes.idle_timeout_mins || 0;
-    setTimeout(loadDigestSettings, 50);
-    setTimeout(renderAlertSuppressionSettings, 50);
-    setTimeout(loadFail2banStatus, 50);
-
-    el.innerHTML = `
-      <!-- IP Allowlist -->
-      <div style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);padding:18px;margin-bottom:16px">
-        <div style="font-size:14px;font-weight:700;margin-bottom:4px">IP Allowlist</div>
-        <div style="font-size:12px;color:var(--muted);margin-bottom:12px">
-          Only allow access from these IP ranges. Empty = allow everyone.
-          <strong style="color:var(--yellow)"> 127.0.0.1 is always allowed.</strong>
-        </div>
-        <div id="allowlist-items" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px">
-          ${allowlist.map(cidr=>`<span style="background:var(--bg3);border:1px solid var(--border);border-radius:20px;padding:3px 10px;font-size:12px;font-family:monospace;display:flex;align-items:center;gap:6px">
-            ${escHtml(cidr)}
-            <span onclick="removeAllowlistEntry('${escHtml(cidr)}')" style="cursor:pointer;color:var(--red);font-size:14px;line-height:1" title="Remove">×</span>
-          </span>`).join('')||'<span style="font-size:12px;color:var(--muted)">No restrictions — all IPs allowed</span>'}
-        </div>
-        <div style="display:flex;gap:8px">
-          <input id="allowlist-new" placeholder="e.g. 192.168.1.0/24 or 1.2.3.4" style="flex:1;padding:6px 10px;font-size:13px;background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius);color:var(--text);font-family:monospace"/>
-          <button class="btn small primary" onclick="addAllowlistEntry()">Add</button>
-        </div>
-      </div>
-
-      <!-- Session Timeout -->
-      <div style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);padding:18px;margin-bottom:16px">
-        <div style="font-size:14px;font-weight:700;margin-bottom:4px">Idle Session Timeout</div>
-        <div style="font-size:12px;color:var(--muted);margin-bottom:12px">Auto-logout after this many minutes of inactivity. 0 = disabled.</div>
-        <div style="display:flex;gap:8px;align-items:center">
-          <select id="idle-timeout-sel" style="padding:6px 10px;font-size:13px;background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius);color:var(--text)">
-            <option value="0"${idleTimeout===0?' selected':''}>Disabled</option>
-            <option value="15"${idleTimeout===15?' selected':''}>15 minutes</option>
-            <option value="30"${idleTimeout===30?' selected':''}>30 minutes</option>
-            <option value="60"${idleTimeout===60?' selected':''}>1 hour</option>
-            <option value="120"${idleTimeout===120?' selected':''}>2 hours</option>
-            <option value="480"${idleTimeout===480?' selected':''}>8 hours</option>
-          </select>
-          <button class="btn small primary" onclick="saveSecuritySettings()">Save</button>
-        </div>
-      </div>
-
-      <!-- Alert Suppression -->
-      <div style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);padding:18px;margin-bottom:16px">
-        <div style="font-size:14px;font-weight:700;margin-bottom:4px">Alert Suppression</div>
-        <div style="font-size:12px;color:var(--muted);margin-bottom:12px">When you dismiss a health warning on the Overview page, how long should that category of warning stay hidden (unless the underlying condition changes first)?</div>
-        <div id="alert-suppress-rows" style="display:flex;flex-direction:column;gap:9px"></div>
-      </div>
-
-      <!-- Fail2Ban -->
-      <div style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);padding:18px;margin-bottom:16px">
-        <div style="font-size:14px;font-weight:700;margin-bottom:4px">Fail2Ban</div>
-        <div style="font-size:12px;color:var(--muted);margin-bottom:12px">Read-only status from the PCC server's own fail2ban, if configured. Written every 30s by a small root-owned timer — see SETUP.md.</div>
-        <div id="fail2ban-body"><div class="empty"><span class="loading"></span></div></div>
-      </div>
-
-      <!-- Digest -->
-      <div style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);padding:18px;margin-bottom:16px">
-        <div style="font-size:14px;font-weight:700;margin-bottom:4px">Email / Webhook Digest</div>
-        <div style="font-size:12px;color:var(--muted);margin-bottom:12px">Send a daily or weekly summary of cluster health, stopped VMs, and storage warnings.</div>
-        <div id="digest-settings-body"><div class="empty"><span class="loading"></span></div></div>
-      </div>
-
-      <!-- Login Activity -->
-      <div style="font-size:14px;font-weight:700;margin-bottom:10px">Recent Login Activity</div>
-      <div class="table-wrap"><table>
-        <thead><tr><th>Time</th><th>User</th><th>IP</th><th>Result</th><th>Browser</th></tr></thead>
-        <tbody>${logRes.length ? logRes.map(row=>{
-          const ok=row.success===1;
-          const ua=(row.ua||'').replace(/\(.*?\)/g,'').split('/')[0].trim().slice(0,40);
-          return `<tr>
-            <td style="font-size:11px;color:var(--muted);white-space:nowrap">${new Date(row.ts*1000).toLocaleString()}</td>
-            <td><strong>${escHtml(row.username)}</strong></td>
-            <td style="font-family:monospace;font-size:12px;color:var(--muted)">${escHtml(row.ip)}</td>
-            <td><span class="badge ${ok?'running':'stopped'}" style="font-size:10px"><span class="badge-dot"></span>${ok?'Success':'Failed'}</span></td>
-            <td style="font-size:11px;color:var(--muted)">${escHtml(ua)}</td>
-          </tr>`;
-        }).join('') : '<tr><td colspan="5" class="empty">No login records yet</td></tr>'}
-        </tbody>
-      </table></div>`;
-    return;
-  }
-
   // ── MY ACCOUNT ────────────────────────────────────────────
   if (_pccAdminTab === 'account') {
     const actEl = document.getElementById('pcc-admin-actions');
@@ -2594,6 +2516,100 @@ async function _renderPCCAdminTab() {
 // ── SECURITY SETTINGS ────────────────────────────────────
 let _secAllowlist = [];
 
+async function loadSecurityView() {
+  const el = document.getElementById('security-content');
+  if (!el) return;
+  if (PCC_USER?.role !== 'admin') { el.innerHTML = '<div class="empty">Admin access required.</div>'; return; }
+  el.innerHTML = '<div class="empty"><span class="loading"></span> Loading…</div>';
+  const hdr = { Authorization: 'Bearer ' + PCC_TOKEN };
+  const [sRes, logRes] = await Promise.all([
+    fetch('/api/admin/settings', { headers: hdr }).then(r=>r.json()).catch(()=>({})),
+    fetch('/api/admin/login-log?limit=50', { headers: hdr }).then(r=>r.json()).catch(()=>[]),
+  ]);
+  _secAllowlist = sRes.ip_allowlist || [];
+  const allowlist = _secAllowlist;
+  const idleTimeout = sRes.idle_timeout_mins || 0;
+  setTimeout(loadDigestSettings, 50);
+  setTimeout(renderAlertSuppressionSettings, 50);
+  setTimeout(loadFail2banStatus, 50);
+
+  el.innerHTML = `
+    <!-- IP Allowlist -->
+    <div style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);padding:18px;margin-bottom:16px">
+      <div style="font-size:14px;font-weight:700;margin-bottom:4px">IP Allowlist</div>
+      <div style="font-size:12px;color:var(--muted);margin-bottom:12px">
+        Only allow access from these IP ranges. Empty = allow everyone.
+        <strong style="color:var(--yellow)"> 127.0.0.1 is always allowed.</strong>
+      </div>
+      <div id="allowlist-items" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px">
+        ${allowlist.map(cidr=>`<span style="background:var(--bg3);border:1px solid var(--border);border-radius:20px;padding:3px 10px;font-size:12px;font-family:monospace;display:flex;align-items:center;gap:6px">
+          ${escHtml(cidr)}
+          <span onclick="removeAllowlistEntry('${escHtml(cidr)}')" style="cursor:pointer;color:var(--red);font-size:14px;line-height:1" title="Remove">×</span>
+        </span>`).join('')||'<span style="font-size:12px;color:var(--muted)">No restrictions — all IPs allowed</span>'}
+      </div>
+      <div style="display:flex;gap:8px">
+        <input id="allowlist-new" placeholder="e.g. 192.168.1.0/24 or 1.2.3.4" style="flex:1;padding:6px 10px;font-size:13px;background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius);color:var(--text);font-family:monospace"/>
+        <button class="btn small primary" onclick="addAllowlistEntry()">Add</button>
+      </div>
+    </div>
+
+    <!-- Session Timeout -->
+    <div style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);padding:18px;margin-bottom:16px">
+      <div style="font-size:14px;font-weight:700;margin-bottom:4px">Idle Session Timeout</div>
+      <div style="font-size:12px;color:var(--muted);margin-bottom:12px">Auto-logout after this many minutes of inactivity. 0 = disabled.</div>
+      <div style="display:flex;gap:8px;align-items:center">
+        <select id="idle-timeout-sel" style="padding:6px 10px;font-size:13px;background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius);color:var(--text)">
+          <option value="0"${idleTimeout===0?' selected':''}>Disabled</option>
+          <option value="15"${idleTimeout===15?' selected':''}>15 minutes</option>
+          <option value="30"${idleTimeout===30?' selected':''}>30 minutes</option>
+          <option value="60"${idleTimeout===60?' selected':''}>1 hour</option>
+          <option value="120"${idleTimeout===120?' selected':''}>2 hours</option>
+          <option value="480"${idleTimeout===480?' selected':''}>8 hours</option>
+        </select>
+        <button class="btn small primary" onclick="saveSecuritySettings()">Save</button>
+      </div>
+    </div>
+
+    <!-- Alert Suppression -->
+    <div style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);padding:18px;margin-bottom:16px">
+      <div style="font-size:14px;font-weight:700;margin-bottom:4px">Alert Suppression</div>
+      <div style="font-size:12px;color:var(--muted);margin-bottom:12px">When you dismiss a health warning on the Overview page, how long should that category of warning stay hidden (unless the underlying condition changes first)?</div>
+      <div id="alert-suppress-rows" style="display:flex;flex-direction:column;gap:9px"></div>
+    </div>
+
+    <!-- Fail2Ban -->
+    <div style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);padding:18px;margin-bottom:16px">
+      <div style="font-size:14px;font-weight:700;margin-bottom:4px">Fail2Ban</div>
+      <div style="font-size:12px;color:var(--muted);margin-bottom:12px">Read-only status from the PCC server's own fail2ban, if configured. Written every 30s by a small root-owned timer — see SETUP.md.</div>
+      <div id="fail2ban-body"><div class="empty"><span class="loading"></span></div></div>
+    </div>
+
+    <!-- Digest -->
+    <div style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);padding:18px;margin-bottom:16px">
+      <div style="font-size:14px;font-weight:700;margin-bottom:4px">Email / Webhook Digest</div>
+      <div style="font-size:12px;color:var(--muted);margin-bottom:12px">Send a daily or weekly summary of cluster health, stopped VMs, and storage warnings.</div>
+      <div id="digest-settings-body"><div class="empty"><span class="loading"></span></div></div>
+    </div>
+
+    <!-- Login Activity -->
+    <div style="font-size:14px;font-weight:700;margin-bottom:10px">Recent Login Activity</div>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Time</th><th>User</th><th>IP</th><th>Result</th><th>Browser</th></tr></thead>
+      <tbody>${logRes.length ? logRes.map(row=>{
+        const ok=row.success===1;
+        const ua=(row.ua||'').replace(/\(.*?\)/g,'').split('/')[0].trim().slice(0,40);
+        return `<tr>
+          <td style="font-size:11px;color:var(--muted);white-space:nowrap">${new Date(row.ts*1000).toLocaleString()}</td>
+          <td><strong>${escHtml(row.username)}</strong></td>
+          <td style="font-family:monospace;font-size:12px;color:var(--muted)">${escHtml(row.ip)}</td>
+          <td><span class="badge ${ok?'running':'stopped'}" style="font-size:10px"><span class="badge-dot"></span>${ok?'Success':'Failed'}</span></td>
+          <td style="font-size:11px;color:var(--muted)">${escHtml(ua)}</td>
+        </tr>`;
+      }).join('') : '<tr><td colspan="5" class="empty">No login records yet</td></tr>'}
+      </tbody>
+    </table></div>`;
+}
+
 async function saveSecuritySettings() {
   const idleTimeout = parseInt(document.getElementById('idle-timeout-sel')?.value || '0');
   const r = await fetch('/api/admin/settings', {
@@ -2604,7 +2620,7 @@ async function saveSecuritySettings() {
   if (!r.ok) { toast('Failed to save settings', 'error'); return; }
   toast('Security settings saved', 'success');
   _applyIdleTimeout(idleTimeout);
-  switchPCCAdminTab('security');
+  loadSecurityView();
 }
 
 function addAllowlistEntry() {
@@ -5344,7 +5360,7 @@ async function loadVMTasks(node, vmid, get=pveGet) {
   return d.data||[];
 }
 
-async function loadSnapshots(node, type, vmid, get=pveGet) {
+async function loadVMSnapshots(node, type, vmid, get=pveGet) {
   const ep = type === 'vm' ? 'qemu' : 'lxc';
   const d = await get(`/api2/json/nodes/${node}/${ep}/${vmid}/snapshot`).catch(() => ({ data: [] }));
   return d.data || [];
@@ -6014,9 +6030,9 @@ function switchView(view) {
     const hostEl = document.getElementById('in-host');
     if (hostEl) hostEl.value = window.location.origin;
   }
-  const _viewTitles={connect:'Connect',connections:'Connections',worldmap:'World Map',savedview:'Saved View',overview:'Overview',vms:'Virtual Machines',containers:'Containers',nodes:'Nodes',tasks:'Tasks',syslog:'System Log',storage:'Storage',network:'Network',heatmap:'Heatmap',isolib:'ISO Library',contentlib:'Content Library',sdn:'SDN',capacity:'Capacity Planning',affinity:'Affinity Rules',drs:'DRS',hostprofiles:'Host Profiles',customspecs:'Custom Specs',schedules:'Schedules','pcc-admin':'Admin',datacenter:'Datacenter',pools:'Resource Pools',ceph:'Ceph',ha:'High Availability',firewall:'Firewall',backups:'Backups',users:'Users',webhooks:'Webhooks',certs:'Certificates',audit:'Audit Log',logs:'Log Viewer',reports:'Reports',clustergraphs:'Cluster Graphs',tags:'Tags',tfa:'2FA',subscriptions:'Subscriptions',updates:'Updates',pbs:'Backup Server',disks:'Disk Health',uptime:'Uptime Report'};
+  const _viewTitles={connect:'Connect',connections:'Connections',worldmap:'World Map',savedview:'Saved View',overview:'Overview',vms:'Virtual Machines',containers:'Containers',nodes:'Nodes',tasks:'Tasks',syslog:'System Log',storage:'Storage',network:'Network',heatmap:'Heatmap',isolib:'ISO Library',contentlib:'Content Library',sdn:'SDN',capacity:'Capacity Planning',affinity:'Affinity Rules',drs:'DRS',hostprofiles:'Host Profiles',customspecs:'Custom Specs',schedules:'Schedules','pcc-admin':'Admin',security:'Security',datacenter:'Datacenter',pools:'Resource Pools',ceph:'Ceph',ha:'High Availability',firewall:'Firewall',backups:'Backups',users:'Users',webhooks:'Webhooks',certs:'Certificates',audit:'Audit Log',logs:'Log Viewer',reports:'Reports',clustergraphs:'Cluster Graphs',tags:'Tags',tfa:'2FA',subscriptions:'Subscriptions',updates:'Updates',pbs:'Backup Server',disks:'Disk Health',uptime:'Uptime Report'};
   document.title = 'CCC — ' + (_viewTitles[view] || view);
-  const views=['connect','connections','worldmap','savedview','overview','vms','containers','nodes','tasks','syslog','storage','snapshots','network','heatmap','isolib','contentlib','sdn','capacity','affinity','drs','hostprofiles','customspecs','schedules','pcc-admin','datacenter','pools','ceph','ha','firewall','backups','users','webhooks','certs','audit','logs','reports','clustergraphs','tags','tfa','subscriptions','updates','pbs','disks','uptime'];
+  const views=['connect','connections','worldmap','savedview','overview','vms','containers','nodes','tasks','syslog','storage','snapshots','network','heatmap','isolib','contentlib','sdn','capacity','affinity','drs','hostprofiles','customspecs','schedules','pcc-admin','security','datacenter','pools','ceph','ha','firewall','backups','users','webhooks','certs','audit','logs','reports','clustergraphs','tags','tfa','subscriptions','updates','pbs','disks','uptime'];
   views.forEach(v=>{
     const el=document.getElementById('view-'+v);
     if(!el) return;
@@ -6087,6 +6103,7 @@ function switchView(view) {
   if(view==='schedules')   loadSchedules();
   if(view==='reports')     loadReports();
   if(view==='pcc-admin') loadPCCAdmin();
+  if(view==='security') loadSecurityView();
   if(view==='datacenter') loadDatacenter();
   if(view!=='connect') renderCurrentView();
 }
@@ -9916,13 +9933,13 @@ function _updateSnapBadge(key) {
 }
 
 // ── SNAPSHOTS ────────────────────────────────────────────
-// loadSnapshots is defined near the top with detailGet support
+// loadVMSnapshots is defined near the top with detailGet support
 
 async function loadDetailSnapshots(item) {
   const el = document.getElementById('dtab-snapshots');
   el.innerHTML = '<div class="empty"><span class="loading"></span> Loading snapshots…</div>';
   try {
-    const snaps = await loadSnapshots(item.node, item.type, item.vmid, detailGet);
+    const snaps = await loadVMSnapshots(item.node, item.type, item.vmid, detailGet);
     const real = snaps.filter(s => s.name !== 'current');
     el.innerHTML = `
       <div style="display:flex;justify-content:flex-end;margin-bottom:12px">
