@@ -2007,7 +2007,7 @@ async function _doTokenRefresh() {
 
 const PCC_SHARED_KEYS = new Set([
   'pve-affinity-rules','pve-drs-settings','pve-host-profiles',
-  'pve-saved-views','pve-alert-thresholds','pve-locations','pve-vm-alerts','pve-custom-specs','pve-content-library-meta','pve-webhooks','pve-schedules'
+  'pve-saved-views','pve-alert-thresholds','pve-alert-suppression','pve-locations','pve-vm-alerts','pve-custom-specs','pve-content-library-meta','pve-webhooks','pve-schedules'
 ]);
 
 async function pccDetectBackend() {
@@ -2472,6 +2472,7 @@ async function _renderPCCAdminTab() {
     const allowlist = _secAllowlist;
     const idleTimeout = sRes.idle_timeout_mins || 0;
     setTimeout(loadDigestSettings, 50);
+    setTimeout(renderAlertSuppressionSettings, 50);
 
     el.innerHTML = `
       <!-- IP Allowlist -->
@@ -2508,6 +2509,13 @@ async function _renderPCCAdminTab() {
           </select>
           <button class="btn small primary" onclick="saveSecuritySettings()">Save</button>
         </div>
+      </div>
+
+      <!-- Alert Suppression -->
+      <div style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);padding:18px;margin-bottom:16px">
+        <div style="font-size:14px;font-weight:700;margin-bottom:4px">Alert Suppression</div>
+        <div style="font-size:12px;color:var(--muted);margin-bottom:12px">When you dismiss a health warning on the Overview page, how long should that category of warning stay hidden (unless the underlying condition changes first)?</div>
+        <div id="alert-suppress-rows" style="display:flex;flex-direction:column;gap:9px"></div>
       </div>
 
       <!-- Digest -->
@@ -3453,7 +3461,7 @@ async function _xcopyStep4() {
 const _PCC_EXPORT_KEYS = [
   'pve-affinity-rules','pve-drs-settings','pve-webhooks','pve-custom-specs',
   'pve-schedules','pve-saved-views','pve-host-profiles','pve-locations',
-  'pve-vm-alerts','pve-alert-thresholds','pve-content-library-meta',
+  'pve-vm-alerts','pve-alert-thresholds','pve-alert-suppression','pve-content-library-meta',
 ];
 
 function exportPCCConfig() {
@@ -4271,17 +4279,75 @@ async function loadNodes() {
 let _lastRefreshAt = 0;
 
 // Health banner acknowledgements — keyed by exact condition string so they auto-clear
-// when the underlying state changes (e.g. a different node goes offline).
-// Uses sessionStorage so acknowledged warnings reset on page reload.
-const _healthAckd = new Set(JSON.parse(sessionStorage.getItem('pcc-health-ack')||'[]'));
-function _healthAck(key) {
-  _healthAckd.add(key);
-  sessionStorage.setItem('pcc-health-ack', JSON.stringify([..._healthAckd]));
+// when the underlying state changes (e.g. a different node goes offline), AND expire
+// after a per-category suppression window even if the condition hasn't changed.
+// localStorage (not sessionStorage) so a dismissal actually survives a browser restart —
+// otherwise "suppress for 24h" would be pointless.
+let _healthAckMap = (() => {
+  try { return JSON.parse(localStorage.getItem('pcc-health-ack')||'{}'); } catch { return {}; }
+})();
+function _healthAckSave() { localStorage.setItem('pcc-health-ack', JSON.stringify(_healthAckMap)); }
+
+const _HEALTH_CATEGORIES = [
+  { key:'offline',    label:'Node Offline' },
+  { key:'storage',    label:'Storage >85% Full' },
+  { key:'hot',        label:'High CPU / Memory' },
+  { key:'tasks',      label:'Recent Task Errors' },
+  { key:'runwayCrit', label:'Capacity Critical (<30d runway)' },
+  { key:'runwayWarn', label:'Capacity Warning (<90d runway)' },
+];
+function getAlertSuppression() {
+  const defaults = {}; _HEALTH_CATEGORIES.forEach(c => defaults[c.key] = 24); // hours; -1 = permanent
+  try { return { ...defaults, ...JSON.parse(localStorage.getItem('pve-alert-suppression')||'{}') }; }
+  catch { return defaults; }
+}
+function saveAlertSuppression(s) { const v = JSON.stringify(s); localStorage.setItem('pve-alert-suppression', v); _syncShared('pve-alert-suppression', v); }
+
+function renderAlertSuppressionSettings() {
+  const el = document.getElementById('alert-suppress-rows');
+  if (!el) return;
+  const cur = getAlertSuppression();
+  const opts = [1,6,24,168,-1];
+  el.innerHTML = _HEALTH_CATEGORIES.map(c => `
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:10px">
+      <span style="font-size:13px">${escHtml(c.label)}</span>
+      <select onchange="_updateAlertSuppression('${c.key}', this.value)" style="width:150px;padding:4px 8px;font-size:12px">
+        ${opts.map(h=>`<option value="${h}"${cur[c.key]===h?' selected':''}>${_healthDurLabel(h)}</option>`).join('')}
+      </select>
+    </div>`).join('');
+}
+
+function _updateAlertSuppression(cat, hours) {
+  const s = getAlertSuppression();
+  s[cat] = parseInt(hours, 10);
+  saveAlertSuppression(s);
+  toast('Suppression duration updated', 'success');
+}
+
+function _healthAck(key, cat) {
+  const hours = getAlertSuppression()[cat] ?? 24;
+  _healthAckMap[key] = { cat, expiresAt: hours < 0 ? null : Date.now() + hours*3600*1000 };
+  _healthAckSave();
   if (currentView === 'overview') renderOverview();
 }
+function _healthIsAcked(key) {
+  const entry = _healthAckMap[key];
+  if (!entry) return false;
+  if (entry.expiresAt !== null && Date.now() >= entry.expiresAt) { delete _healthAckMap[key]; _healthAckSave(); return false; }
+  return true;
+}
 function _healthClearAck() {
-  _healthAckd.clear();
-  sessionStorage.removeItem('pcc-health-ack');
+  _healthAckMap = {};
+  _healthAckSave();
+}
+function _healthDurLabel(hours) {
+  if (hours < 0) return 'Permanent';
+  if (hours < 24) return `${hours} hour${hours!==1?'s':''}`;
+  return `${Math.round(hours/24)} day${Math.round(hours/24)!==1?'s':''}`;
+}
+// Same duration, phrased for the "hidden ___" tooltip sentence instead of a dropdown option.
+function _healthDurPhrase(hours) {
+  return hours < 0 ? 'until you manually clear it' : `for ${_healthDurLabel(hours)}`;
 }
 
 function _updateRefreshAge() {
@@ -6124,30 +6190,30 @@ function renderOverview() {
   const healthWarns = [];
   const offlineNodes = nodes.filter(n => n.status !== 'online');
   const _offKey = 'offline:' + offlineNodes.map(n=>n.node).sort().join(',');
-  if (offlineNodes.length) healthWarns.push({ sev:'error', key:_offKey, msg:`${offlineNodes.length} node${offlineNodes.length>1?'s':''} offline: ${offlineNodes.map(n=>n.node).join(', ')}`, go:"switchView('nodes')" });
+  if (offlineNodes.length) healthWarns.push({ sev:'error', key:_offKey, cat:'offline', msg:`${offlineNodes.length} node${offlineNodes.length>1?'s':''} offline: ${offlineNodes.map(n=>n.node).join(', ')}`, go:"switchView('nodes')" });
   const highStor = PVE.storage.filter(s => s.total && (s.used/s.total) > 0.85);
   const _storKey = 'storage:' + highStor.map(s=>s.storage).sort().join(',');
-  if (highStor.length) healthWarns.push({ sev:'warning', key:_storKey, msg:`${highStor.length} storage pool${highStor.length>1?'s':''} above 85%: ${highStor.map(s=>s.storage).join(', ')}`, go:"switchView('storage')" });
+  if (highStor.length) healthWarns.push({ sev:'warning', key:_storKey, cat:'storage', msg:`${highStor.length} storage pool${highStor.length>1?'s':''} above 85%: ${highStor.map(s=>s.storage).join(', ')}`, go:"switchView('storage')" });
   const hotNodes = liveNodes.filter(n => (n.statusData.cpu||0)>0.9 || (n.statusData.memory?.used||0)/(n.statusData.memory?.total||1)>0.9);
   const _hotKey = 'hot:' + hotNodes.map(n=>n.node).sort().join(',');
-  if (hotNodes.length) healthWarns.push({ sev:'warning', key:_hotKey, msg:`${hotNodes.length} node${hotNodes.length>1?'s':''} with high CPU or memory usage`, go:"switchView('nodes')" });
+  if (hotNodes.length) healthWarns.push({ sev:'warning', key:_hotKey, cat:'hot', msg:`${hotNodes.length} node${hotNodes.length>1?'s':''} with high CPU or memory usage`, go:"switchView('nodes')" });
   const _taskKey = 'tasks:' + errTasks;
-  if (errTasks>0) healthWarns.push({ sev:'error', key:_taskKey, msg:`${errTasks} recent task error${errTasks>1?'s':''}`, go:"switchView('tasks')" });
+  if (errTasks>0) healthWarns.push({ sev:'error', key:_taskKey, cat:'tasks', msg:`${errTasks} recent task error${errTasks>1?'s':''}`, go:"switchView('tasks')" });
 
   if (_runwayCache) {
     const critR = _runwayCache.nodes.filter(n => !n.error && isFinite(n.minDays) && n.minDays < 30);
     if (critR.length) {
       const _rk = 'runway:crit:' + critR.map(n=>n.node).sort().join(',');
-      healthWarns.push({ sev:'error', key:_rk, msg:`Capacity critical: ${critR.map(n=>`${n.node} (~${Math.round(n.minDays)}d runway)`).join(', ')}`, go:"switchView('capacity')" });
+      healthWarns.push({ sev:'error', key:_rk, cat:'runwayCrit', msg:`Capacity critical: ${critR.map(n=>`${n.node} (~${Math.round(n.minDays)}d runway)`).join(', ')}`, go:"switchView('capacity')" });
     }
     const warnR = _runwayCache.nodes.filter(n => !n.error && isFinite(n.minDays) && n.minDays >= 30 && n.minDays < 90);
     if (warnR.length) {
       const _wk = 'runway:warn:' + warnR.map(n=>n.node).sort().join(',');
-      healthWarns.push({ sev:'warning', key:_wk, msg:`Capacity warning: ${warnR.map(n=>`${n.node} (~${Math.round(n.minDays)}d runway)`).join(', ')}`, go:"switchView('capacity')" });
+      healthWarns.push({ sev:'warning', key:_wk, cat:'runwayWarn', msg:`Capacity warning: ${warnR.map(n=>`${n.node} (~${Math.round(n.minDays)}d runway)`).join(', ')}`, go:"switchView('capacity')" });
     }
   }
 
-  const visibleWarns = healthWarns.filter(w => !_healthAckd.has(w.key));
+  const visibleWarns = healthWarns.filter(w => !_healthIsAcked(w.key));
   const hiddenCount  = healthWarns.length - visibleWarns.length;
 
   const healthBanner = healthWarns.length === 0
@@ -6164,7 +6230,7 @@ function renderOverview() {
               <span style="color:${w.sev==='error'?'var(--red)':'var(--yellow)'};font-size:14px;flex-shrink:0">${w.sev==='error'?'✗':'⚠'}</span>
               <span style="font-size:13px;flex:1;cursor:pointer" onclick="${w.go}">${escHtml(w.msg)}</span>
               <span style="color:var(--muted);font-size:12px;cursor:pointer;flex-shrink:0" onclick="${w.go}" title="Go to view">→</span>
-              <button onclick="event.stopPropagation();_healthAck('${w.key}')" title="Acknowledge — hide until this specific condition changes" style="background:none;border:none;cursor:pointer;color:var(--muted);font-size:14px;padding:0 2px;line-height:1" onmouseover="this.style.color='var(--text)'" onmouseout="this.style.color='var(--muted)'">×</button>
+              <button onclick="event.stopPropagation();_healthAck('${w.key}','${w.cat}')" title="Acknowledge — hidden ${_healthDurPhrase(getAlertSuppression()[w.cat])} (configurable in Admin → Security), or until this condition changes" style="background:none;border:none;cursor:pointer;color:var(--muted);font-size:14px;padding:0 2px;line-height:1" onmouseover="this.style.color='var(--text)'" onmouseout="this.style.color='var(--muted)'">×</button>
             </div>`).join('')}
           ${hiddenCount ? `<div style="padding:6px 14px;font-size:11px;color:var(--muted);border-top:1px solid var(--border);cursor:pointer" onclick="_healthClearAck();renderOverview()">${hiddenCount} acknowledged warning${hiddenCount>1?'s':''} hidden — click to reset</div>` : ''}
         </div>`;

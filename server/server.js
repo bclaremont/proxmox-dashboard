@@ -709,7 +709,7 @@ app.get('/api/shared/:key', authMiddleware, (req, res) => {
 // changes, cloud-init deploys) are admin-only. A user-role account writing these could
 // trigger VM operations or node changes once an admin enforces/applies/deploys them.
 const SHARED_ADMIN_KEYS = new Set([
-  'pve-schedules', 'pve-webhooks', 'pve-alert-thresholds',
+  'pve-schedules', 'pve-webhooks', 'pve-alert-thresholds', 'pve-alert-suppression',
   'pve-affinity-rules', 'pve-drs-settings', 'pve-host-profiles', 'pve-custom-specs',
 ]);
 
