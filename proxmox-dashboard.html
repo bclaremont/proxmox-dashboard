@@ -979,7 +979,7 @@
         <div style="display:flex;gap:6px;align-items:center">
           <div id="sv-chips" style="display:flex;gap:5px;flex-wrap:wrap"></div>
           <button class="btn small" onclick="openCreateViewModal(activeSavedView)">✎ Edit</button>
-          <button class="btn small danger" onclick="deleteCurrentView()">Delete</button>
+          <button class="btn small danger" onclick="confirmDeleteCurrentView()">Delete</button>
         </div>
       </div>
       <div id="sv-content"></div>
@@ -12927,8 +12927,8 @@ async function loadNodeServices(nodeData) {
           <td style="font-size:11px;color:var(--muted)">${escHtml(s['unit-state']||s['active-state']||'—')}</td>
           <td onclick="event.stopPropagation()"><div class="actions-row">
             ${s.state!=='running'?`<button class="btn small success" onclick="nodeServiceAction('${escHtml(s.name||s.service||'')}','${node}','start')">▶ Start</button>`:''}
-            ${s.state==='running'?`<button class="btn small warning" onclick="nodeServiceAction('${escHtml(s.name||s.service||'')}','${node}','stop')">■ Stop</button>`:''}
-            ${s.state==='running'?`<button class="btn small" onclick="nodeServiceAction('${escHtml(s.name||s.service||'')}','${node}','restart')">↺ Restart</button>`:''}
+            ${s.state==='running'?`<button class="btn small warning" onclick="confirmNodeServiceAction('${escHtml(s.name||s.service||'')}','${node}','stop')">■ Stop</button>`:''}
+            ${s.state==='running'?`<button class="btn small" onclick="confirmNodeServiceAction('${escHtml(s.name||s.service||'')}','${node}','restart')">↺ Restart</button>`:''}
             <button class="btn small" onclick="nodeServiceAction('${escHtml(s.name||s.service||'')}','${node}','reload')">↻ Reload</button>
           </div></td>
         </tr>`).join('')}
@@ -12946,6 +12946,16 @@ async function nodeServiceAction(service, node, action) {
     toast(`${action} ${service} started`, 'success');
     setTimeout(()=>{ if(currentDetail&&currentDetail._isNode&&currentDetail.node===node) loadNodeServices(currentDetail); }, 2000);
   } catch(e) { toast(`${action} failed: `+e.message, 'error'); }
+}
+
+// Stop/restart can disrupt node management (e.g. pveproxy, corosync) — confirm first.
+function confirmNodeServiceAction(service, node, action) {
+  document.getElementById('modal-title').textContent = `${action==='stop'?'Stop':'Restart'} Service`;
+  document.getElementById('modal-body').innerHTML = `
+    <p style="color:var(--muted)">${action==='stop'?'Stop':'Restart'} <strong style="color:var(--text)">${escHtml(service)}</strong> on node <strong>${escHtml(node)}</strong>?</p>
+    <p style="color:var(--yellow);font-size:12px;margin-top:8px">⚠ If this is a core service (pveproxy, pvedaemon, corosync…) this can disrupt cluster/node management.</p>`;
+  modalCallback = () => nodeServiceAction(service, node, action);
+  document.getElementById('modal-bg').classList.add('open');
 }
 
 // ── VM HARDWARE TAB ───────────────────────────────────────
@@ -14376,7 +14386,7 @@ function _renderPrepModal(node, vmid, ep, name, connId, cfg, isRunning, hasCI, h
       'The VM must be stopped before converting. All steps below require it to be off.',
       isRunning ? redBadge('● Running') : greenBadge('✓ Stopped'),
       isRunning
-        ? `<button class="btn small danger" onclick="_prepShutdown('${node}','${vmid}','${ep}','${name}','${connId}')">Shutdown now</button>`
+        ? `<button class="btn small danger" onclick="if(confirm('Shut down ${(name||'').replace(/['"]/g,'')} now?'))_prepShutdown('${node}','${vmid}','${ep}','${name}','${connId}')">Shutdown now</button>`
         : ''
     )}
 
@@ -15038,7 +15048,7 @@ function loadCustomSpecs() {
           <div style="display:flex;gap:5px;flex-wrap:wrap">
             <button class="btn small primary" onclick="openDeployWithSpecModal('${s.id}')">▶ Deploy</button>
             <button class="btn small" onclick="openCreateSpecModal('${s.id}')">✎ Edit</button>
-            <button class="btn small danger" onclick="_deleteSpec('${s.id}')">Delete</button>
+            <button class="btn small danger" onclick="confirmDeleteSpec('${s.id}','${(s.name||'').replace(/['"]/g,'')}')">Delete</button>
           </div>
         </div>`).join('')}
     </div>`;
@@ -15048,6 +15058,13 @@ function _deleteSpec(id) {
   saveCustomSpecs(getCustomSpecs().filter(s => s.id !== id));
   loadCustomSpecs();
   toast('Spec deleted', 'info');
+}
+
+function confirmDeleteSpec(id, name) {
+  document.getElementById('modal-title').textContent = 'Delete Customisation Spec';
+  document.getElementById('modal-body').innerHTML = `<p style="color:var(--muted)">Delete spec <strong style="color:var(--red)">${escHtml(name)}</strong>?</p>`;
+  modalCallback = () => _deleteSpec(id);
+  document.getElementById('modal-bg').classList.add('open');
 }
 
 function openCreateSpecModal(editId) {
@@ -16841,7 +16858,7 @@ function renderConnections() {
         ${c.primary
           ? `<button class="btn small" onclick="refreshAll()">↻ Refresh</button>`
           : `<button class="btn small" onclick="refreshExtraConnById('${c.id}')">↻ Refresh</button>
-             <button class="btn small danger" onclick="removeConn('${c.id}')">Disconnect</button>`}
+             <button class="btn small danger" onclick="confirmRemoveConn('${c.id}','${(c.name||c.host||'').replace(/['"]/g,'')}')">Disconnect</button>`}
       </div>
     </div>`;
   });
@@ -16868,6 +16885,14 @@ function removeConn(connId) {
   toast(`Disconnected from "${conn.name||conn.host}"`, 'info');
   renderConnections();
   renderCurrentView();
+}
+
+function confirmRemoveConn(connId, name) {
+  document.getElementById('modal-title').textContent = 'Disconnect Cluster';
+  document.getElementById('modal-body').innerHTML = `<p style="color:var(--muted)">Disconnect <strong style="color:var(--red)">${escHtml(name)}</strong> from this dashboard?</p>
+    <p style="font-size:12px;color:var(--muted);margin-top:8px">This only removes it from your PCC session — the cluster itself is unaffected. You'll need to reconnect to see it again.</p>`;
+  modalCallback = () => removeConn(connId);
+  document.getElementById('modal-bg').classList.add('open');
 }
 
 function openAddConnectionModal() {
@@ -17616,12 +17641,55 @@ async function enforceRule(id) {
   };
 }
 
-async function enforceAllRules() {
+// Builds one combined confirmation covering every fix across every violated rule, rather
+// than looping enforceRule() per rule — that used to overwrite the shared modal/modalCallback
+// on each iteration, so only the last rule's migrations ever actually ran.
+function enforceAllRules() {
   const rules=getAffinityRules().filter(r=>r.enabled!==false);
   const violated=rules.filter(r=>checkRule(r).violated);
   if(!violated.length) return toast('No violations to fix','info');
-  if(!confirm(`Fix ${violated.length} violated rule(s)?`)) return;
-  for(const r of violated) await enforceRule(r.id);
+
+  const allFixes=[];
+  violated.forEach(rule => { checkRule(rule).fixes.forEach(f => allFixes.push(f)); });
+  if(!allFixes.length) return toast('No violations to fix','info');
+
+  document.getElementById('modal-title').textContent=`Fix ${violated.length} Violated Rule${violated.length!==1?'s':''}`;
+  document.getElementById('modal').classList.add('modal-info');
+  document.getElementById('modal-body').innerHTML=`
+    <div style="font-size:13px;color:var(--muted);margin-bottom:12px">The following live migrations will run to resolve all violated affinity/anti-affinity rules:</div>
+    <div style="display:flex;flex-direction:column;gap:6px;margin-bottom:14px;max-height:280px;overflow-y:auto">
+      ${allFixes.map(f=>`
+        <div style="display:flex;align-items:center;gap:8px;background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius);padding:8px 12px">
+          <span class="type-chip ${f.vm.type==='vm'?'vm':'ct'}" style="font-size:10px">${(f.vm.type||'vm').toUpperCase()}</span>
+          <strong>${escHtml(f.vm.name||String(f.vm.vmid))}</strong>
+          <span style="font-size:12px;color:var(--muted)">${f.vm.vmid}</span>
+          <span style="font-size:12px;color:var(--muted)">on <strong style="color:var(--red)">${escHtml(f.vm.node)}</strong></span>
+          <span style="margin-left:auto;color:var(--green);font-weight:600">→ ${escHtml(f.toNode)}</span>
+        </div>`).join('')}
+    </div>
+    <div style="font-size:12px;color:var(--muted)">VMs remain running during live migration. Ensure target nodes have sufficient free RAM.</div>`;
+
+  const btn=document.getElementById('modal-confirm-btn');
+  btn.textContent=`⚡ Migrate ${allFixes.length} VM${allFixes.length!==1?'s':''}`;
+  btn.style.display=''; btn.disabled=false;
+  document.getElementById('modal-bg').classList.add('open');
+
+  modalCallback=async()=>{
+    for(const f of allFixes){
+      const ep=f.vm.type==='vm'?'qemu':'lxc';
+      const conn=resolveConn(f.vm.connId||'');
+      try{
+        const params={target:f.toNode,online:1,'with-local-disks':1};
+        const res=conn?await connPost(conn,`/api2/json/nodes/${f.vm.node}/${ep}/${f.vm.vmid}/migrate`,params)
+                       :await pvePost(`/api2/json/nodes/${f.vm.node}/${ep}/${f.vm.vmid}/migrate`,params);
+        const upid=res&&res.data;
+        if(upid&&typeof upid==='string') tmRegister(upid,f.vm.node,`Affinity fix: ${f.vm.vmid} → ${f.toNode}`);
+        toast(`${f.vm.name||f.vm.vmid} → ${f.toNode} started`,'success');
+      }catch(e){ toast(`Failed: ${escHtml(e.message)}`,'error'); }
+      await new Promise(r=>setTimeout(r,500));
+    }
+    setTimeout(renderAffinityView,3000);
+  };
 }
 
 // Call after every data refresh to keep badge current
@@ -18193,7 +18261,7 @@ function _renderStorageDRS(storages, disksByKey, recs, cfg, threshold, target) {
         <td><span style="color:var(--red)">${escHtml(r.fromStorage)}</span></td>
         <td><span style="color:var(--green)">→ ${escHtml(r.toStorage)}</span></td>
         <td onclick="event.stopPropagation()"><div class="actions-row">
-          <button class="btn small success" onclick="executeStorageDiskMove(${i})">${dryRun?'🔍 Preview':'⚡ Move'}</button>
+          <button class="btn small success" onclick="confirmDiskMove(${i})">${dryRun?'🔍 Preview':'⚡ Move'}</button>
           <button class="btn small warning" onclick="document.getElementById('sdrs-rec-${i}').style.display='none'" title="Skip">✕</button>
         </div></td>
       </tr>`).join('')}
@@ -18201,6 +18269,21 @@ function _renderStorageDRS(storages, disksByKey, recs, cfg, threshold, target) {
     : `<div style="background:rgba(63,185,80,.08);border:1px solid rgba(63,185,80,.25);border-radius:var(--radius);padding:14px 18px;font-size:13px;color:var(--green)">
         ✓ Storage is well-balanced — no disk moves recommended (threshold: over ${threshold}% / under ${target}%)
       </div>`}`;
+}
+
+// Dry-run preview needs no confirmation (it's just a toast, nothing happens); a live
+// move is a real migration, so confirm first.
+function confirmDiskMove(idx) {
+  const cfg = getDRSSettings();
+  if (cfg.dryRun) return executeStorageDiskMove(idx);
+  const rec = storageDRSState.recommendations[idx];
+  if (!rec) return;
+  document.getElementById('modal-title').textContent = 'Move Disk';
+  document.getElementById('modal-body').innerHTML = `
+    <p style="color:var(--muted)">Move <strong style="color:var(--text)">${escHtml(rec.volid.split('/').pop())}</strong> (${rec.sizeGiB.toFixed(1)} GiB) for <strong style="color:var(--text)">${escHtml(rec.name)}</strong> from <strong style="color:var(--red)">${escHtml(rec.fromStorage)}</strong> to <strong style="color:var(--green)">${escHtml(rec.toStorage)}</strong>?</p>
+    <p style="font-size:12px;color:var(--muted);margin-top:8px">The VM/CT keeps running but will briefly pause during the move.</p>`;
+  modalCallback = () => executeStorageDiskMove(idx);
+  document.getElementById('modal-bg').classList.add('open');
 }
 
 async function executeStorageDiskMove(idx) {
@@ -19643,6 +19726,7 @@ function _toggleVMAlert(id) {
 }
 
 function _deleteVMAlert(id) {
+  if (!confirm('Delete this alert rule?')) return;
   saveVMAlerts(getVMAlerts().filter(x => x.id !== id));
   delete _vmAlertState[id];
   _renderVMAlertModalBody();
@@ -21654,6 +21738,14 @@ function deleteCurrentView() {
   toast(`View "${name}" deleted`, 'info');
 }
 
+function confirmDeleteCurrentView() {
+  if (!activeSavedView) return;
+  document.getElementById('modal-title').textContent = 'Delete Saved View';
+  document.getElementById('modal-body').innerHTML = `<p style="color:var(--muted)">Delete saved view <strong style="color:var(--red)">${escHtml(activeSavedView.name)}</strong>?</p>`;
+  modalCallback = () => deleteCurrentView();
+  document.getElementById('modal-bg').classList.add('open');
+}
+
 // ── RESOURCE POOLS ───────────────────────────────────────
 // GET    /api2/json/pools            — list all pools
 // POST   /api2/json/pools            — create pool
@@ -21835,7 +21927,7 @@ function renderPoolDetail(p) {
       <td style="font-size:12px;color:var(--muted)">${cpuStr}</td>
       <td style="font-size:12px;color:var(--muted)">${memPct}</td>
       <td onclick="event.stopPropagation()">
-        <button class="btn small danger" onclick="removeFromPool('${escHtml(p.poolid)}','${p.connId}','vms',${vmid})">Remove</button>
+        <button class="btn small danger" onclick="confirmRemoveFromPool('${escHtml(p.poolid)}','${p.connId}','vms',${vmid},'${(m.name||String(vmid)).replace(/['"]/g,'')}')">Remove</button>
       </td>
     </tr>`;
   };
@@ -21864,7 +21956,7 @@ function renderPoolDetail(p) {
             <td><strong>${escHtml(s.storage||'—')}</strong></td>
             <td style="color:var(--muted)">${escHtml(s.node||'—')}</td>
             <td><span class="type-chip vm">${escHtml(s.plugintype||s.type||'—')}</span></td>
-            <td onclick="event.stopPropagation()"><button class="btn small danger" onclick="removeFromPool('${escHtml(p.poolid)}','${p.connId}','storage','${escHtml(s.storage||'')}')">Remove</button></td>
+            <td onclick="event.stopPropagation()"><button class="btn small danger" onclick="confirmRemoveFromPool('${escHtml(p.poolid)}','${p.connId}','storage','${escHtml(s.storage||'')}','${(s.storage||'').replace(/['"]/g,'')}')">Remove</button></td>
           </tr>`).join('')}</tbody>
         </table></div>` : ''}
     </div>
@@ -21991,6 +22083,14 @@ async function removeFromPool(poolid, connId, field, value) {
     toast(`Removed from pool "${poolid}"`, 'success');
     setTimeout(loadPools, 800);
   } catch(e) { toast('Remove failed: '+e.message, 'error'); }
+}
+
+function confirmRemoveFromPool(poolid, connId, field, value, label) {
+  document.getElementById('modal-title').textContent = 'Remove from Pool';
+  document.getElementById('modal-body').innerHTML = `<p style="color:var(--muted)">Remove <strong style="color:var(--text)">${escHtml(label)}</strong> from pool <strong style="color:var(--accent)">${escHtml(poolid)}</strong>?</p>
+    <p style="font-size:12px;color:var(--muted);margin-top:8px">This only removes it from the pool grouping — nothing is deleted.</p>`;
+  modalCallback = () => removeFromPool(poolid, connId, field, value);
+  document.getElementById('modal-bg').classList.add('open');
 }
 
 function confirmDeletePool(poolid, connId) {
