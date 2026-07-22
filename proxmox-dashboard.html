@@ -4333,6 +4333,8 @@ const _HEALTH_CATEGORIES = [
   { key:'tasks',      label:'Recent Task Errors' },
   { key:'runwayCrit', label:'Capacity Critical (<30d runway)' },
   { key:'runwayWarn', label:'Capacity Warning (<90d runway)' },
+  { key:'updKernel',  label:'Kernel Updates Pending (reboot required)' },
+  { key:'updCore',    label:'Core Proxmox Updates Pending' },
 ];
 function getAlertSuppression() {
   const defaults = {}; _HEALTH_CATEGORIES.forEach(c => defaults[c.key] = 24); // hours; -1 = permanent
@@ -6280,6 +6282,27 @@ function renderOverview() {
   const _taskKey = 'tasks:' + errTasks;
   if (errTasks>0) healthWarns.push({ sev:'error', key:_taskKey, cat:'tasks', msg:`${errTasks} recent task error${errTasks>1?'s':''}`, go:"switchView('tasks')" });
 
+  // Pending package updates, categorised (rawUpdates populated by loadUpdatesBackground()
+  // every refresh cycle regardless of which view is active — primary connection only,
+  // same scope as the existing per-node update badge).
+  const kernelUpds = [], coreUpds = [];
+  Object.entries(rawUpdates).forEach(([n, pkgs]) => {
+    const k = pkgs.filter(p => _updCategory(p)==='kernel').length;
+    const c = pkgs.filter(p => _updCategory(p)==='core').length;
+    if (k) kernelUpds.push({node:n, count:k});
+    if (c) coreUpds.push({node:n, count:c});
+  });
+  if (kernelUpds.length) {
+    const _ukKey = 'updKernel:' + kernelUpds.map(x=>x.node).sort().join(',');
+    const kTotal = kernelUpds.reduce((a,x)=>a+x.count,0);
+    healthWarns.push({ sev:'warning', key:_ukKey, cat:'updKernel', msg:`${kTotal} kernel update${kTotal!==1?'s':''} pending (reboot required) on ${kernelUpds.map(x=>x.node).join(', ')}`, go:"switchView('updates')" });
+  }
+  if (coreUpds.length) {
+    const _ucKey = 'updCore:' + coreUpds.map(x=>x.node).sort().join(',');
+    const cTotal = coreUpds.reduce((a,x)=>a+x.count,0);
+    healthWarns.push({ sev:'warning', key:_ucKey, cat:'updCore', msg:`${cTotal} core Proxmox update${cTotal!==1?'s':''} pending on ${coreUpds.map(x=>x.node).join(', ')}`, go:"switchView('updates')" });
+  }
+
   if (_runwayCache) {
     const critR = _runwayCache.nodes.filter(n => !n.error && isFinite(n.minDays) && n.minDays < 30);
     if (critR.length) {
@@ -6907,9 +6930,12 @@ function _nodeUpdateBadge(nKey) {
   if (!c) return '<span style="color:var(--muted);font-size:11px">—</span>';
   if (c.count < 0) return '<span style="color:var(--muted);font-size:11px">n/a</span>';
   if (c.count === 0) return '<span style="color:var(--green);font-size:12px">✓</span>';
-  const label = c.count + (c.hasSecurity ? ` (+${c.secCount} sec)` : '');
-  const tip = `${c.count} package${c.count!==1?'s':''} pending${c.hasSecurity?', including '+c.secCount+' security update'+(c.secCount!==1?'s':''):''}`;
-  return `<span class="badge ${c.hasSecurity?'danger':'warning'}" title="${tip}">${label}</span>`;
+  const bits = [];
+  if (c.kernelCount) bits.push(`${c.kernelCount} kernel`);
+  if (c.coreCount)   bits.push(`${c.coreCount} core`);
+  const label = c.count + (bits.length ? ` (${bits.join(', ')})` : '');
+  const tip = `${c.count} package${c.count!==1?'s':''} pending${bits.length?' — '+bits.join(', ')+' (reboot/cluster-critical)':''}`;
+  return `<span class="badge ${(c.kernelCount||c.coreCount)?'danger':'warning'}" title="${tip}">${label}</span>`;
 }
 
 async function _fetchNodeUpdateCounts(flatNodes) {
@@ -6927,13 +6953,11 @@ async function _fetchNodeUpdateCounts(flatNodes) {
       const getF = conn ? (p => connGet(conn, p)) : pveGet;
       const d = await getF(`/api2/json/nodes/${n.node}/apt/update`).catch(() => ({data:[]}));
       const pkgs = d.data || [];
-      const secCount = pkgs.filter(p =>
-        (p.Priority||'').toLowerCase() === 'security' ||
-        (p.Section||'').toLowerCase().includes('security')
-      ).length;
-      _nodeUpdateCache[nKey] = { count: pkgs.length, secCount, hasSecurity: secCount > 0, ts: Date.now() };
+      const kernelCount = pkgs.filter(p => _updCategory(p)==='kernel').length;
+      const coreCount   = pkgs.filter(p => _updCategory(p)==='core').length;
+      _nodeUpdateCache[nKey] = { count: pkgs.length, kernelCount, coreCount, ts: Date.now() };
     } catch(e) {
-      _nodeUpdateCache[nKey] = { count: -1, secCount: 0, hasSecurity: false, ts: Date.now() };
+      _nodeUpdateCache[nKey] = { count: -1, kernelCount: 0, coreCount: 0, ts: Date.now() };
     }
   }));
   if (currentView === 'nodes') renderNodes();
@@ -19254,6 +19278,19 @@ async function runReplNow(id, connId) {
 
 let rawUpdates = {};  // node → package array
 
+// Proxmox's apt/update API has no severity/security field at all (verified against
+// PVE::API2::APT source — Priority is plain APT priority like "optional"/"important",
+// never "security"). These categories are the honest alternative: things we can
+// actually verify from the package name, not a guessed severity.
+const _UPD_KERNEL_RE = /^(pve-kernel-|proxmox-kernel-|pve-firmware)/;
+const _UPD_CORE_RE   = /^(pve-manager|pve-cluster|corosync|pve-ha-manager|qemu-server|pve-container|libpve-)/;
+function _updCategory(pkg) {
+  const name = pkg.Package || '';
+  if (_UPD_KERNEL_RE.test(name)) return 'kernel';
+  if (_UPD_CORE_RE.test(name))   return 'core';
+  return 'routine';
+}
+
 async function loadUpdatesBackground() {
   try {
     let total = 0;
@@ -19304,14 +19341,15 @@ function renderUpdates() {
   });
 
   const total   = allPkgs.length;
-  const secCount = allPkgs.filter(p => (p.Priority||'').toLowerCase()==='security' || (p.Section||'').toLowerCase().includes('security')).length;
+  const kernelCount = allPkgs.filter(p => _updCategory(p)==='kernel').length;
+  const coreCount   = allPkgs.filter(p => _updCategory(p)==='core').length;
   const nodeCount = [...new Set(allPkgs.map(p=>p.node))].length;
 
   const stats = `
     <div class="stats-grid" style="margin-bottom:16px">
       <div class="stat-card accent-${total>0?'yellow':'green'}"><div class="label">Packages to Update</div><div class="value">${total}</div><div class="sub">across ${nodeCount} node(s)</div></div>
-      <div class="stat-card accent-${secCount>0?'red':'green'}"><div class="label">Security Updates</div><div class="value" style="color:${secCount>0?'var(--red)':'var(--green)'}">${secCount}</div><div class="sub">critical priority</div></div>
-      <div class="stat-card"><div class="label">Nodes with Updates</div><div class="value" style="color:var(--blue)">${nodeCount}</div></div>
+      <div class="stat-card accent-${kernelCount>0?'red':'green'}"><div class="label">Kernel Updates</div><div class="value" style="color:${kernelCount>0?'var(--red)':'var(--green)'}">${kernelCount}</div><div class="sub">requires reboot to take effect</div></div>
+      <div class="stat-card accent-${coreCount>0?'yellow':'green'}"><div class="label">Core Proxmox Updates</div><div class="value" style="color:${coreCount>0?'var(--yellow)':'var(--green)'}">${coreCount}</div><div class="sub">pve-manager, corosync, HA, qemu-server…</div></div>
     </div>`;
 
   if (!total) {
@@ -19345,14 +19383,19 @@ function renderUpdates() {
     </div>
     <div class="table-wrap" style="margin-bottom:18px">
       <table>
-        <thead><tr><th>Package</th><th>Installed</th><th>Available</th><th>Priority</th><th>Section</th><th>Description</th></tr></thead>
+        <thead><tr><th>Package</th><th>Installed</th><th>Available</th><th>Category</th><th>Section</th><th>Description</th></tr></thead>
         <tbody>${pkgs.map(p => {
-          const isSec = (p.Priority||'').toLowerCase()==='security';
+          const cat = _updCategory(p);
+          const catBadge = cat==='kernel'
+            ? '<span class="badge stopped" style="font-size:10px" title="Requires a reboot to take effect"><span class="badge-dot"></span>kernel — reboot</span>'
+            : cat==='core'
+            ? '<span class="badge paused" style="font-size:10px" title="Core Proxmox / cluster package"><span class="badge-dot"></span>core</span>'
+            : `<span style="font-size:11px;color:var(--muted)">${escHtml(p.Priority||'—')}</span>`;
           return `<tr>
             <td><strong>${escHtml(p.Package||'—')}</strong></td>
             <td style="font-family:monospace;font-size:11px;color:var(--muted)">${escHtml(p.OldVersion||'—')}</td>
             <td style="font-family:monospace;font-size:11px;color:var(--green)">${escHtml(p.Version||'—')}</td>
-            <td>${isSec?'<span class="badge stopped" style="font-size:10px"><span class="badge-dot"></span>security</span>':escHtml(p.Priority||'—')}</td>
+            <td>${catBadge}</td>
             <td style="font-size:11px;color:var(--muted)">${escHtml(p.Section||'—')}</td>
             <td style="font-size:12px;color:var(--muted);max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escHtml(p.Title||'')}">
               ${escHtml(p.Title||'')}

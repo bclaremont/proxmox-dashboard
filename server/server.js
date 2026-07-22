@@ -1137,14 +1137,15 @@ async function buildDigestData() {
   for (const cluster of clusters) {
     try {
       const nodes = await clusterApiGet(cluster, '/api2/json/nodes');
-      const clusterData = { name: cluster.name, host: cluster.host, nodes: [], vms: [], storage: [] };
+      const clusterData = { name: cluster.name, host: cluster.host, nodes: [], vms: [], storage: [], updates: [] };
 
       await Promise.all(nodes.map(async n => {
-        const [status, vms, cts, stor] = await Promise.all([
+        const [status, vms, cts, stor, upd] = await Promise.all([
           clusterApiGet(cluster, `/api2/json/nodes/${n.node}/status`),
           clusterApiGet(cluster, `/api2/json/nodes/${n.node}/qemu`),
           clusterApiGet(cluster, `/api2/json/nodes/${n.node}/lxc`),
           clusterApiGet(cluster, `/api2/json/nodes/${n.node}/storage`),
+          clusterApiGet(cluster, `/api2/json/nodes/${n.node}/apt/update`),
         ]);
         const s = Array.isArray(status) ? {} : status;
         clusterData.nodes.push({
@@ -1161,12 +1162,23 @@ async function buildDigestData() {
             clusterData.storage.push({ storage: st.storage, node: n.node, usedPct: ((st.used/st.total)*100).toFixed(1), total: st.total });
           }
         });
+        (Array.isArray(upd)?upd:[]).forEach(p => {
+          clusterData.updates.push({ node: n.node, package: p.Package || '' });
+        });
       }));
       report.clusters.push(clusterData);
     } catch { /* skip cluster on error */ }
   }
   return report;
 }
+
+// Same categorisation as the frontend (_updCategory in proxmox-dashboard.html) —
+// Proxmox's apt/update API has no security/severity field at all, verified against
+// PVE::API2::APT source, so this is the honest alternative: what we can actually
+// tell from the package name, not a guessed severity. Kept in sync manually since
+// this is a single-file frontend + separate server with no shared module.
+const DIGEST_UPD_KERNEL_RE = /^(pve-kernel-|proxmox-kernel-|pve-firmware)/;
+const DIGEST_UPD_CORE_RE   = /^(pve-manager|pve-cluster|corosync|pve-ha-manager|qemu-server|pve-container|libpve-)/;
 
 function buildDigestHtml(data) {
   const ts = new Date(data.generatedAt).toLocaleString();
@@ -1179,6 +1191,8 @@ function buildDigestHtml(data) {
     const highStorage  = c.storage.filter(s => parseFloat(s.usedPct) > 80);
     const longRunning  = [...c.vms].filter(v=>v.status==='running'&&v.uptime>90*86400)
                           .sort((a,b)=>b.uptime-a.uptime).slice(0,5);
+    const kernelUpds = (c.updates||[]).filter(u => DIGEST_UPD_KERNEL_RE.test(u.package));
+    const coreUpds   = (c.updates||[]).filter(u => DIGEST_UPD_CORE_RE.test(u.package));
 
     html += `<h3 style="color:#79c0ff;border-bottom:1px solid #30363d;padding-bottom:6px">${c.name}</h3>
       <table style="width:100%;border-collapse:collapse;margin-bottom:16px">
@@ -1192,6 +1206,10 @@ function buildDigestHtml(data) {
             <td style="padding:4px 8px;color:#f85149">${highStorage.map(s=>`${s.storage}@${s.node}: ${s.usedPct}%`).join(', ')}</td></tr>`:''}
         ${longRunning.length?`<tr><td style="padding:4px 8px;color:#e3b341">Long-running VMs</td>
             <td style="padding:4px 8px;color:#e3b341">${longRunning.map(v=>`${v.name} (${Math.floor(v.uptime/86400)}d)`).join(', ')}</td></tr>`:''}
+        ${kernelUpds.length?`<tr><td style="padding:4px 8px;color:#f85149">Kernel updates</td>
+            <td style="padding:4px 8px;color:#f85149">${kernelUpds.length} pending, reboot required (${[...new Set(kernelUpds.map(u=>u.node))].join(', ')})</td></tr>`:''}
+        ${coreUpds.length?`<tr><td style="padding:4px 8px;color:#e3b341">Core Proxmox updates</td>
+            <td style="padding:4px 8px;color:#e3b341">${coreUpds.length} pending (${[...new Set(coreUpds.map(u=>u.node))].join(', ')})</td></tr>`:''}
       </table>`;
   }
   html += '</body></html>';
