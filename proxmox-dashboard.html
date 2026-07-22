@@ -19323,10 +19323,25 @@ function renderUpdates() {
   const byNode = {};
   allPkgs.forEach(p => { (byNode[p.node]||(byNode[p.node]=[])).push(p); });
 
-  const tables = Object.entries(byNode).map(([node, pkgs]) => `
+  const _updConn = getViewConn('updates-conn');
+  const _updConnId = _updConn ? _updConn.id : '';
+
+  const tables = Object.entries(byNode).map(([node, pkgs]) => {
+    const guestCount = allVMs().concat(allCTs()).filter(x => x.node===node && (x.connId||'')===_updConnId).length;
+    const inMaint    = isMaintenanceMode(node);
+    const manifest    = _getDrainManifest(node, _updConnId);
+    return `
     <div class="section-header" style="margin-top:8px">
-      <span class="section-title">${escHtml(node)} — ${pkgs.length} package${pkgs.length!==1?'s':''}</span>
-      <button class="btn small success" onclick="refreshPackageList('${node}')">↻ apt update</button>
+      <span class="section-title">${escHtml(node)} — ${pkgs.length} package${pkgs.length!==1?'s':''}
+        ${inMaint?'<span class="badge stopped" style="font-size:10px;margin-left:6px"><span class="badge-dot"></span>maintenance</span>':''}
+      </span>
+      <div class="actions-row">
+        <button class="btn small" onclick="openDrainNodeModal({node:'${node}',connId:'${_updConnId}'})" title="${guestCount>0?`Migrate ${guestCount} guest(s) off before updating`:'No guests currently on this node'}">🔧 ${inMaint?'Drain / Exit Maintenance':'Drain & Prepare'} (${guestCount})</button>
+        <button class="btn small" onclick="openConsole('${node}','','node','${_updConnId}')" title="Open a shell to run the actual apt upgrade">⌨ Console</button>
+        <button class="btn small danger" onclick="confirmRebootNode('${node}','${_updConnId}')" title="Reboot this node">⟲ Reboot</button>
+        ${manifest?`<button class="btn small success" onclick="openMigrateBackModal('${node}','${_updConnId}')" title="Migrate ${manifest.guests.length} previously-drained guest(s) back">↩ Migrate Back (${manifest.guests.length})</button>`:''}
+        <button class="btn small success" onclick="refreshPackageList('${node}')">↻ apt update</button>
+      </div>
     </div>
     <div class="table-wrap" style="margin-bottom:18px">
       <table>
@@ -19346,16 +19361,16 @@ function renderUpdates() {
           </tr>`;
         }).join('')}</tbody>
       </table>
-    </div>`).join('');
+    </div>`;
+  }).join('');
 
-  const _updConn = getViewConn('updates-conn');
   // Only show a direct link in direct mode — in standalone mode the Proxmox
   // hosts are only reachable from the PCC server, not from the browser.
   const _isDirectMode = !PVE.host.startsWith('/proxy/');
   const _pveUrl = _isDirectMode ? _getPveUIUrl(_updConn) : '#';
   el.innerHTML = stats + `
     <div style="background:rgba(210,153,34,.1);border:1px solid rgba(210,153,34,.3);border-radius:var(--radius);padding:9px 14px;font-size:12px;color:var(--yellow);margin-bottom:16px">
-      ⚠ Apply updates via SSH or Proxmox scheduled tasks to avoid disrupting running VMs.
+      ⚠ "Drain &amp; Prepare" migrates guests off, but PCC can't apply the actual upgrade — Proxmox has no API for that, only a live shell (same as its own web UI). Use Console to run <code>apt update &amp;&amp; apt -y dist-upgrade</code> yourself, then Reboot when it's done.
       ${_isDirectMode && _pveUrl !== '#' ? `<a href="${escHtml(_pveUrl)}" target="_blank" style="color:var(--blue);margin-left:6px">Open Proxmox UI →</a>` : ''}
     </div>` + tables;
 }
@@ -21259,6 +21274,137 @@ function setMaintenanceMode(node, state) {
   localStorage.setItem(_maintKey(),JSON.stringify(m));
 }
 
+// ── DRAIN MANIFEST — "which guests used to live here" ────
+// Persisted so a node drained for updates can have its guests migrated back
+// later, even across a page reload (a node update can take many minutes —
+// nobody should have to keep a modal open the whole time).
+function _drainManifestKey() { return 'pcc-drain-manifest'; }
+function _getDrainManifest(node, connId) {
+  try { return JSON.parse(localStorage.getItem(_drainManifestKey())||'{}')[`${connId||''}|${node}`] || null; }
+  catch(e) { return null; }
+}
+function _saveDrainManifest(node, connId, guests) {
+  const all = (() => { try { return JSON.parse(localStorage.getItem(_drainManifestKey())||'{}'); } catch(e) { return {}; } })();
+  all[`${connId||''}|${node}`] = { since: Date.now(), guests };
+  localStorage.setItem(_drainManifestKey(), JSON.stringify(all));
+}
+function _clearDrainManifest(node, connId) {
+  const all = (() => { try { return JSON.parse(localStorage.getItem(_drainManifestKey())||'{}'); } catch(e) { return {}; } })();
+  delete all[`${connId||''}|${node}`];
+  localStorage.setItem(_drainManifestKey(), JSON.stringify(all));
+}
+
+// ── AWAITABLE MIGRATE / TASK HELPERS ──────────────────────
+// Used by both the hardened Drain modal and the Rolling Update flow — unlike
+// the original drain loop (fire the migrate POST, wait 600ms, move on), these
+// actually confirm each migration completed before the caller proceeds.
+
+// Polls a UPID's own task-status endpoint until it stops running (or times out).
+async function _pccWaitForTask(node, upid, connId, timeoutMs=600000) {
+  const get = connId ? (p=>connGet(resolveConn(connId),p)) : pveGet;
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    try {
+      const d = await get(`/api2/json/nodes/${node}/tasks/${encodeURIComponent(upid)}/status`);
+      const s = d.data || {};
+      if (s.status === 'stopped') return { ok: s.exitstatus === 'OK', exitstatus: s.exitstatus || 'unknown' };
+    } catch {}
+    await new Promise(r => setTimeout(r, 2000));
+  }
+  return { ok: false, exitstatus: 'timeout' };
+}
+
+// HA-managed resources don't return a UPID for migrate/relocate requests — the HA
+// manager (CRM) picks the request up asynchronously. Poll cluster HA status until
+// the resource reports itself running on the target node.
+async function _pccWaitForHAResource(sid, targetNode, connId, timeoutMs=300000) {
+  const get = connId ? (p=>connGet(resolveConn(connId),p)) : pveGet;
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    try {
+      const d = await get('/api2/json/cluster/ha/status/current');
+      const entry = (d.data||[]).find(e => e.sid === sid || e.id === sid);
+      if (entry && entry.node === targetNode) return { ok: true, exitstatus: 'OK' };
+    } catch {}
+    await new Promise(r => setTimeout(r, 3000));
+  }
+  return { ok: false, exitstatus: 'timeout' };
+}
+
+// Migrates one guest (VM/CT), HA-aware, and only resolves once the move is
+// confirmed complete — not just requested. haSids = Set of "vm:<id>"/"ct:<id>"
+// strings for guests under HA management (see loadHAResourceSids()).
+async function _pccMigrateGuestAwait(guest, targetNode, opts, haSids) {
+  const { connId='', online=true, withLocal=true, targetStorage='' } = opts || {};
+  const sid = `${guest.type === 'vm' ? 'vm' : 'ct'}:${guest.vmid}`;
+  const conn = resolveConn(connId);
+
+  if (haSids && haSids.has(sid)) {
+    const haType = guest.status === 'running' ? 'migrate' : 'relocate';
+    const path = `/api2/json/cluster/ha/resources/${encodeURIComponent(sid)}/${haType}`;
+    try {
+      if (conn) await connPost(conn, path, { node: targetNode });
+      else await pvePost(path, { node: targetNode });
+    } catch(e) { return { ok:false, message:`HA ${haType} request failed: ${e.message}` }; }
+    const result = await _pccWaitForHAResource(sid, targetNode, connId, 300000);
+    return { ok: result.ok, message: result.ok ? `HA ${haType} complete` : `HA ${haType} did not complete (${result.exitstatus})` };
+  }
+
+  const ep = guest.type === 'vm' ? 'qemu' : 'lxc';
+  const params = { target: targetNode };
+  if (guest.type === 'vm') { params.online = online ? 1 : 0; if (withLocal) params['with-local-disks'] = 1; }
+  if (targetStorage) params.targetstorage = targetStorage;
+  let res;
+  try {
+    res = conn ? await connPost(conn, `/api2/json/nodes/${guest.node}/${ep}/${guest.vmid}/migrate`, params)
+               : await pvePost(`/api2/json/nodes/${guest.node}/${ep}/${guest.vmid}/migrate`, params);
+  } catch(e) { return { ok:false, message:e.message }; }
+  const upid = res && res.data;
+  if (!upid || typeof upid !== 'string') return { ok:true, message:'requested (no task id returned)' };
+  tmRegister(upid, guest.node, `Migrate ${guest.type.toUpperCase()} ${guest.vmid} → ${targetNode}`, connId);
+  const result = await _pccWaitForTask(guest.node, upid, connId, 600000);
+  return { ok: result.ok, message: result.ok ? 'migrated' : `migration failed (${result.exitstatus})` };
+}
+
+// Set of "vm:<id>"/"ct:<id>" strings currently under HA management, for this connection.
+async function loadHAResourceSids(connId) {
+  const conn = resolveConn(connId);
+  const get = conn ? (p=>connGet(conn,p)) : pveGet;
+  try {
+    const d = await get('/api2/json/cluster/ha/resources');
+    return new Set((d.data||[]).map(r => r.sid).filter(Boolean));
+  } catch { return new Set(); }
+}
+
+// Node-level reboot — POST /nodes/{node}/status {command:"reboot"}, a real UPID-returning
+// task just like start/stop/migrate. Not previously wired up anywhere in this app.
+async function _pccRebootNode(node, connId) {
+  const conn = resolveConn(connId);
+  const path = `/api2/json/nodes/${node}/status`;
+  const res = conn ? await connPost(conn, path, { command:'reboot' }) : await pvePost(path, { command:'reboot' });
+  const upid = res && res.data;
+  if (upid && typeof upid === 'string') tmRegister(upid, node, `Reboot ${node}`, connId);
+  return upid;
+}
+
+function confirmRebootNode(node, connId) {
+  const guestCount = allVMs().concat(allCTs()).filter(x => x.node===node && (x.connId||'')===(connId||'')).length;
+  document.getElementById('modal-title').textContent = `Reboot ${node}`;
+  document.getElementById('modal-body').innerHTML = `
+    <p style="color:var(--muted)">Reboot node <strong style="color:var(--text)">${escHtml(node)}</strong> now?</p>
+    ${guestCount>0
+      ? `<p style="color:var(--red);font-size:12px;margin-top:8px">⚠ ${guestCount} VM/CT still on this node — they will go down with it. Drain the node first unless that's intended.</p>`
+      : `<p style="color:var(--muted);font-size:12px;margin-top:8px">No VMs/CTs currently on this node.</p>`}
+    <p style="font-size:12px;color:var(--muted);margin-top:8px">Make sure any package upgrade you started in the console has actually finished before rebooting.</p>`;
+  modalCallback = async () => {
+    try {
+      await _pccRebootNode(node, connId);
+      toast(`Reboot requested for ${node}`, 'success');
+    } catch(e) { toast(`Reboot failed: ${e.message}`, 'error'); }
+  };
+  document.getElementById('modal-bg').classList.add('open');
+}
+
 // Storage types that are node-local (non-shared) — require targetstorage on migration
 const _LOCAL_STOR_TYPES = new Set(['dir','lvm','lvmthin','zfspool','btrfs']);
 
@@ -21444,7 +21590,10 @@ async function openDrainNodeModal(nodeData) {
     };
     log(`[start] Drain ${node} — ${items.length} guest(s)`);
 
+    const haSids = await loadHAResourceSids(connId);
+
     let ok=0,fail=0;
+    const migrated=[]; // guests actually confirmed moved — goes into the drain manifest
     for(const x of items) {
       let target=targetPref;
       if(target==='_auto') {
@@ -21457,34 +21606,88 @@ async function openDrainNodeModal(nodeData) {
       }
       if(!target){ log(`[fail] ${x.name||x.vmid}: no target node available`,'var(--red)'); fail++; continue; }
 
-      log(`[migr] ${x.type.toUpperCase()} ${x.vmid} (${x.name||'?'}) → ${target}…`);
-      try {
-        const ep=x.type==='vm'?'qemu':'lxc';
-        const params={target};
-        if(x.type==='vm'){
-          params.online=online?1:0;
-          if(withLocal) params['with-local-disks']=1;
-        }
-        // Add targetstorage when a specific storage is selected (handles local disk VMs)
-        if(targetStorage && targetStorage!=='') params.targetstorage=targetStorage;
-
-        const c=resolveConn(connId);
-        const res=c?await connPost(c,`/api2/json/nodes/${node}/${ep}/${x.vmid}/migrate`,params)
-                    :await pvePost(`/api2/json/nodes/${node}/${ep}/${x.vmid}/migrate`,params);
-        const upid=res&&res.data;
-        if(upid&&typeof upid==='string') tmRegister(upid,node,`Drain: ${x.type.toUpperCase()} ${x.vmid} → ${target}`);
-        log(`[ ok ] ${x.name||x.vmid} → ${target}`,'var(--green)');
-        ok++; await new Promise(r=>setTimeout(r,600));
-      } catch(e) {
-        log(`[fail] ${x.name||x.vmid}: ${escHtml(e.message)}`,'var(--red)'); fail++;
+      const isHA = haSids.has(`${x.type==='vm'?'vm':'ct'}:${x.vmid}`);
+      log(`[migr] ${x.type.toUpperCase()} ${x.vmid} (${x.name||'?'}) → ${target}${isHA?' (HA-managed)':''}… waiting for completion`);
+      const result = await _pccMigrateGuestAwait(x, target, { connId, online, withLocal, targetStorage }, haSids);
+      if (result.ok) {
+        log(`[ ok ] ${x.name||x.vmid} → ${target} — ${result.message}`,'var(--green)');
+        ok++; migrated.push({ vmid:x.vmid, type:x.type, name:x.name||String(x.vmid), originalNode:node, movedTo:target });
+      } else {
+        log(`[fail] ${x.name||x.vmid}: ${escHtml(result.message)}`,'var(--red)'); fail++;
       }
     }
 
-    setMaintenanceMode(node,true);
-    log(`[done] ${ok} migrated · ${fail} failed · node marked as maintenance`,ok>0?'var(--green)':'var(--yellow)');
+    if (migrated.length) _saveDrainManifest(node, connId, migrated);
+    if (fail === 0) {
+      setMaintenanceMode(node,true);
+      log(`[done] ${ok} migrated · node fully drained and marked as maintenance`,'var(--green)');
+    } else {
+      log(`[done] ${ok} migrated · ${fail} failed — node NOT marked as maintenance, ${fail} guest(s) still present`,'var(--yellow)');
+    }
     btn.textContent='Done — Close'; btn.disabled=false;
-    btn.onclick=()=>{ document.getElementById('modal-bg').classList.remove('open'); btn.onclick=confirmModal; btn.textContent='Confirm'; refreshAll(); };
+    btn.onclick=()=>{ document.getElementById('modal-bg').classList.remove('open'); btn.onclick=confirmModal; btn.textContent='Confirm'; refreshAll(); if(currentView==='updates') renderUpdates(); };
     toast(`${node} drained — ${ok} ok · ${fail} failed`,'success');
+  };
+  document.getElementById('modal-bg').classList.add('open');
+}
+
+// Counterpart to the drain manifest above — migrates previously-drained guests
+// back to the node they came from, HA-aware and verified the same way.
+async function openMigrateBackModal(node, connId) {
+  const manifest = _getDrainManifest(node, connId);
+  if (!manifest || !manifest.guests || !manifest.guests.length) {
+    toast(`No drain manifest for ${node} — nothing to migrate back`, 'info');
+    return;
+  }
+  const guests = manifest.guests;
+
+  document.getElementById('modal-title').textContent = `Migrate Back to ${node}`;
+  document.getElementById('modal-body').innerHTML = `
+    <p style="color:var(--muted);font-size:13px;margin-bottom:12px">
+      These <strong style="color:var(--text)">${guests.length}</strong> guest(s) were moved off <strong style="color:var(--text)">${escHtml(node)}</strong> during a drain on ${new Date(manifest.since).toLocaleString()}. Migrate them back?
+    </p>
+    <div style="max-height:200px;overflow-y:auto;border:1px solid var(--border);border-radius:var(--radius);margin-bottom:10px">
+      ${guests.map(g=>`<div style="padding:6px 10px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px;font-size:12px">
+        <span class="type-chip ${g.type==='vm'?'vm':'ct'}">${g.type.toUpperCase()}</span>
+        <strong>${escHtml(g.name)}</strong>
+        <span style="color:var(--muted)">${g.vmid}</span>
+        <span style="margin-left:auto;color:var(--muted)">currently on ${escHtml(g.movedTo)}</span>
+      </div>`).join('')}
+    </div>
+    <div id="mback-progress" style="display:none;max-height:200px;overflow-y:auto;background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius);padding:8px 10px;font-family:monospace;font-size:11px;margin-top:4px"></div>`;
+
+  modalCallback = null;
+  const btn = document.getElementById('modal-confirm-btn');
+  btn.textContent = `↩ Migrate Back to ${node}`; btn.disabled = false;
+  btn.onclick = async () => {
+    btn.disabled = true; btn.textContent = 'Migrating…';
+    const progress = document.getElementById('mback-progress');
+    if (progress) progress.style.display = '';
+    const log = (msg,col) => { if (progress) { progress.innerHTML += `<div style="padding:2px 0;color:${col||'var(--muted)'}">${escHtml(msg)}</div>`; progress.scrollTop = progress.scrollHeight; } };
+    log(`[start] Migrate ${guests.length} guest(s) back to ${node}`);
+
+    const haSids  = await loadHAResourceSids(connId);
+    const liveVMs = allVMs().concat(allCTs());
+    let ok = 0, fail = 0;
+    const stillAway = [];
+    for (const g of guests) {
+      const live = liveVMs.find(v => String(v.vmid) === String(g.vmid) && (v.connId||'') === (connId||'') && v.type === g.type);
+      if (!live) { log(`[skip] ${g.name}: no longer found (deleted?)`, 'var(--yellow)'); continue; }
+      if (live.node === node) { log(`[skip] ${g.name}: already on ${node}`, 'var(--muted)'); ok++; continue; }
+      log(`[migr] ${g.type.toUpperCase()} ${g.vmid} (${g.name}) ${live.node} → ${node}… waiting for completion`);
+      const result = await _pccMigrateGuestAwait(live, node, { connId, online:true, withLocal:true }, haSids);
+      if (result.ok) { log(`[ ok ] ${g.name} → ${node} — ${result.message}`, 'var(--green)'); ok++; }
+      else { log(`[fail] ${g.name}: ${escHtml(result.message)}`, 'var(--red)'); fail++; stillAway.push(g); }
+    }
+
+    if (stillAway.length) _saveDrainManifest(node, connId, stillAway);
+    else _clearDrainManifest(node, connId);
+    if (fail === 0) setMaintenanceMode(node, false);
+
+    log(`[done] ${ok} back on ${node} · ${fail} failed`, fail ? 'var(--yellow)' : 'var(--green)');
+    btn.textContent = 'Done — Close'; btn.disabled = false;
+    btn.onclick = () => { document.getElementById('modal-bg').classList.remove('open'); btn.onclick = confirmModal; btn.textContent = 'Confirm'; refreshAll(); if(currentView==='updates') renderUpdates(); };
+    toast(`Migrate back: ${ok} ok · ${fail} failed`, 'success');
   };
   document.getElementById('modal-bg').classList.add('open');
 }
