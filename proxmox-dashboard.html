@@ -2222,7 +2222,7 @@ async function pccLogout() {
   if (userEl) userEl.style.display = 'none';
   // clear all cluster connections
   clearInterval(PVE.refreshInterval);
-  PVE = { host:'', ticket:'', csrfToken:'', tokenAuth:'', useToken:false,
+  PVE = { host:'', ticket:'', csrfToken:'', tokenAuth:'', useToken:false, clusterName:'',
           nodes:[], vms:[], containers:[], nodeStatuses:[], tasks:[], syslog:[], refreshInterval:null };
   extraConns = [];
   pccShowLogin();
@@ -2998,7 +2998,7 @@ function confirmDisableUserTotp(id, username) {
 }
 
 let PVE = {
-  host:'', ticket:'', csrfToken:'', tokenAuth:'', useToken:false,
+  host:'', ticket:'', csrfToken:'', tokenAuth:'', useToken:false, clusterName:'',
   nodes:[], vms:[], containers:[], nodeStatuses:[],
   tasks:[], syslog:[], storage:[], network:[], refreshInterval:null
 };
@@ -4445,10 +4445,25 @@ function _updateRefreshAge() {
 }
 setInterval(_updateRefreshAge, 1000);
 
+// Fetched once per connection and cached on PVE.clusterName — every '||"Primary"' fallback
+// throughout the app picks this up automatically once it's set. Standalone (non-clustered)
+// nodes have no 'cluster' entry in the response, so clusterName stays '' and "Primary" sticks.
+async function _loadPrimaryClusterName() {
+  try {
+    const d = await pveGet('/api2/json/cluster/status');
+    const c = (d.data||[]).find(x => x.type === 'cluster');
+    if (c && c.name) {
+      PVE.clusterName = c.name;
+      renderSidebarTree();
+    }
+  } catch {}
+}
+
 async function refreshAll() {
   if (!PVE.host) return;
   try {
     await loadNodes();
+    if (!PVE.clusterName) _loadPrimaryClusterName();
     const allVMs=[],allCTs=[],nodeStats=[];
     await Promise.all(PVE.nodes.map(async n=>{
       const [vms,cts,status] = await Promise.all([
