@@ -890,7 +890,7 @@ const server = http.createServer(app);
 server.on('upgrade', (req, socket, head) => {
   const parsedUrl = new url.URL(req.url, 'http://localhost');
   const match = parsedUrl.pathname.match(/^\/vnc-ws\/([^/]+)\/([^/]+)\/([^/]+)\/([^/]+)$/);
-  if (!match) { socket.destroy(); return; }
+  if (!match) { console.error(`[vnc-ws] rejected — path did not match: ${parsedUrl.pathname}`); socket.destroy(); return; }
 
   const [, clusterId, node, ep, vmid] = match;
   const port      = parseInt(parsedUrl.searchParams.get('port') || '0', 10);
@@ -900,21 +900,30 @@ server.on('upgrade', (req, socket, head) => {
   // Strict input validation to prevent CRLF injection into the raw HTTP Upgrade headers.
   const _safeId = /^[a-zA-Z0-9_.-]{1,128}$/;
   if (!_safeId.test(node) || !_safeId.test(ep) || (vmid && !_safeId.test(vmid))) {
+    console.error(`[vnc-ws] rejected — unsafe node/ep/vmid: ${node}/${ep}/${vmid}`);
     socket.destroy(); return;
   }
-  if (!port || port < 1 || port > 65535) { socket.destroy(); return; }
+  if (!port || port < 1 || port > 65535) {
+    console.error(`[vnc-ws] rejected — bad port: ${parsedUrl.searchParams.get('port')}`);
+    socket.destroy(); return;
+  }
   // vncticket is base64+URL chars; reject anything with CR/LF
-  if (/[\r\n]/.test(ticket)) { socket.destroy(); return; }
+  if (/[\r\n]/.test(ticket)) { console.error('[vnc-ws] rejected — CR/LF in vncticket'); socket.destroy(); return; }
 
   // Verify PCC JWT
-  try { jwt.verify(pccToken, JWT_SECRET); } catch { socket.destroy(); return; }
+  try { jwt.verify(pccToken, JWT_SECRET); }
+  catch (e) { console.error(`[vnc-ws] rejected — invalid/expired token: ${e.message}`); socket.destroy(); return; }
 
   const cluster = db.prepare('SELECT * FROM clusters WHERE id = ?').get(clusterId);
-  if (!cluster || !ticket) { socket.destroy(); return; }
+  if (!cluster || !ticket) {
+    console.error(`[vnc-ws] rejected — cluster '${clusterId}' not found or missing ticket`);
+    socket.destroy(); return;
+  }
 
   // Build target WebSocket URL on the PVE host
   let targetUrl;
-  try { targetUrl = new url.URL(cluster.host); } catch { socket.destroy(); return; }
+  try { targetUrl = new url.URL(cluster.host); }
+  catch (e) { console.error(`[vnc-ws] rejected — bad cluster host URL '${cluster.host}': ${e.message}`); socket.destroy(); return; }
 
   const isHttps  = targetUrl.protocol === 'https:';
   const tPort    = parseInt(targetUrl.port) || (isHttps ? 443 : 80);
@@ -965,6 +974,7 @@ server.on('upgrade', (req, socket, head) => {
     handshakeDone = true;
     const statusLine = buf.slice(0, buf.indexOf('\r\n')).toString();
     if (!statusLine.includes('101')) {
+      console.error(`[vnc-ws] PVE refused upgrade for ${clusterId}/${node}: ${statusLine}`);
       socket.destroy();
       tSocket.destroy();
       return;
@@ -990,7 +1000,7 @@ server.on('upgrade', (req, socket, head) => {
   socket.on('data', chunk => { if (tSocket.writable) tSocket.write(chunk); });
   tSocket.on('end', () => socket.destroy());
   socket.on('end', () => tSocket.destroy());
-  tSocket.on('error', () => socket.destroy());
+  tSocket.on('error', e => { console.error(`[vnc-ws] connection to PVE ${tHost}:${tPort} failed: ${e.message}`); socket.destroy(); });
   socket.on('error', () => tSocket.destroy());
 });
 

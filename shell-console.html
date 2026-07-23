@@ -134,6 +134,7 @@
   var ws;
   var connected = false;
   var pingTimer;
+  var connectTimeoutTimer;
 
   function connect() {
     setStatus('connecting', '⟳ connecting');
@@ -141,6 +142,16 @@
 
     ws = new WebSocket(wsUrl, 'binary');
     ws.binaryType = 'arraybuffer';
+
+    // Neither the browser's WS handshake nor the termproxy "OK" reply is guaranteed to
+    // ever fire onerror/onclose if something upstream (nginx, the PCC backend, or the
+    // path to the PVE node) silently swallows the connection — without this it just
+    // spins forever with no feedback. 15s covers real-world termproxy handshake time.
+    connectTimeoutTimer = setTimeout(function () {
+      if (connected) return;
+      try { ws.close(); } catch(e) {}
+      showError('Timed out waiting for the shell to connect. Check that the PCC backend can reach this node.');
+    }, 15000);
 
     ws.onopen = function () {
       // Authenticate to the termproxy process
@@ -153,6 +164,7 @@
         // termproxy sends "OK" as first two bytes when auth succeeds
         if (data[0] === 79 && data[1] === 75) {
           connected = true;
+          clearTimeout(connectTimeoutTimer);
           overlay.classList.add('hidden');
           setStatus('connected', '● connected');
           // Send initial terminal size
@@ -175,6 +187,7 @@
 
     ws.onclose = function (evt) {
       connected = false;
+      clearTimeout(connectTimeoutTimer);
       clearInterval(pingTimer);
       if (evt.code === 1000 || evt.code === 1001) {
         spin.style.display = 'none';
@@ -188,6 +201,7 @@
     };
 
     ws.onerror = function () {
+      clearTimeout(connectTimeoutTimer);
       overlay.classList.remove('hidden');
       showError('WebSocket connection error.');
     };
