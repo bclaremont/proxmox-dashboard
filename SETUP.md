@@ -603,6 +603,7 @@ chmod +x /usr/local/bin/pcc-update
 git clone https://github.com/bclaremont/proxmox-dashboard.git /tmp/pcc-update
 cp /tmp/pcc-update/proxmox-dashboard.html /opt/pcc/public/index.html
 cp /tmp/pcc-update/console.html           /opt/pcc/public/console.html
+cp /tmp/pcc-update/shell-console.html     /opt/pcc/public/shell-console.html
 cp -r /tmp/pcc-update/vendor              /opt/pcc/public/vendor
 rm -rf /tmp/pcc-update
 ```
@@ -617,6 +618,7 @@ cp /tmp/pcc-update/server/fail2ban-status.sh /opt/pcc/fail2ban-status.sh
 chmod +x /opt/pcc/fail2ban-status.sh
 cp /tmp/pcc-update/proxmox-dashboard.html /opt/pcc/public/index.html
 cp /tmp/pcc-update/console.html           /opt/pcc/public/console.html
+cp /tmp/pcc-update/shell-console.html     /opt/pcc/public/shell-console.html
 cp -r /tmp/pcc-update/vendor              /opt/pcc/public/vendor
 cd /opt/pcc && npm install --omit=dev
 systemctl restart pcc
@@ -713,6 +715,8 @@ PCC includes several layers of protection out of the box. This section summarise
 | `/opt/pcc/data/pcc.db` | SQLite database — all config, users, schedules |
 | `/opt/pcc/data/fail2ban-status.json` | Written every 30s by `pcc-fail2ban-status.timer` (optional, root-owned) — read-only source for Admin → Security's fail2ban card |
 | `/opt/pcc/public/index.html` | PCC dashboard HTML |
+| `/opt/pcc/public/console.html` | VM/CT VNC console popup |
+| `/opt/pcc/public/shell-console.html` | Node shell (termproxy) console popup |
 | `/etc/nginx/sites-available/pcc` | nginx HTTPS config |
 | `/etc/wireguard/wg0.conf` | WireGuard hub config |
 | `/etc/letsencrypt/live/pcc.*/` | TLS certificates |

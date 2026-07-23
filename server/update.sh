@@ -21,6 +21,7 @@ cp "$TMP/server/fail2ban-status.sh" /opt/pcc/fail2ban-status.sh
 chmod +x /opt/pcc/fail2ban-status.sh
 cp "$TMP/proxmox-dashboard.html" /opt/pcc/public/index.html
 cp "$TMP/console.html"           /opt/pcc/public/console.html
+cp "$TMP/shell-console.html"     /opt/pcc/public/shell-console.html
 cp -r "$TMP/vendor"              /opt/pcc/public/vendor
 
 echo "Installing dependencies..."
