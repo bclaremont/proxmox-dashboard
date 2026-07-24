@@ -690,10 +690,17 @@
           <button class="filter-pill" data-mode="pool" onclick="_pccTreeSetMode('pool')" title="Group by resource pool">Pool</button>
           <button class="filter-pill" data-mode="tag" onclick="_pccTreeSetMode('tag')" title="Group by tag">Tag</button>
         </div>
-        <button class="filter-pill" id="pcc-tree-compact-btn" onclick="_pccTreeToggleCompact()" title="Hide VMs/CTs — show just topology">⊟</button>
+        <button class="filter-pill" id="pcc-tree-compact-btn" onclick="_pccTreeToggleCompact()" title="Hide VMs/CTs/Storage — show just topology">⊟</button>
       </div>
       <div id="sidebar-tree" class="pcc-tree"></div>
-      <div class="nav-sub-header">Browse</div>
+    </div>
+
+    <!-- BROWSE (global filtered/flat views — separate from the Datacenter object tree above) -->
+    <div class="sidebar-section" data-section="browse">
+      <div class="sidebar-label" onclick="toggleSidebarSection(this)">
+        <span class="sidebar-label-inner"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>Browse</span>
+        <span class="sidebar-chevron"></span>
+      </div>
       <div class="nav-item" data-view="vms" onclick="switchView('vms')">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
         All Virtual Machines
@@ -4295,7 +4302,28 @@ async function refreshExtraConn(conn) {
     conn.vms=vms; conn.containers=cts; conn.nodeStatuses=ns;
     ns.forEach(n => { _recordNodeHist(conn.id+':'+n.node, _nodeRowData(n)); });
     conn.status='connected'; conn.error='';
+    _loadConnStorageBackground(conn);
   } catch(e) { conn.status='error'; conn.error=e.message; }
+}
+
+// Mirrors loadStorageBackground() (primary cluster) so extra connections' storage is
+// kept warm for the sidebar tree without waiting on the user to visit the Storage view.
+async function _loadConnStorageBackground(conn) {
+  try {
+    const all = [];
+    await Promise.all((conn.nodes||[]).map(async n => {
+      const d = await connGet(conn, `/api2/json/nodes/${n.node}/storage`).catch(()=>({data:[]}));
+      (d.data||[]).forEach(s => all.push({...s, node: n.node}));
+    }));
+    const byName = {};
+    all.forEach(s => (byName[s.storage]||(byName[s.storage]=[])).push(s));
+    const deduped = [];
+    Object.values(byName).forEach(entries => {
+      const active = entries.filter(e => e.active===1||e.active===true||e.active==='1');
+      deduped.push(...(active.length ? active : [entries[0]]));
+    });
+    conn.storage = deduped;
+  } catch(e) {}
 }
 
 async function pvePost(path,data={},noAuth=false) {
@@ -7410,6 +7438,23 @@ function _pccTreeOpenGuest(key) {
   if (item) openDetail(item);
 }
 
+// Storage doesn't have a detail panel like VM/CT/node — jump to the Storage view
+// scoped to the right connection instead.
+function _pccTreeOpenStorage(connId) {
+  const sel = document.getElementById('storage-conn');
+  if (sel) sel.value = connId || '';
+  switchView('storage');
+}
+
+function _pccTreeRenderStorageRow(store, connId) {
+  const active = store.active===1 || store.active===true || store.active==='1';
+  return `<div class="pcc-tree-row" onclick="_pccTreeOpenStorage('${connId}')" title="${escHtml(store.storage)} · ${escHtml(store.type||'')} storage on ${escHtml(store.node)}${active?'':' (inactive)'}">
+    <span class="pcc-tree-toggle leaf"></span>
+    <span class="pcc-tree-icon" style="color:${active?'var(--muted)':'var(--red)'}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg></span>
+    <span class="pcc-tree-label">${escHtml(store.storage)}</span>
+  </div>`;
+}
+
 function _pccTreeGuestDot(status) {
   return status === 'running' ? 'var(--green)' : status === 'paused' ? 'var(--yellow)' : 'var(--muted)';
 }
@@ -7424,13 +7469,14 @@ function _pccTreeGuestIcon(guest) {
 }
 
 // Returns this connection's guests bucketed according to the active tree mode.
-// Each group: { key, label, guests[], isNode?, nodeObj?, dotColor?, dotTitle?, onOpen? }
+// Each group: { key, label, guests[], isNode?, nodeObj?, dotColor?, dotTitle?, onOpen?, storages? }
 function _pccTreeGroupsForConn(conn) {
   const guests = [
     ...conn.vms.map(v => ({ ...v, _kind:'vm' })),
     ...conn.containers.map(c => ({ ...c, _kind:'ct' })),
   ];
   const byName = (a,b) => (a.name||'').localeCompare(b.name||'');
+  const byStorageName = (a,b) => (a.storage||'').localeCompare(b.storage||'');
 
   if (_pccTreeMode === 'node') {
     return conn.nodeStatuses.map(node => ({
@@ -7441,6 +7487,7 @@ function _pccTreeGroupsForConn(conn) {
       dotColor: node.status==='online' ? 'var(--green)' : 'var(--red)',
       dotTitle: node.status==='online' ? 'Online' : 'Offline',
       guests: guests.filter(g => g.node === node.node).sort(byName),
+      storages: (conn.storage||[]).filter(s => s.node === node.node).sort(byStorageName),
     }));
   }
 
@@ -7531,8 +7578,8 @@ function renderSidebarTree() {
   document.querySelectorAll('#pcc-tree-modes .filter-pill').forEach(b => b.classList.toggle('active', b.dataset.mode === _pccTreeMode));
   document.getElementById('pcc-tree-compact-btn')?.classList.toggle('active', _pccTreeCompact);
 
-  const conns = [{ id:'', name:PVE.clusterName||'Primary', nodeStatuses:PVE.nodeStatuses||[], vms:PVE.vms||[], containers:PVE.containers||[] }]
-    .concat(extraConns.map(c => ({ id:c.id, name:c.name, nodeStatuses:c.nodeStatuses||[], vms:c.vms||[], containers:c.containers||[] })));
+  const conns = [{ id:'', name:PVE.clusterName||'Primary', nodeStatuses:PVE.nodeStatuses||[], vms:PVE.vms||[], containers:PVE.containers||[], storage:PVE.storage||[] }]
+    .concat(extraConns.map(c => ({ id:c.id, name:c.name, nodeStatuses:c.nodeStatuses||[], vms:c.vms||[], containers:c.containers||[], storage:c.storage||[] })));
 
   if (!conns.some(c => c.nodeStatuses.length)) {
     root.innerHTML = '<div style="padding:6px 8px;font-size:11px;color:var(--muted)">Not connected yet…</div>';
@@ -7587,6 +7634,7 @@ function renderSidebarTree() {
       const groupHasCurrent = _pccTreeGroupHasCurrent(g);
       const gCollapsed    = (_pccTreeCollapsed(gKey) || _pccTreeCompact) && !groupHasCurrent;
       const guestCount    = g.guests.length;
+      const storageCount  = (g.storages||[]).length;
       const isGroupActive = g.isNode && _pccTreeNodeMatchesCurrent(g.nodeObj);
       if (g.isNode) _pccTreeRegistry[gKey] = g.nodeObj;
       const openAttr = g.isNode ? `onclick="_pccTreeOpenNode('${gKey}')"` : (g.onOpen ? `onclick="${g.onOpen}"` : '');
@@ -7594,7 +7642,7 @@ function renderSidebarTree() {
 
       html += `<div class="pcc-tree-node${gCollapsed?' collapsed':''}" id="pcc-tree-${gKey}">
         <div class="pcc-tree-row${isGroupActive?' active':''}">
-          <span class="pcc-tree-toggle${(guestCount&&showGuests)?'':' leaf'}" onclick="event.stopPropagation();_pccTreeToggle('${gKey}')"></span>
+          <span class="pcc-tree-toggle${((guestCount||storageCount)&&showGuests)?'':' leaf'}" onclick="event.stopPropagation();_pccTreeToggle('${gKey}')"></span>
           <span class="pcc-tree-dot" style="background:${g.dotColor||'var(--muted)'}" title="${escHtml(g.dotTitle||'')}"></span>
           <span class="pcc-tree-label" ${openAttr} title="${escHtml(g.label)}">${escHtml(g.label)}</span>
           <span class="pcc-tree-count">${guestCount}</span>
@@ -7605,6 +7653,9 @@ function renderSidebarTree() {
         for (const guest of g.guests) {
           const kKey = gKey + '-' + guest._kind + '-' + _pccTreeSafeId(String(guest.vmid));
           html += _pccTreeRenderGuestRow(guest, kKey);
+        }
+        for (const store of (g.storages||[])) {
+          html += _pccTreeRenderStorageRow(store, conn.id||'');
         }
       }
       html += `</div></div>`;
