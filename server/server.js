@@ -712,6 +712,7 @@ app.get('/api/shared/:key', authMiddleware, (req, res) => {
 const SHARED_ADMIN_KEYS = new Set([
   'pve-schedules', 'pve-webhooks', 'pve-alert-thresholds', 'pve-alert-suppression',
   'pve-affinity-rules', 'pve-drs-settings', 'pve-host-profiles', 'pve-custom-specs',
+  'pve-patrol-settings',
 ]);
 
 app.put('/api/shared/:key', authMiddleware, bodyParser, (req, res) => {

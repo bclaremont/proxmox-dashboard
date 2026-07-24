@@ -2059,7 +2059,7 @@ async function _doTokenRefresh() {
 
 const PCC_SHARED_KEYS = new Set([
   'pve-affinity-rules','pve-drs-settings','pve-host-profiles',
-  'pve-saved-views','pve-alert-thresholds','pve-alert-suppression','pve-locations','pve-vm-alerts','pve-custom-specs','pve-content-library-meta','pve-webhooks','pve-schedules'
+  'pve-saved-views','pve-alert-thresholds','pve-alert-suppression','pve-locations','pve-vm-alerts','pve-custom-specs','pve-content-library-meta','pve-webhooks','pve-schedules','pve-patrol-settings'
 ]);
 
 async function pccDetectBackend() {
@@ -3555,7 +3555,7 @@ async function _xcopyStep4() {
 const _PCC_EXPORT_KEYS = [
   'pve-affinity-rules','pve-drs-settings','pve-webhooks','pve-custom-specs',
   'pve-schedules','pve-saved-views','pve-host-profiles','pve-locations',
-  'pve-vm-alerts','pve-alert-thresholds','pve-alert-suppression','pve-content-library-meta',
+  'pve-vm-alerts','pve-alert-thresholds','pve-alert-suppression','pve-content-library-meta','pve-patrol-settings',
 ];
 
 function exportPCCConfig() {
@@ -4558,6 +4558,7 @@ async function refreshAll() {
     renderSidebarNodes();
     renderSidebarTree();
     checkAndFireAlerts();
+    _patrolTick();
     updateTopbarStats();
     populateTagFilters();
     updateAffinityBadge();
@@ -20534,7 +20535,8 @@ function openCreateWebhookModal(editId) {
     { value: 'error',   label: '🔴 Errors only' },
   ].map(o => `<option value="${o.value}"${(w.minSeverity||'warning')===o.value?' selected':''}>${o.label}</option>`).join('');
 
-  const typeOpts = ['cpu','memory','storage','vm_down','task_error','vm_perf','test']
+  const _WH_TYPES = ['cpu','memory','storage','vm_down','task_error','vm_perf','patrol_backup','patrol_storage','patrol_restart','test'];
+  const typeOpts = _WH_TYPES
     .map(t => `<label style="display:flex;align-items:center;gap:5px;font-size:12px;cursor:pointer">
       <input type="checkbox" value="${t}" ${(!w.types||!w.types.length||w.types.includes(t))?'checked':''} style="width:auto;padding:0;margin:0"/>
       ${t.replace('_',' ')}
@@ -20579,7 +20581,7 @@ function openCreateWebhookModal(editId) {
       url,
       secret:      document.getElementById('wh-secret')?.value?.trim() || '',
       minSeverity: document.getElementById('wh-sev')?.value || 'warning',
-      types:       checked.length === 7 ? [] : checked, // empty = all
+      types:       checked.length === _WH_TYPES.length ? [] : checked, // empty = all
       enabled:     existing ? existing.enabled : true,
       created:     existing ? existing.created : Date.now(),
     };
@@ -20602,22 +20604,174 @@ function getAlertThresholds() {
 }
 function saveAlertThresholds(t) { const v=JSON.stringify(t); localStorage.setItem('pve-alert-thresholds',v); _syncShared('pve-alert-thresholds',v); }
 
+// ── PROACTIVE HEALTH PATROL ────────────────────────────────
+// A periodic background sweep, independent of any user-configured alert threshold,
+// for exactly the "silent failure" categories a threshold system structurally can't
+// catch on its own: a backup job that quietly stopped running, a VM/CT stuck
+// restart-looping, or storage filling up on a cluster nobody's ever opened Alert
+// Settings for. Runs across every connected cluster (primary + extra) — the regular
+// threshold check in checkAndFireAlerts() only ever looked at PVE.storage (primary
+// only); Patrol closes that gap for extra connections too.
+//
+// Same limitation as the rest of PCC's client-side alerting: only runs while a
+// browser tab is open, same as checkAndFireAlerts(). Not a new regression — just
+// not (yet) promoted to the standalone server's 24/7 schedule runner.
+
+function getPatrolSettings() {
+  const defaults = { enabled:true, intervalMin:30, backupGraceHours:4, restartLoopCount:3, restartLoopWindowMin:60, storagePct:90 };
+  try { return { ...defaults, ...JSON.parse(localStorage.getItem('pve-patrol-settings')||'{}') }; }
+  catch(e) { return defaults; }
+}
+function savePatrolSettings(s) { const v=JSON.stringify(s); localStorage.setItem('pve-patrol-settings',v); _syncShared('pve-patrol-settings',v); }
+
+// Piggybacks on refreshAll()'s existing 30s cadence rather than running its own
+// timer — cheap to check, and the actual sweep only fires once intervalMin has
+// really elapsed (tracked via a plain localStorage timestamp so it survives reloads
+// and multiple tabs don't each restart their own independent clock).
+function _patrolTick() {
+  const s = getPatrolSettings();
+  if (!s.enabled || !PVE.host) return;
+  const last = parseInt(localStorage.getItem('pve-patrol-last-run')||'0', 10);
+  if (Date.now() - last < s.intervalMin * 60000) return;
+  localStorage.setItem('pve-patrol-last-run', String(Date.now()));
+  runHealthPatrol(s);
+}
+
+async function runHealthPatrol(s) {
+  try {
+    s = s || getPatrolSettings();
+    const conns = [{ id:'', name:PVE.clusterName||'Primary', get:pveGet, nodes:PVE.nodes||[], storage:PVE.storage||[] }]
+      .concat(extraConns.map(c => ({ id:c.id, name:c.name, get:(p)=>connGet(c,p), nodes:c.nodes||[], storage:c.storage||[] })));
+    await Promise.all(conns.map(conn => _patrolCheckConn(conn, s)));
+  } catch(e) { /* best-effort background sweep — never surface plumbing errors to the user */ }
+}
+
+async function _patrolCheckConn(conn, s) {
+  // Storage capacity — independent of the user's configurable alert threshold, and
+  // covers extra connections which the regular threshold check never did.
+  conn.storage.forEach(st => {
+    if (st.total && st.used) {
+      const pct = (st.used/st.total)*100;
+      if (pct > s.storagePct) {
+        addNotif('patrol_storage', 'error', `Storage critical — ${st.storage}`,
+          `${pct.toFixed(1)}% used on ${st.node}${conn.id?' ['+conn.name+']':''} — Patrol flags this regardless of your configured alert threshold`,
+          `patrol-stor-${conn.id}-${st.node}-${st.storage}`, 6*60*60*1000);
+      }
+    }
+  });
+
+  // Backup-job and restart-loop checks both need recent per-node task history — one
+  // fetch serves both.
+  const [jobsRes, ...taskResults] = await Promise.all([
+    conn.get('/api2/json/cluster/backup').catch(()=>({data:[]})),
+    ...conn.nodes.map(n => conn.get(`/api2/json/nodes/${n.node}/tasks?limit=50`).catch(()=>({data:[]})).then(d => ({ node:n.node, tasks:d.data||[] })))
+  ]);
+  const allTasks = taskResults.flatMap(r => r.tasks.map(t => ({...t, node:r.node})));
+
+  _patrolCheckBackups(conn, jobsRes.data||[], allTasks, s);
+  _patrolCheckRestartLoops(conn, allTasks, s);
+}
+
+// Given a parsed {days,times} schedule (see _calParseSchedule), returns the epoch ms
+// of the most recent occurrence at or before `beforeMs`.
+function _calLastOccurrenceBefore(parsed, beforeMs) {
+  const before = new Date(beforeMs);
+  let best = null;
+  for (let offset = 0; offset <= 8; offset++) {
+    const day = new Date(before); day.setDate(day.getDate() - offset);
+    if (!parsed.days.includes(day.getDay())) continue;
+    parsed.times.forEach(t => {
+      const [h,m] = t.split(':').map(Number);
+      const occ = new Date(day); occ.setHours(h, m, 0, 0);
+      if (occ.getTime() <= beforeMs && (!best || occ.getTime() > best)) best = occ.getTime();
+    });
+  }
+  return best;
+}
+
+function _patrolCheckBackups(conn, jobs, allTasks, s) {
+  const vzdumpTasks = allTasks.filter(t => t.type === 'vzdump');
+  const graceMs = s.backupGraceHours * 3600000;
+  const now = Date.now();
+
+  jobs.filter(j => j.enabled !== 0).forEach(j => {
+    const raw = j.schedule || (j.dow ? `${j.dow} ${j.starttime||'00:00'}` : null);
+    const parsed = _calParseSchedule(raw);
+    if (parsed.unparsed) return; // can't reason about expected timing without a parseable schedule
+
+    const lastExpected = _calLastOccurrenceBefore(parsed, now);
+    if (!lastExpected || now - lastExpected < graceMs) return; // not overdue yet
+
+    // vzdump tasks don't carry the backup-job id, only node/time/status — this can only
+    // reason at node granularity (or cluster-wide for jobs with no node pinned), not
+    // per-job. Good enough to catch "backups on this node/cluster stopped happening",
+    // not precise enough to say exactly which of several same-node jobs broke.
+    const scoped = j.node ? vzdumpTasks.filter(t => t.node === j.node) : vzdumpTasks;
+    const since  = scoped.filter(t => t.starttime*1000 >= lastExpected)
+                         .sort((a,b) => b.starttime - a.starttime);
+
+    if (!since.length) {
+      addNotif('patrol_backup', 'warning', `Backup may have silently stopped — ${escHtml(j.id || j.storage || 'job')}`,
+        `Scheduled "${escHtml(raw)}"${j.node?' on '+escHtml(j.node):''}${conn.id?' ['+escHtml(conn.name)+']':''}, but no vzdump task has run since the last expected time (${new Date(lastExpected).toLocaleString()})`,
+        `patrol-bkmiss-${conn.id}-${j.id||j.node||'all'}`, 12*60*60*1000);
+    } else if (since[0].status && since[0].status !== 'OK') {
+      addNotif('patrol_backup', 'error', `Backup job failed — ${escHtml(j.id || j.storage || 'job')}`,
+        `Last vzdump run on ${escHtml(since[0].node)}${conn.id?' ['+escHtml(conn.name)+']':''} ended with: ${escHtml(since[0].status)}`,
+        `patrol-bkfail-${conn.id}-${since[0].upid}`, 6*60*60*1000);
+    }
+  });
+}
+
+function _patrolCheckRestartLoops(conn, allTasks, s) {
+  const windowMs = s.restartLoopWindowMin * 60000;
+  const now = Date.now();
+  const restartTypes = new Set(['qmstart','qmreboot','qmstop','qmshutdown','vzstart','vzreboot','vzstop','vzshutdown']);
+  const byGuest = new Map(); // `${node}|${vmid}` -> tasks[]
+
+  allTasks
+    .filter(t => restartTypes.has(t.type) && t.starttime*1000 >= now - windowMs)
+    .forEach(t => {
+      const key = `${t.node}|${t.id||t.vmid||''}`;
+      if (!byGuest.has(key)) byGuest.set(key, []);
+      byGuest.get(key).push(t);
+    });
+
+  byGuest.forEach((tasks, key) => {
+    if (tasks.length < s.restartLoopCount) return;
+    const [node, vmid] = key.split('|');
+    const guest = allVMs().concat(allCTs()).find(g => String(g.vmid)===String(vmid) && g.node===node && (g.connId||'')===(conn.id||''));
+    const label = guest ? (guest.name || vmid) : vmid;
+    addNotif('patrol_restart', 'warning', `Possible restart loop — ${escHtml(label)}`,
+      `${tasks.length} start/stop/reboot operations on ${escHtml(node)}${conn.id?' ['+escHtml(conn.name)+']':''} in the last ${s.restartLoopWindowMin} minutes`,
+      `patrol-loop-${conn.id}-${node}-${vmid}`, 6*60*60*1000);
+  });
+}
+
 function loadStoredNotifs() {
   try {
-    notifications = JSON.parse(localStorage.getItem('pve-notifications')||'[]');
-    prevVMStates  = JSON.parse(localStorage.getItem('pve-vm-states')||'{}');
-  } catch(e) { notifications=[]; prevVMStates={}; }
+    notifications    = JSON.parse(localStorage.getItem('pve-notifications')||'[]');
+    prevVMStates     = JSON.parse(localStorage.getItem('pve-vm-states')||'{}');
+    // Cooldowns were in-memory-only before Patrol needed multi-hour windows — a page
+    // reload used to silently reset every dedupe key, which barely mattered at the
+    // old 5min default but would refire a 12h-cooldown Patrol notice on every reload.
+    notifCooldowns   = JSON.parse(localStorage.getItem('pve-notif-cooldowns')||'{}');
+  } catch(e) { notifications=[]; prevVMStates={}; notifCooldowns={}; }
 }
 
 function _persistNotifs() {
   localStorage.setItem('pve-notifications', JSON.stringify(notifications.slice(0, NOTIF_MAX)));
   localStorage.setItem('pve-vm-states', JSON.stringify(prevVMStates));
+  // Prune anything older than 7 days so this doesn't grow unbounded
+  const cutoff = Date.now() - 7*24*60*60*1000;
+  Object.keys(notifCooldowns).forEach(k => { if (notifCooldowns[k] < cutoff) delete notifCooldowns[k]; });
+  localStorage.setItem('pve-notif-cooldowns', JSON.stringify(notifCooldowns));
 }
 
-function addNotif(type, severity, title, message, dedupeKey) {
+function addNotif(type, severity, title, message, dedupeKey, cooldownMs) {
   const now = Date.now();
+  const cooldown = cooldownMs != null ? cooldownMs : NOTIF_COOLDOWN;
   if (dedupeKey) {
-    if (notifCooldowns[dedupeKey] && (now - notifCooldowns[dedupeKey]) < NOTIF_COOLDOWN) return;
+    if (notifCooldowns[dedupeKey] && (now - notifCooldowns[dedupeKey]) < cooldown) return;
     notifCooldowns[dedupeKey] = now;
   }
   const n = { id:'n'+now+Math.random().toString(36).substr(2,4), type, severity, title, message, timestamp:now, read:false };
@@ -20769,6 +20923,7 @@ function checkAndFireAlerts() {
 
 function openAlertSettingsModal() {
   const t = getAlertThresholds();
+  const p = getPatrolSettings();
   document.getElementById('modal-title').textContent = 'Alert Settings';
   document.getElementById('modal-body').innerHTML = `
     <div class="create-vm-grid">
@@ -20792,6 +20947,27 @@ function openAlertSettingsModal() {
     <div style="margin-top:14px;padding:9px 12px;background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius);font-size:12px;color:var(--muted);display:flex;align-items:center;justify-content:space-between">
       <span>Browser push notifications (requires permission)</span>
       <button class="btn small" onclick="requestNotifPermission()">Enable</button>
+    </div>
+
+    <div style="margin-top:18px;padding-top:14px;border-top:1px solid var(--border)">
+      <div style="font-size:13px;font-weight:700;margin-bottom:4px">🔍 Proactive Health Patrol</div>
+      <div style="font-size:12px;color:var(--muted);margin-bottom:10px">
+        Background sweep across every connected cluster for problems that don't have a configured rule above —
+        missed/failed backup jobs, storage nearing capacity on clusters you've never set a threshold for, and VMs/CTs stuck restart-looping.
+      </div>
+      <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;margin-bottom:10px">
+        <input type="checkbox" id="pt-enabled"${p.enabled?' checked':''} style="width:auto;height:auto;padding:0;margin:0">
+        Enable Health Patrol
+      </label>
+      <div class="create-vm-grid">
+        <div class="form-group"><label>SWEEP INTERVAL (minutes)</label><input id="pt-interval" type="number" value="${p.intervalMin}" min="5" max="1440"/></div>
+        <div class="form-group"><label>STORAGE CRITICAL (%)</label><input id="pt-storage" type="number" value="${p.storagePct}" min="50" max="100"/></div>
+      </div>
+      <div class="create-vm-grid">
+        <div class="form-group"><label>BACKUP GRACE PERIOD (hours)</label><input id="pt-grace" type="number" value="${p.backupGraceHours}" min="1" max="72"/></div>
+        <div class="form-group"><label>RESTART LOOP WINDOW (minutes)</label><input id="pt-loopwin" type="number" value="${p.restartLoopWindowMin}" min="10" max="360"/></div>
+      </div>
+      <div class="form-group"><label>RESTART LOOP TRIGGER (ops within the window above)</label><input id="pt-loopcount" type="number" value="${p.restartLoopCount}" min="2" max="20" style="max-width:140px"/></div>
     </div>`;
   modalCallback = () => {
     saveAlertThresholds({
@@ -20801,6 +20977,14 @@ function openAlertSettingsModal() {
       certDays:  parseInt(document.getElementById('at-cert').value)  || 30,
       vmDown:    document.getElementById('at-vmdown').checked,
       taskError: document.getElementById('at-taskerr').checked,
+    });
+    savePatrolSettings({
+      enabled:              document.getElementById('pt-enabled').checked,
+      intervalMin:          parseInt(document.getElementById('pt-interval').value) || 30,
+      storagePct:           parseInt(document.getElementById('pt-storage').value)  || 90,
+      backupGraceHours:     parseInt(document.getElementById('pt-grace').value)    || 4,
+      restartLoopWindowMin: parseInt(document.getElementById('pt-loopwin').value)  || 60,
+      restartLoopCount:     parseInt(document.getElementById('pt-loopcount').value)|| 3,
     });
     toast('Alert settings saved', 'success');
   };
