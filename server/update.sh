@@ -22,7 +22,11 @@ chmod +x /opt/pcc/fail2ban-status.sh
 cp "$TMP/proxmox-dashboard.html" /opt/pcc/public/index.html
 cp "$TMP/console.html"           /opt/pcc/public/console.html
 cp "$TMP/shell-console.html"     /opt/pcc/public/shell-console.html
-cp -r "$TMP/vendor"              /opt/pcc/public/vendor
+# rm first: once /opt/pcc/public/vendor already exists, `cp -r src dst` copies src
+# INTO dst as a subdirectory (dst/vendor/...) instead of merging — so every run after
+# the first was silently burying new vendor files under vendor/vendor/ instead of
+# updating the flat path the app actually serves from.
+rm -rf /opt/pcc/public/vendor && cp -r "$TMP/vendor" /opt/pcc/public/vendor
 
 echo "Installing dependencies..."
 cd /opt/pcc && npm install --omit=dev --silent

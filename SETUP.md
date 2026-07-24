@@ -604,7 +604,7 @@ git clone https://github.com/bclaremont/proxmox-dashboard.git /tmp/pcc-update
 cp /tmp/pcc-update/proxmox-dashboard.html /opt/pcc/public/index.html
 cp /tmp/pcc-update/console.html           /opt/pcc/public/console.html
 cp /tmp/pcc-update/shell-console.html     /opt/pcc/public/shell-console.html
-cp -r /tmp/pcc-update/vendor              /opt/pcc/public/vendor
+rm -rf /opt/pcc/public/vendor && cp -r /tmp/pcc-update/vendor /opt/pcc/public/vendor
 rm -rf /tmp/pcc-update
 ```
 
@@ -619,7 +619,7 @@ chmod +x /opt/pcc/fail2ban-status.sh
 cp /tmp/pcc-update/proxmox-dashboard.html /opt/pcc/public/index.html
 cp /tmp/pcc-update/console.html           /opt/pcc/public/console.html
 cp /tmp/pcc-update/shell-console.html     /opt/pcc/public/shell-console.html
-cp -r /tmp/pcc-update/vendor              /opt/pcc/public/vendor
+rm -rf /opt/pcc/public/vendor && cp -r /tmp/pcc-update/vendor /opt/pcc/public/vendor
 cd /opt/pcc && npm install --omit=dev
 systemctl restart pcc
 rm -rf /tmp/pcc-update
@@ -797,7 +797,7 @@ When a new version of PCC is released:
 git clone https://github.com/bclaremont/proxmox-dashboard.git /tmp/pcc-update
 cp /tmp/pcc-update/proxmox-dashboard.html /var/www/proxmox-dashboard/index.html
 cp /tmp/pcc-update/console.html           /var/www/proxmox-dashboard/console.html
-cp -r /tmp/pcc-update/vendor              /var/www/proxmox-dashboard/vendor
+rm -rf /var/www/proxmox-dashboard/vendor && cp -r /tmp/pcc-update/vendor /var/www/proxmox-dashboard/vendor
 rm -rf /tmp/pcc-update
 ```
 
