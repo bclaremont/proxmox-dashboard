@@ -236,6 +236,13 @@
     .dtab.active{background:var(--bg2);color:var(--text);border:1px solid var(--border);}
     .dtab-content{display:none;}
     .dtab-content.active{display:block;}
+    /* SCHEDULED TASKS CALENDAR */
+    .cal-grid{border-collapse:separate;border-spacing:4px;}
+    .cal-grid th{font-size:11px;color:var(--muted);font-weight:600;text-align:left;padding:4px;}
+    .cal-time{font-size:11px;color:var(--muted);white-space:nowrap;vertical-align:top;padding:8px 8px 0 0;}
+    .cal-cell{min-width:120px;vertical-align:top;padding:5px;border-radius:6px;background:var(--bg3);}
+    .cal-cell.clash{outline:2px solid var(--red);background:rgba(239,68,68,.08);}
+    .cal-chip{display:block;border:1px solid;border-radius:4px;padding:2px 6px;font-size:11px;margin-bottom:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:170px;}
     /* CONFIG TABLE */
     .config-table{width:100%;border-collapse:collapse;margin-bottom:18px;}
     .config-table tr{border-bottom:1px solid var(--border);}
@@ -1529,7 +1536,14 @@
           <button class="btn small primary" onclick="openCreateScheduleModal()">+ New Schedule</button>
         </div>
       </div>
-      <div id="schedules-content"><div class="empty">Loading…</div></div>
+      <div style="display:flex;gap:0;border-bottom:1px solid var(--border);margin-bottom:16px">
+        <div class="dtab active" id="sched-tab-list"     onclick="_schedSwitchTab('list')">List</div>
+        <div class="dtab"        id="sched-tab-calendar" onclick="_schedSwitchTab('calendar')" title="Unified weekly view of PCC schedules + PVE/PBS backup jobs — spot clashing start times">Calendar</div>
+      </div>
+      <div id="sched-pane-list" class="dtab-content active">
+        <div id="schedules-content"><div class="empty">Loading…</div></div>
+      </div>
+      <div id="sched-pane-calendar" class="dtab-content"></div>
     </div>
 
     <!-- HOST PROFILES -->
@@ -14954,6 +14968,167 @@ function _schedFmtCountdown(nextRun) {
   const h = Math.floor(m / 60);
   if (h < 24)   return `in ${h}h ${m % 60}m`;
   return `in ${Math.floor(h / 24)}d ${h % 24}h`;
+}
+
+// ── SCHEDULED TASKS CALENDAR ───────────────────────────────
+// Unifies PCC's own schedules with PVE/PBS backup job schedules into one weekly
+// grid so clashing start times are obvious at a glance. Job durations aren't known
+// upfront (they vary a lot), so clash detection is deliberately exact-time-match
+// only — anything softer would just be a guess dressed up as data.
+
+function _schedSwitchTab(name) {
+  ['list','calendar'].forEach(t => {
+    document.getElementById(`sched-tab-${t}`)?.classList.toggle('active', t===name);
+    document.getElementById(`sched-pane-${t}`)?.classList.toggle('active', t===name);
+  });
+  if (name === 'calendar') _loadSchedCalendar();
+}
+
+const _CAL_DAY_NAMES = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+const _CAL_DAY_ABBR  = { sun:0, mon:1, tue:2, wed:3, thu:4, fri:5, sat:6 };
+
+// Parses PVE/PBS "calendar event" schedule strings into { days:[0-6], times:['HH:MM'] }.
+// Covers the shapes PVE/PBS actually generate for simple recurring jobs: a day-of-week
+// list/range/wildcard + one or more HH:MM times (e.g. "mon,wed,fri 02:00", "sat 00:00",
+// "*-*-* 03:30:00"). Step syntax ("00/6:00") is deliberately NOT guessed at — returns
+// unparsed:true so the job lands in the fallback list instead of the wrong slot.
+function _calParseSchedule(raw) {
+  if (!raw) return { unparsed: true, raw };
+  const tokens = String(raw).trim().split(/\s+/);
+  let dayTok, timeTok;
+  if (tokens.length === 2) { [dayTok, timeTok] = tokens; }
+  else if (tokens.length === 1 && /^\d{1,2}:\d{2}/.test(tokens[0])) { dayTok = '*'; timeTok = tokens[0]; }
+  else return { unparsed: true, raw };
+
+  if (/\//.test(timeTok)) return { unparsed: true, raw };
+
+  const times = timeTok.split(',').map(t => {
+    const m = t.match(/^(\d{1,2}):(\d{2})/);
+    return m ? `${m[1].padStart(2,'0')}:${m[2]}` : null;
+  });
+  if (times.some(t => !t)) return { unparsed: true, raw };
+
+  let days;
+  if (dayTok === '*' || /^\*-\*-\*$/.test(dayTok)) {
+    days = [0,1,2,3,4,5,6];
+  } else {
+    days = [];
+    dayTok.split(',').forEach(part => {
+      const range = part.match(/^([a-z]{3})\.\.([a-z]{3})$/i);
+      if (range) {
+        const from = _CAL_DAY_ABBR[range[1].toLowerCase()], to = _CAL_DAY_ABBR[range[2].toLowerCase()];
+        if (from == null || to == null) return;
+        for (let d = from; ; d = (d+1)%7) { days.push(d); if (d === to) break; }
+      } else {
+        const d = _CAL_DAY_ABBR[part.toLowerCase()];
+        if (d != null) days.push(d);
+      }
+    });
+    if (!days.length) return { unparsed: true, raw };
+  }
+  return { days: [...new Set(days)], times, raw };
+}
+
+// Gathers every enabled schedule PCC knows about into flat { day, time, label, type, icon }
+// events, plus an `unparsed` list for anything whose schedule string couldn't be placed —
+// nothing gets silently dropped, it just surfaces in the fallback table instead.
+async function _calGatherEvents() {
+  const events = [];
+  const unparsed = [];
+
+  getSchedules().filter(s => s.enabled).forEach(s => {
+    const label = `${s.name} — ${s.action}`;
+    if (s.schedType === 'daily') {
+      for (let d=0; d<7; d++) events.push({ day:d, time:(s.time||'00:00'), label, type:'pcc', icon:'⚙' });
+    } else if (s.schedType === 'weekly') {
+      (s.days?.length ? s.days : [1]).forEach(d => events.push({ day:d, time:(s.time||'00:00'), label, type:'pcc', icon:'⚙' }));
+    } else if (s.schedType === 'hourly') {
+      unparsed.push({ label, type:'pcc', raw:`Hourly at :${String(s.minute||0).padStart(2,'0')}` });
+    }
+  });
+
+  const conns = [{ id:'', name: PVE.clusterName||'Primary', get:pveGet }]
+    .concat(extraConns.map(c => ({ id:c.id, name:c.name, get:(p)=>connGet(c,p) })));
+  await Promise.all(conns.map(async c => {
+    const d = await c.get('/api2/json/cluster/backup').catch(()=>({data:[]}));
+    (d.data||[]).filter(j => j.enabled !== 0).forEach(j => {
+      const raw = j.schedule || (j.dow ? `${j.dow} ${j.starttime||'00:00'}` : null);
+      const label = `${j.id||'backup'} — ${j.storage||''}${c.id?' ['+escHtml(c.name)+']':''}`;
+      const parsed = _calParseSchedule(raw);
+      if (parsed.unparsed) { unparsed.push({ label, type:'pve', raw: raw||'—' }); return; }
+      parsed.times.forEach(t => parsed.days.forEach(day => events.push({ day, time:t, label, type:'pve', icon:'💾' })));
+    });
+  }));
+
+  if (PBS.connected && _pbsData?.jobs?.length) {
+    _pbsData.jobs.filter(j => !j.disable).forEach(j => {
+      const label = `${j.id} — ${j.store} (PBS)`;
+      const parsed = _calParseSchedule(j.schedule);
+      if (parsed.unparsed) { unparsed.push({ label, type:'pbs', raw: j.schedule||'—' }); return; }
+      parsed.times.forEach(t => parsed.days.forEach(day => events.push({ day, time:t, label, type:'pbs', icon:'☁' })));
+    });
+  }
+
+  return { events, unparsed };
+}
+
+async function _loadSchedCalendar() {
+  const el = document.getElementById('sched-pane-calendar');
+  if (!el) return;
+  el.innerHTML = '<div class="empty"><span class="loading"></span> Gathering schedules across connected clusters…</div>';
+  const { events, unparsed } = await _calGatherEvents();
+  _renderSchedCalendar(events, unparsed);
+}
+
+function _renderSchedCalendar(events, unparsed) {
+  const el = document.getElementById('sched-pane-calendar');
+  if (!el) return;
+  if (!events.length && !unparsed.length) {
+    el.innerHTML = '<div class="empty">No backup jobs or PCC schedules found across any connected cluster.</div>';
+    return;
+  }
+
+  // Sparse grid: only render rows for times that actually have something scheduled
+  // somewhere in the week, rather than 48 mostly-empty half-hour rows.
+  const byTime = new Map(); // 'HH:MM' -> [ [] x7 day buckets ]
+  events.forEach(ev => {
+    if (!byTime.has(ev.time)) byTime.set(ev.time, Array.from({length:7}, () => []));
+    byTime.get(ev.time)[ev.day].push(ev);
+  });
+  const times = [...byTime.keys()].sort();
+
+  const typeColor = { pcc:'var(--blue)', pve:'var(--teal)', pbs:'var(--accent)' };
+  const rows = times.map(t => {
+    const buckets = byTime.get(t);
+    const cells = buckets.map(dayEvents => {
+      if (!dayEvents.length) return `<td class="cal-cell"></td>`;
+      const clash = dayEvents.length > 1;
+      const chips = dayEvents.map(ev =>
+        `<span class="cal-chip" style="border-color:${typeColor[ev.type]};color:${typeColor[ev.type]}" title="${escHtml(ev.label)}">${ev.icon} ${escHtml(ev.label)}</span>`
+      ).join('');
+      return `<td class="cal-cell${clash?' clash':''}"${clash?` title="⚠ ${dayEvents.length} jobs start at the same time"`:''}>${chips}</td>`;
+    }).join('');
+    return `<tr><td class="cal-time">${t}</td>${cells}</tr>`;
+  }).join('');
+
+  const unparsedHtml = unparsed.length ? `
+    <div class="section-header" style="margin-top:18px"><span class="section-title">Couldn't place on the calendar</span></div>
+    <div style="font-size:12px;color:var(--muted);margin-bottom:10px">Schedule syntax too complex to parse (step/range timing) — listed here so nothing is silently hidden.</div>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Job</th><th>Type</th><th>Raw Schedule</th></tr></thead>
+      <tbody>${unparsed.map(u => `<tr><td>${escHtml(u.label)}</td><td>${u.type.toUpperCase()}</td><td style="font-family:monospace;color:var(--muted)">${escHtml(u.raw)}</td></tr>`).join('')}</tbody>
+    </table></div>` : '';
+
+  el.innerHTML = `
+    <div style="font-size:12px;color:var(--muted);margin-bottom:12px">
+      ⚙ PCC Schedule &nbsp; 💾 PVE Backup Job &nbsp; ☁ PBS Backup Job &nbsp; · &nbsp;
+      <span style="color:var(--red)">⚠ red outline = two or more jobs start at the exact same time</span> — durations aren't known upfront, so only exact-time clashes are flagged.
+    </div>
+    <div class="table-wrap"><table class="cal-grid">
+      <thead><tr><th></th>${_CAL_DAY_NAMES.map(d=>`<th>${d}</th>`).join('')}</tr></thead>
+      <tbody>${rows}</tbody>
+    </table></div>
+    ${unparsedHtml}`;
 }
 
 // ── Scheduler engine ──────────────────────────────────────
