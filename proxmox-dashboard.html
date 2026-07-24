@@ -6294,6 +6294,104 @@ async function _fetchRunwayData() {
   }
 }
 
+// ── VM EFFICIENCY BUCKETS (overview surface) ──────────────
+// Classifies every non-template VM/CT into at most one bucket:
+//   Bully          — sustained CPU/RAM >=80% (not yet pinned)
+//   Constrained    — sustained CPU/RAM >=95% (pinned at ceiling)
+//   Over-provisioned — large RAM/disk allocation, average usage <20%
+//   Inactive       — stopped with no qmstart/vzstart task in the last 30 days
+// Bully/Constrained/Over-provisioned reuse the same _vmHistory rolling buffer
+// _vmAnomalyBadge() already relies on (session-only, ~10min window). Inactive
+// needs its own longer-lookback data since nothing else tracks "last started".
+let _effBucketCache = null; // { bully:[], constrained:[], overprovisioned:[], inactive:[] }
+let _effLastStartedCache = null; // { ts, map: `${connId}|${node}/${vmid}` -> last qmstart/vzstart epoch ms }
+let _effLastStartedFetching = false;
+
+async function _fetchLastStartedData() {
+  if (_effLastStartedFetching) return;
+  _effLastStartedFetching = true;
+  try {
+    const since = Math.floor((Date.now() - 30*86400000) / 1000);
+    const conns = [{ id:'', get:pveGet, nodes:PVE.nodes||[] }]
+      .concat(extraConns.map(c => ({ id:c.id, get:(p)=>connGet(c,p), nodes:c.nodes||[] })));
+    const map = {};
+    await Promise.all(conns.flatMap(conn => conn.nodes.map(async n => {
+      const d = await conn.get(`/api2/json/nodes/${n.node}/tasks?since=${since}&limit=2000`).catch(() => ({ data: [] }));
+      (d.data||[]).forEach(t => {
+        if (t.type !== 'qmstart' && t.type !== 'vzstart') return;
+        const vmid = t.id || t.vmid;
+        if (!vmid) return;
+        const key = `${conn.id||''}|${n.node}/${vmid}`;
+        const ts = (t.endtime || t.starttime || 0) * 1000;
+        if (!map[key] || ts > map[key]) map[key] = ts;
+      });
+    })));
+    _effLastStartedCache = { ts: Date.now(), map };
+    if (document.getElementById('overview-content')) renderOverview();
+  } finally {
+    _effLastStartedFetching = false;
+  }
+}
+
+function _computeEfficiencyBuckets() {
+  const buckets = { bully: [], constrained: [], overprovisioned: [], inactive: [] };
+  const now = Date.now();
+  const lastStartedFresh = _effLastStartedCache && (now - _effLastStartedCache.ts) < 1800000;
+  allVMs().concat(allCTs()).forEach(x => {
+    if (x.template) return;
+    const key = `${x.connId||''}|${x.node}/${x.vmid}`;
+    if (x.status === 'running') {
+      const hist = _vmHistory[key];
+      if (!hist || hist.length < 6) return; // not enough history to judge sustained usage yet
+      const avgCpu = hist.reduce((s,h)=>s+h.cpu,0) / hist.length;
+      const avgMem = hist.reduce((s,h)=>s+h.mem,0) / hist.length;
+      let reasons = [];
+      if (avgCpu >= 95) reasons.push(`CPU avg ${avgCpu.toFixed(0)}%`);
+      if (avgMem >= 95) reasons.push(`RAM avg ${avgMem.toFixed(0)}%`);
+      if (reasons.length) { buckets.constrained.push({ ...x, _reason: reasons.join(' · ') }); return; }
+      reasons = [];
+      if (avgCpu >= 80) reasons.push(`CPU avg ${avgCpu.toFixed(0)}%`);
+      if (avgMem >= 80) reasons.push(`RAM avg ${avgMem.toFixed(0)}%`);
+      if (reasons.length) { buckets.bully.push({ ...x, _reason: reasons.join(' · ') }); return; }
+      if (avgMem < 20 && x.maxmem >= 8*1024**3) {
+        buckets.overprovisioned.push({ ...x, _reason: `RAM ${fmtBytes(x.maxmem)} allocated, ${avgMem.toFixed(0)}% avg used` });
+        return;
+      }
+      const diskPct = x.disk && x.maxdisk ? (x.disk/x.maxdisk*100) : null;
+      if (diskPct !== null && diskPct < 20 && x.maxdisk >= 200*1024**3) {
+        buckets.overprovisioned.push({ ...x, _reason: `Disk ${fmtBytes(x.maxdisk)} allocated, ${diskPct.toFixed(0)}% used` });
+      }
+    } else if (x.status === 'stopped' && lastStartedFresh) {
+      const last = _effLastStartedCache.map[key];
+      const days = last ? Math.floor((now - last) / 86400000) : null;
+      if (days === null || days >= 30) {
+        buckets.inactive.push({ ...x, _reason: days === null ? 'no start recorded in 30+ days' : `stopped ${days}d ago` });
+      }
+    }
+  });
+  return buckets;
+}
+
+const _EFF_BUCKET_LABELS = { bully:'Bully — Resource Hogs', constrained:'Constrained — Hitting Ceiling', overprovisioned:'Over-provisioned', inactive:'Inactive — Off 30+ Days' };
+function _openEfficiencyBucketModal(bucketKey) {
+  const items = (_effBucketCache && _effBucketCache[bucketKey]) || [];
+  document.getElementById('modal-title').textContent = _EFF_BUCKET_LABELS[bucketKey] || 'VM Efficiency';
+  document.getElementById('modal')?.classList.remove('modal-wide');
+  const rows = items.map(x => `<tr class="clickable-row" onclick="closeModal();openDetail(${JSON.stringify(x).replace(/"/g,'&quot;')})">
+      <td>${escHtml(x.name||String(x.vmid))}</td>
+      <td style="color:var(--muted);font-size:12px">${escHtml(x.node)}</td>
+      <td style="font-size:11px;color:var(--muted)">${x.type==='ct'?'CT':'VM'}</td>
+      <td style="font-size:12px">${escHtml(x._reason||'')}</td>
+    </tr>`).join('');
+  document.getElementById('modal-body').innerHTML = items.length
+    ? `<div class="table-wrap"><table><thead><tr><th>Name</th><th>Node</th><th>Type</th><th>Detail</th></tr></thead><tbody>${rows}</tbody></table></div>`
+    : `<div class="empty">No VMs/CTs in this bucket right now.</div>`;
+  const confirmBtn = document.getElementById('modal-confirm-btn');
+  if (confirmBtn) confirmBtn.style.display = 'none';
+  document.getElementById('modal-bg').classList.add('open');
+  modalCallback = null;
+}
+
 function renderOverview() {
   const el = document.getElementById('overview-content');
   if (!el) return;
@@ -6307,6 +6405,10 @@ function renderOverview() {
 
   // Trigger runway data fetch if not yet loaded or stale (30 min)
   if (nodes.length && (!_runwayCache || Date.now() - _runwayCache.ts > 1800000)) _fetchRunwayData();
+
+  // Trigger last-started task lookback if not yet loaded or stale (30 min) — feeds the Inactive bucket
+  if (nodes.length && (!_effLastStartedCache || Date.now() - _effLastStartedCache.ts > 1800000)) _fetchLastStartedData();
+  _effBucketCache = _computeEfficiencyBuckets();
 
   // ── Aggregate resource stats ──────────────────────────────
   const liveNodes = PVE.nodeStatuses.filter(n=>n.statusData&&Object.keys(n.statusData).length);
@@ -6503,6 +6605,15 @@ function renderOverview() {
 
     <!-- Capacity runway -->
     ${runwaySection}
+
+    <!-- VM efficiency buckets -->
+    <div class="section-header" style="margin-bottom:8px"><span class="section-title">VM Efficiency</span></div>
+    <div class="stats-grid" style="margin-bottom:22px">
+      <div class="stat-card accent-red" style="cursor:pointer" title="Sustained CPU/RAM usage ≥80%" onclick="_openEfficiencyBucketModal('bully')"><div class="label">Bully</div><div class="value">${_effBucketCache.bully.length}</div><div class="sub">resource hog</div></div>
+      <div class="stat-card accent-orange" style="cursor:pointer" title="Pinned at CPU/RAM ceiling (≥95%)" onclick="_openEfficiencyBucketModal('constrained')"><div class="label">Constrained</div><div class="value">${_effBucketCache.constrained.length}</div><div class="sub">hitting ceiling</div></div>
+      <div class="stat-card accent-purple" style="cursor:pointer" title="Large RAM/disk allocation, low average usage" onclick="_openEfficiencyBucketModal('overprovisioned')"><div class="label">Over-provisioned</div><div class="value">${_effBucketCache.overprovisioned.length}</div><div class="sub">large allocation, low usage</div></div>
+      <div class="stat-card accent-teal" style="cursor:pointer" title="Stopped with no start task in the last 30 days" onclick="_openEfficiencyBucketModal('inactive')"><div class="label">Inactive</div><div class="value">${_effBucketCache.inactive.length}</div><div class="sub">off 30+ days</div></div>
+    </div>
 
     <!-- Recent tasks + Alerts (two columns) -->
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:22px">
