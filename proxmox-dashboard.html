@@ -73,8 +73,8 @@
     #app{display:grid;grid-template-columns:230px 1fr;height:calc(100vh - 58px);}
     /* SIDEBAR */
     #sidebar{background:var(--bg2);border-right:1px solid var(--border);padding:14px 0;overflow-y:auto;position:relative;}
-    #sidebar-resize-handle{position:absolute;top:0;right:-3px;width:6px;height:100%;cursor:col-resize;z-index:50;}
-    #sidebar-resize-handle::after{content:"";position:absolute;top:0;right:2px;width:2px;height:100%;background:transparent;transition:background .15s;}
+    #sidebar-resize-handle{position:absolute;top:0;right:0;width:6px;height:100%;cursor:col-resize;z-index:50;}
+    #sidebar-resize-handle::after{content:"";position:absolute;top:0;right:0;width:2px;height:100%;background:transparent;transition:background .15s;}
     #sidebar-resize-handle:hover::after,body.sidebar-resizing #sidebar-resize-handle::after{background:var(--accent);}
     .sidebar-collapsed #sidebar-resize-handle{display:none;}
     body.sidebar-resizing{cursor:col-resize;user-select:none;}
