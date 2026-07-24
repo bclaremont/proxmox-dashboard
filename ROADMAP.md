@@ -24,7 +24,7 @@ Ideas and planned improvements, compiled from all previous sessions. Items are r
 - [ ] **VM grouping (application stacks)** — tag VMs as part of a named group (e.g. "GitLab" = 3 VMs) and start / stop / snapshot the entire group as a unit; resource Pools view exists (add/remove members, per-VM actions) but no bulk group-lifecycle actions
 - [x] **Resource pools** — full `/pools` CRUD surfaced (list, create, edit, delete, add/remove members, per-cluster grouping); doesn't show a combined shared CPU/RAM ceiling
 - [x] **VM notes / annotations** — read and write the PVE description field (`/nodes/{node}/qemu/{vmid}/config → description`) inline from the VM detail panel; useful for documenting purpose, owner, maintenance windows
-- [ ] **Scheduled tasks calendar** — unified view of all scheduled backups, snapshot jobs, and vzdump schedules across nodes; show as a calendar or timeline so clashing windows are obvious
+- [x] **Scheduled tasks calendar** — Calendar tab on Scheduled Operations view; unifies PCC schedules + PVE backup jobs (every connection) + PBS backup jobs into one weekly grid, exact-time-match clash highlighting, unparsed/complex schedule strings listed separately rather than dropped
 
 ---
 
