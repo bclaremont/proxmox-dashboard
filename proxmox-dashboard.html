@@ -72,7 +72,12 @@
     /* LAYOUT */
     #app{display:grid;grid-template-columns:230px 1fr;height:calc(100vh - 58px);}
     /* SIDEBAR */
-    #sidebar{background:var(--bg2);border-right:1px solid var(--border);padding:14px 0;overflow-y:auto;}
+    #sidebar{background:var(--bg2);border-right:1px solid var(--border);padding:14px 0;overflow-y:auto;position:relative;}
+    #sidebar-resize-handle{position:absolute;top:0;right:-3px;width:6px;height:100%;cursor:col-resize;z-index:50;}
+    #sidebar-resize-handle::after{content:"";position:absolute;top:0;right:2px;width:2px;height:100%;background:transparent;transition:background .15s;}
+    #sidebar-resize-handle:hover::after,body.sidebar-resizing #sidebar-resize-handle::after{background:var(--accent);}
+    .sidebar-collapsed #sidebar-resize-handle{display:none;}
+    body.sidebar-resizing{cursor:col-resize;user-select:none;}
     .sidebar-section{padding:0 10px;margin-bottom:18px;}
     .sidebar-label{font-size:10px;text-transform:uppercase;letter-spacing:1.2px;color:var(--text);padding:5px 8px 5px 10px;margin:6px 8px 4px;cursor:pointer;user-select:none;display:flex;align-items:center;justify-content:space-between;font-weight:700;background:var(--bg3);border-radius:var(--radius);border-left:2px solid var(--accent);}
     .sidebar-label:hover{background:rgba(249,115,22,.12);color:var(--accent);}
@@ -665,6 +670,7 @@
 
 <div id="app">
   <nav id="sidebar">
+    <div id="sidebar-resize-handle" title="Drag to resize" onmousedown="_sidebarResizeStart(event)"></div>
     <!-- Collapse toggle — always visible at top -->
     <div id="sidebar-toggle-row">
       <button class="sidebar-toggle-btn" onclick="toggleSidebar()" id="sidebar-toggle-btn" title="Collapse sidebar">
@@ -3185,20 +3191,48 @@ function toggleSidebar() {
   const app       = document.getElementById('app');
   const icon      = document.getElementById('sidebar-toggle-icon');
   const collapsed = sidebar.classList.toggle('sidebar-collapsed');
-  app.style.gridTemplateColumns = collapsed ? '56px 1fr' : '230px 1fr';
+  const savedWidth = parseInt(localStorage.getItem('sidebar-width')) || 230;
+  app.style.gridTemplateColumns = collapsed ? '56px 1fr' : savedWidth + 'px 1fr';
   // Flip the chevron: left = expanded, right = collapsed
   if (icon) icon.setAttribute('points', collapsed ? '9 18 15 12 9 6' : '15 18 9 12 15 6');
   localStorage.setItem('sidebar-collapsed', collapsed ? '1' : '');
 }
 function restoreSidebarCollapse() {
+  const app = document.getElementById('app');
   if (localStorage.getItem('sidebar-collapsed')) {
     const sidebar = document.getElementById('sidebar');
-    const app     = document.getElementById('app');
     const icon    = document.getElementById('sidebar-toggle-icon');
     sidebar.classList.add('sidebar-collapsed');
     app.style.gridTemplateColumns = '56px 1fr';
     if (icon) icon.setAttribute('points', '9 18 15 12 9 6');
+  } else {
+    const savedWidth = parseInt(localStorage.getItem('sidebar-width')) || 230;
+    app.style.gridTemplateColumns = savedWidth + 'px 1fr';
   }
+}
+
+// ── SIDEBAR RESIZE (drag the right edge) ──────────────────
+let _sidebarResizeStartX = 0, _sidebarResizeStartW = 0;
+function _sidebarResizeStart(e) {
+  const sidebar = document.getElementById('sidebar');
+  if (sidebar.classList.contains('sidebar-collapsed')) return;
+  _sidebarResizeStartX = e.clientX;
+  _sidebarResizeStartW = sidebar.getBoundingClientRect().width;
+  document.body.classList.add('sidebar-resizing');
+  document.addEventListener('mousemove', _sidebarResizeMove);
+  document.addEventListener('mouseup', _sidebarResizeEnd);
+  e.preventDefault();
+}
+function _sidebarResizeMove(e) {
+  const w = Math.min(420, Math.max(180, _sidebarResizeStartW + (e.clientX - _sidebarResizeStartX)));
+  document.getElementById('app').style.gridTemplateColumns = w + 'px 1fr';
+}
+function _sidebarResizeEnd() {
+  document.body.classList.remove('sidebar-resizing');
+  document.removeEventListener('mousemove', _sidebarResizeMove);
+  document.removeEventListener('mouseup', _sidebarResizeEnd);
+  const w = document.getElementById('sidebar').getBoundingClientRect().width;
+  localStorage.setItem('sidebar-width', Math.round(w));
 }
 
 // ── QUICK STATS TOPBAR ────────────────────────────────
