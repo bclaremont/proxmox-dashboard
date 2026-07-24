@@ -16,6 +16,8 @@ The live deployment works like this:
 3. User runs `pcc-update` on the standalone Debian VM — it clones the repo, copies files, restarts the `pcc` systemd service
 4. **Always push to GitHub after every change** — the user can't get updates any other way
 
+`server/update.sh` (installed as `pcc-update`) `rm -rf`s `/opt/pcc/public/vendor` immediately before `cp -r`ing the new one — do not remove that `rm -rf`. `cp -r src dst` copies *into* `dst` as a subdirectory when `dst` already exists, instead of merging/overwriting its contents; since `/opt/pcc/public/vendor` exists on every deploy after the very first, a plain `cp -r` silently buried new vendor files at `vendor/vendor/...` instead of updating the flat path the app serves from (this is exactly what broke the node Shell console's xterm.js/addon-fit.js/xterm.css — see git history around "Fix vendor/ deploy"). The same `rm -rf` + `cp -r` pattern is needed for any other destination directory these scripts copy into that can pre-exist across runs.
+
 ## Test environment
 - Proxmox host: 192.168.1.231 (PVE API :8006)
 - No local browser-based testing — use `curl` against the live PVE API to verify API calls

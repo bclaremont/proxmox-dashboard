@@ -706,6 +706,7 @@ PCC includes several layers of protection out of the box. This section summarise
 | WireGuard no handshake | Port 51820/UDP must be open inbound on the PCC VM |
 | Console not working | Browser must be able to reach PCC server; WireGuard tunnel must be up |
 | Cluster shows error | Test API token: `curl -k -H "Authorization: PVEAPIToken=..." https://pve:8006/api2/json/version` |
+| Node Shell stuck on "Opening shell session…" | Check `journalctl -u pcc` for a `[vnc-ws]` line (added so failures here are diagnosable) — if there's nothing at all, the WS upgrade never reached Node. Also check the browser's Network tab for `NS_ERROR_CORRUPTED_CONTENT` on `/vendor/xterm.js` — if `/opt/pcc/public/vendor/xterm.js` is missing, run `find /opt/pcc/public/vendor -maxdepth 3 -iname "xterm*"`; a stray `/opt/pcc/public/vendor/vendor/` means an old `pcc-update` nested a vendor update instead of replacing it (fixed in `update.sh`, but a corrupted directory from before the fix needs a one-time `rm -rf /opt/pcc/public/vendor` then re-run `pcc-update`) |
 
 ### Key file locations
 
